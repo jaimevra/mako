@@ -45,6 +45,9 @@ export const WORKSPACE_API_KEY_SCOPES = [
   "git:write",
   "members:write",
   "connections:write",
+  // Start workflow runs and add webhooks over MCP: that executes the
+  // workspace's own workflow code, so a read-only key cannot.
+  "workflows:run",
   "workflows:runtime",
 ] as const;
 
@@ -167,6 +170,9 @@ export function capabilityGrantsFromScopes(
   }
   if (hasWorkspaceApiKeyScope(scopes, "connections:write")) {
     grants.push("connections-write");
+  }
+  if (hasWorkspaceApiKeyScope(scopes, "workflows:run")) {
+    grants.push("workflows-run");
   }
   return grants;
 }

@@ -140,3 +140,5 @@ All under `/api/workspaces/<workspaceId>/workflows`:
 | `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                        |
 | `POST /<name>/run`                     | Start a run: `{ input, preview }`                                                           |
 | `PUT /<name>/webhook`                  | Add or remove the workflow's webhook: `{ enabled }`                                         |
+
+Over MCP, an API key needs the `workflows:run` scope to start runs or add webhooks; looking needs only `mcp`.
