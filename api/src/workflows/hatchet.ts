@@ -14,8 +14,6 @@ import { decryptString, encryptString } from "../services/crypto.service";
 
 const logger = loggers.api("workflows-hatchet");
 
-const ADMIN_EMAIL =
-  process.env.HATCHET_ADMIN_EMAIL || "workflows-admin@mako.ai";
 // Tokens Mako creates are long-lived: rotating one means re-saving it.
 const TOKEN_TTL = "87600h";
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -207,7 +205,8 @@ export async function ensureWorkspaceTenant(
     {
       method: "POST",
       body: {
-        email: ADMIN_EMAIL,
+        // Read here, not at import: modules load before .env does.
+        email: process.env.HATCHET_ADMIN_EMAIL || "workflows-admin@mako.ai",
         password: process.env.HATCHET_ADMIN_PASSWORD,
       },
     },
