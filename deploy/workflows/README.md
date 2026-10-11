@@ -41,6 +41,44 @@ on the direct endpoint, so the tables are created in `public`, the engine logs
 - Deployment `wf-<prefix><workspaceId>`: one replica of the runtime image.
   Created once, replaced only for a new image.
 
+## Sandboxes: a public address for the engine
+
+A person's sandbox runs their workflows as a Hatchet worker of its own
+(`runtime/dev.mjs`, started by `api/src/workflows/sandbox.ts`), so a box
+must reach the engine's gRPC port. Nothing in the cluster is public, so a
+Cloudflare tunnel publishes two hostnames and nothing else
+(`k8s/cloudflared.yaml`):
+
+| Hostname                     | Service               | For                         |
+| ---------------------------- | --------------------- | --------------------------- |
+| `hatchet-<env>.mako.ai`      | `caddy:8080`          | the API, the dashboard      |
+| `hatchet-grpc-<env>.mako.ai` | `hatchet-engine:7070` | workers outside the cluster |
+
+Once per cluster, with a cloudflared login for the `mako.ai` zone:
+
+```bash
+cloudflared tunnel create hatchet-<env>
+cloudflared tunnel route dns hatchet-<env> hatchet-<env>.mako.ai
+cloudflared tunnel route dns hatchet-<env> hatchet-grpc-<env>.mako.ai
+# ingress: hatchet-<env> → http://caddy.hatchet.svc.cluster.local:8080,
+#          hatchet-grpc-<env> → http://hatchet-engine.hatchet.svc.cluster.local:7070 (http2Origin)
+kubectl -n hatchet create secret generic cloudflared --from-literal=token=$(cloudflared tunnel token hatchet-<env>)
+kubectl apply -f k8s/cloudflared.yaml
+```
+
+Then the Helm values: `serverUrl: https://hatchet-<env>.mako.ai`,
+`grpcBroadcastAddress: hatchet-grpc-<env>.mako.ai:443`. Tokens Hatchet
+mints from then on name the public addresses; TLS ends at Cloudflare and
+the engine stays plaintext inside. The shared worker keeps the private
+service through `HATCHET_WORKER_HOST_PORT`, and the Mako API keeps the
+internal load balancer. Hatchet's own auth (tenant tokens, the admin
+password) is the wall, as on Hatchet Cloud.
+
+Local development: Hatchet Lite's gRPC port is on `localhost:7077`, which
+the `local` sandbox provider reaches directly with
+`HATCHET_SANDBOX_TLS_STRATEGY=none`; an E2B box from a laptop would need the
+named tunnel to carry it.
+
 ## PR previews
 
 A preview runs several API instances with ephemeral disks and never pushes
