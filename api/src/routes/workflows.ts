@@ -226,14 +226,16 @@ workflowRoutes.openapi(
     const { workspaceId, name } = c.req.valid("param");
     const body = await c.req.json().catch(() => ({}));
     const userId = c.get("user")?.id;
-    const tenant = await requireTenant(workspaceId);
+    let tenant;
     let workflowName = name;
     if (body?.sandbox === true) {
       if (!userId) {
         throw new HatchetError("A sandbox needs a signed-in user", 400);
       }
-      await ensureSandboxWorker(tenant, workspaceId, userId);
+      tenant = await ensureSandboxWorker(workspaceId, userId);
       workflowName = `${sandboxPrefix(userId)}${name}`;
+    } else {
+      tenant = await requireTenant(workspaceId);
     }
     const runId = await startRun(tenant, workflowName, {
       input: body?.input,

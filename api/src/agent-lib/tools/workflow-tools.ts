@@ -90,14 +90,16 @@ export function createWorkflowTools({
           if (!(await mayRun())) {
             return { success: false, error: "Viewers cannot start runs." };
           }
-          const tenant = await requireTenant(workspaceId);
+          let tenant;
           let workflowName = workflowId;
           if (sandbox) {
             if (!userId) {
               return { success: false, error: "A sandbox needs a person." };
             }
-            await ensureSandboxWorker(tenant, workspaceId, userId);
+            tenant = await ensureSandboxWorker(workspaceId, userId);
             workflowName = `${sandboxPrefix(userId)}${workflowId}`;
+          } else {
+            tenant = await requireTenant(workspaceId);
           }
           const runId = await startRun(tenant, workflowName, {
             input,

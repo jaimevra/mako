@@ -23,6 +23,7 @@ import type { WorkspaceApiKeyScope } from "../auth/api-key-scopes";
 import { Workspace } from "../database/workspace-schema";
 import { loggers } from "../logging";
 import {
+  HatchetError,
   ensureWorkspaceTenant,
   hasInstanceHatchet,
   workflowsNamePrefix,
@@ -30,7 +31,7 @@ import {
 import {
   ensureWorkerDeployment,
   isGkeWorkerConfigured,
-  workerSecretExists,
+  readWorkerSecret,
   writeWorkerSecret,
 } from "./kube";
 
@@ -106,40 +107,60 @@ async function setWorkerKey(
 }
 
 /**
- * Make sure the workspace's worker can sign in to Mako, and exists. Where
- * this API can create pods (`gke`) it makes one per workspace; elsewhere the
- * operator runs the runtime image with WORKFLOWS_WORKER_KEY (`static`).
+ * The key the workspace's workers sign in to Mako with, made if missing.
+ * Where this API can create pods (`gke`) the key lives in two places, this
+ * environment's key on the workspace and the pod's Secret; either missing (a
+ * first deploy, a database restored from before the worker, a new cluster)
+ * means a new key written to both, replacing what the pod held. Elsewhere
+ * the operator runs the runtime image with WORKFLOWS_WORKER_KEY (`static`)
+ * and that one key serves one workspace. A person's sandbox worker uses the
+ * same key (sandbox.ts).
  */
+export async function ensureWorkerKey(
+  workspaceId: string,
+  userId: string,
+): Promise<string> {
+  if (!isGkeWorkerConfigured()) {
+    const key = process.env.WORKFLOWS_WORKER_KEY;
+    if (!key?.startsWith("revops_")) {
+      throw new HatchetError(
+        "Set WORKFLOWS_WORKER_KEY (revops_...) and start the worker with it",
+        503,
+      );
+    }
+    await setWorkerKey(workspaceId, userId, key);
+    return key;
+  }
+  const workspace = await Workspace.findById(workspaceId)
+    .select("apiKeys.name")
+    .lean();
+  if (workspace?.apiKeys?.some(k => k.name === workerKeyName())) {
+    const stored = await readWorkerSecret(workspaceId);
+    if (stored) return stored;
+  }
+  const { key } = generateApiKey();
+  await setWorkerKey(workspaceId, userId, key);
+  await writeWorkerSecret(workspaceId, key);
+  return key;
+}
+
+/** Make sure the workspace's worker can sign in to Mako, and exists. */
 async function ensureWorker(
   workspaceId: string,
   userId: string,
 ): Promise<void> {
-  if (!isGkeWorkerConfigured()) {
-    const key = process.env.WORKFLOWS_WORKER_KEY;
-    if (!key?.startsWith("revops_")) {
-      logger.warn(
-        "Set WORKFLOWS_WORKER_KEY (revops_...) and start the worker with it",
-        { workspaceId },
-      );
+  try {
+    await ensureWorkerKey(workspaceId, userId);
+  } catch (error) {
+    // A static install without the key: the deploy still records the
+    // commit; the operator sees what to set.
+    if (!isGkeWorkerConfigured() && error instanceof HatchetError) {
+      logger.warn(error.message, { workspaceId });
       return;
     }
-    await setWorkerKey(workspaceId, userId, key);
-    return;
+    throw error;
   }
-  // The key can be read only when it is created, and it lives in two places:
-  // this environment's key on the workspace, and the pod's Secret. Either
-  // missing (a first deploy, a database restored from before the worker, a
-  // new cluster) means a new key written to both, replacing what the pod held.
-  const workspace = await Workspace.findById(workspaceId)
-    .select("apiKeys.name")
-    .lean();
-  const hasKey = workspace?.apiKeys?.some(k => k.name === workerKeyName());
-  if (!hasKey || !(await workerSecretExists(workspaceId))) {
-    const { key } = generateApiKey();
-    await setWorkerKey(workspaceId, userId, key);
-    await writeWorkerSecret(workspaceId, key);
-  }
-  await ensureWorkerDeployment(workspaceId);
+  if (isGkeWorkerConfigured()) await ensureWorkerDeployment(workspaceId);
 }
 
 type Commit = { sha: string; tree: string };
