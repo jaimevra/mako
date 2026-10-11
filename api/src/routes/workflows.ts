@@ -34,6 +34,7 @@ import { trackUsage } from "../services/llm-usage.service";
 import { runStepAgent } from "../workflows/agent";
 import {
   HatchetError,
+  ensureWorkspaceTenant,
   readWorkspaceTenant,
   requireTenant,
   startRun,
@@ -342,11 +343,24 @@ workflowRuntimeRoutes.get(
       const wanted = workspace?.workflows?.[name];
       return wanted ? { sha: wanted.sha, tree: wanted.tree } : null;
     };
-    return c.json({
-      hatchetToken: tenant?.token ?? null,
-      live: slot("live"),
-      preview: slot("preview"),
-    });
+    const live = slot("live");
+    const preview = slot("preview");
+    // Something to run and no token yet (a workspace deployed before tokens
+    // were saved per workspace): the worker's poll gives it one.
+    const token =
+      tenant?.token ??
+      (live || preview
+        ? await ensureWorkspaceTenant(workspaceId)
+            .then(t => t.token)
+            .catch((error: unknown) => {
+              logger.warn("No Hatchet tenant for the worker", {
+                workspaceId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return null;
+            })
+        : null);
+    return c.json({ hatchetToken: token, live, preview });
   }),
 );
 
