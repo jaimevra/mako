@@ -125,6 +125,7 @@ export async function completeDesktopHitlJob(
         "warehouse-write",
         "git-write",
         "schedule-write",
+        "workflows-run",
       ]);
       const requestedGrants = Array.isArray(pending.input.requiredCapabilities)
         ? pending.input.requiredCapabilities.filter(

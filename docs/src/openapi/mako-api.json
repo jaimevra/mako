@@ -5011,7 +5011,8 @@
                         "artifact-write",
                         "warehouse-write",
                         "git-write",
-                        "schedule-write"
+                        "schedule-write",
+                        "workflows-run"
                       ]
                     }
                   }

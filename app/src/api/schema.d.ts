@@ -8503,7 +8503,7 @@ export interface operations {
                     /** @enum {string} */
                     decision: "approve" | "request_changes" | "cancel";
                     planMarkdown?: string;
-                    grants?: ("artifact-write" | "warehouse-write" | "git-write" | "schedule-write")[];
+                    grants?: ("artifact-write" | "warehouse-write" | "git-write" | "schedule-write" | "workflows-run")[];
                 };
             };
         };
