@@ -57,10 +57,6 @@ const responses: Record<string, unknown> = {
   [`POST /api/v1/stable/tenants/${TENANT}/workflow-runs/trigger`]: {
     run: { metadata: { id: RUN } },
   },
-  // The member's sandbox worker is up; nobody else's is.
-  [`GET /api/v1/tenants/${TENANT}/worker`]: {
-    rows: [{ name: "sb_member_sandbox", status: "ACTIVE" }],
-  },
   [`GET /api/v1/stable/workflow-runs/${RUN}`]: {
     run: { metadata: { id: RUN }, status: "FAILED", input: { limit: 5 } },
     // As Hatchet returns them: in no order, the error as JSON.
@@ -180,16 +176,6 @@ async function main() {
     assert.deepEqual(requests.at(-1)?.body.input, { limit: 5 });
     assert.equal(requests.at(-1)?.body.additionalMetadata.trigger, "agent");
 
-    // A sandbox run starts the caller's own copy, once their sandbox worker
-    // is listed by Hatchet (it is, for the member).
-    const sandboxed = await call(tools, "workflows_run", {
-      workflowId: "daily-digest",
-      sandbox: true,
-    });
-    assert.deepEqual([sandboxed.success, sandboxed.sandbox], [true, true]);
-    assert.equal(requests.at(-1)?.body.workflowName, "sb_member_daily-digest");
-    assert.equal(overview.sandbox.running, true);
-
     // One run: its steps, with long text and long logs cut down.
     const detail = await call(tools, "workflows_status", { runId: RUN });
     assert.equal(detail.run.workflowId, "daily-digest");
@@ -218,7 +204,7 @@ async function main() {
       workflowId: "daily-digest",
     });
     assert.equal(refused.success, false);
-    assert.equal(requests.length, before + 4, "no run was started");
+    assert.equal(requests.length, before + 3, "no run was started");
 
     // The switch is an admin's: on, off, and never a name that is not one.
     const activeOf = async () =>

@@ -1,6 +1,6 @@
 // What a worker needs before it can load `workflows/`: the shared files the
 // image supplies, the runtime's packages, and a typecheck. Used by
-// entrypoint.mjs (a commit, in the workspace's worker) and dev.mjs (a
+// entrypoint.mjs (a commit, in the workspace's worker) and run.mjs (a
 // checkout, in a person's sandbox) the same way.
 import { execFileSync } from "node:child_process";
 import {

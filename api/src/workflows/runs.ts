@@ -15,9 +15,6 @@ import {
   HatchetError,
   hasInstanceHatchet,
   isHatchetId,
-  listWorkers,
-  sandboxPrefix,
-  splitSandboxName,
   tenantJson,
   tenantOfToken,
   type WorkspaceTenant,
@@ -71,7 +68,7 @@ const metadataOf = (run: Row) =>
 
 const runSummary = (run: Row, workflowName: unknown = run.workflowName) => ({
   runId: idOf(run),
-  ...splitSandboxName(String(workflowName ?? "")),
+  workflowId: String(workflowName ?? ""),
   status: run.status,
   startedAt: run.startedAt ?? run.createdAt,
   durationMs: run.duration,
@@ -128,26 +125,17 @@ export async function readWorkflowsStatus(workspaceId: string) {
 export async function readWorkflowsOverview(
   workspaceId: string,
   limit: number,
-  viewer: {
-    /** An admin sees each workflow's webhook URL (null when off). */
-    asAdmin?: boolean;
-    /** Whose sandbox worker to report on. */
-    userId?: string;
-  } = {},
+  /** For an admin: the switches, and each workflow's webhook URL (null when off). */
+  asAdmin = false,
 ) {
   const { state, repoLinked } = await loadState(workspaceId);
-  const status = {
-    ...statusOf(state, repoLinked),
-    mayChange: !!viewer.asAdmin,
-  };
+  const status = { ...statusOf(state, repoLinked), mayChange: asAdmin };
   const tenant = tenantOfToken(state?.hatchetToken);
   if (!tenant) return status;
-  const webhooks = viewer.asAdmin
-    ? webhookUrls(workspaceId, state?.webhooks)
-    : null;
+  const webhooks = asAdmin ? webhookUrls(workspaceId, state?.webhooks) : null;
   const base = `/api/v1/tenants/${tenant.tenantId}`;
   const since = new Date(Date.now() - RECENT_RUNS_DAYS * 864e5).toISOString();
-  const [workflows, crons, runs, workers] = await Promise.all([
+  const [workflows, crons, runs] = await Promise.all([
     tenantJson<Rows>(tenant, `${base}/workflows`),
     tenantJson<Rows>(tenant, `${base}/workflows/crons`),
     tenantJson<Rows>(
@@ -161,29 +149,18 @@ export async function readWorkflowsOverview(
         }),
       },
     ),
-    viewer.userId ? listWorkers(tenant) : [],
   ]);
-  const mine = viewer.userId ? sandboxPrefix(viewer.userId) : null;
   const active = new Set(state?.active ?? []);
   return {
     ...status,
-    // The viewer's sandbox worker: up when Hatchet lists it as active.
-    sandbox: mine
-      ? {
-          running: workers.some(
-            w => w.name.startsWith(mine) && w.status === "ACTIVE",
-          ),
-        }
-      : null,
-    // Production workflows only; a sandbox registers the same names.
-    workflows: (workflows.rows ?? [])
-      .map(w => String(w.name ?? ""))
-      .filter(name => !splitSandboxName(name).sandbox)
-      .map(workflowId => ({
+    workflows: (workflows.rows ?? []).map(w => {
+      const workflowId = String(w.name ?? "");
+      return {
         workflowId,
         active: active.has(workflowId),
         ...(webhooks ? { webhookUrl: webhooks[workflowId] ?? null } : {}),
-      })),
+      };
+    }),
     schedules: (crons.rows ?? []).map(c => ({
       workflowId: c.workflowName,
       cron: c.cron,
@@ -192,13 +169,15 @@ export async function readWorkflowsOverview(
   };
 }
 
-/** One run: its steps in order, each with status, output, error and logs. */
-export async function readRun(tenant: WorkspaceTenant, runId: string) {
-  if (!isHatchetId(runId)) throw new HatchetError("Invalid run id", 400);
-  const detail = await tenantJson<{ run?: Row; tasks?: Row[] }>(
-    tenant,
-    `/api/v1/stable/workflow-runs/${runId}`,
-  );
+/** What Hatchet returns for one run, and its tasks' log lines by task id. */
+export type RunDetail = { run?: Row; tasks?: Row[] };
+
+/**
+ * One run as a screen or an agent reads it: its steps in order, each with
+ * status, output, error and its last log lines. Pure, so the same shape comes
+ * from the workspace's Hatchet and from a sandbox's own engine (sandbox.ts).
+ */
+export function shapeRun(detail: RunDetail, logs: Record<string, Row[]>) {
   // A step's `actionId` is `<workflow>:<step>`; Hatchet lists steps in no order.
   const tasks = [...(detail.tasks ?? [])].sort((a, b) =>
     String(a.taskInsertedAt ?? "").localeCompare(
@@ -207,29 +186,43 @@ export async function readRun(tenant: WorkspaceTenant, runId: string) {
   );
   const nameOf = (task: Row | undefined, part: 0 | 1) =>
     String(task?.actionId ?? "").split(":")[part];
-  const steps = await Promise.all(
-    tasks.map(async task => {
-      const taskId = idOf(task);
-      const logs = taskId
-        ? await tenantJson<Rows>(tenant, `/api/v1/stable/tasks/${taskId}/logs`)
-            .then(l => (l.rows ?? []).slice(-LOG_LINES_PER_STEP))
-            .catch(() => [])
-        : [];
-      return {
-        step: nameOf(task, 1) || task.displayName,
-        status: task.status,
-        attempt: task.attempt,
-        durationMs: task.duration,
-        output: cap(task.output),
-        error: errorOf(task.errorMessage),
-        logs: logs.map(line => cap(line.message)),
-      };
-    }),
-  );
   return {
     ...runSummary(detail.run ?? {}, nameOf(tasks[0], 0)),
     input: cap(inputOf(detail.run?.input)),
     output: cap(detail.run?.output),
-    steps,
+    steps: tasks.map(task => ({
+      step: nameOf(task, 1) || task.displayName,
+      status: task.status,
+      attempt: task.attempt,
+      durationMs: task.duration,
+      output: cap(task.output),
+      error: errorOf(task.errorMessage),
+      logs: (logs[idOf(task) ?? ""] ?? [])
+        .slice(-LOG_LINES_PER_STEP)
+        .map(line => cap(line.message)),
+    })),
   };
+}
+
+/** One run of the workspace's Hatchet. */
+export async function readRun(tenant: WorkspaceTenant, runId: string) {
+  if (!isHatchetId(runId)) throw new HatchetError("Invalid run id", 400);
+  const detail = await tenantJson<RunDetail>(
+    tenant,
+    `/api/v1/stable/workflow-runs/${runId}`,
+  );
+  const logs: Record<string, Row[]> = {};
+  await Promise.all(
+    (detail.tasks ?? []).map(async task => {
+      const taskId = idOf(task);
+      if (!taskId) return;
+      logs[taskId] = await tenantJson<Rows>(
+        tenant,
+        `/api/v1/stable/tasks/${taskId}/logs`,
+      )
+        .then(l => l.rows ?? [])
+        .catch(() => []);
+    }),
+  );
+  return shapeRun(detail, logs);
 }

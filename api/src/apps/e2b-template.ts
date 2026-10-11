@@ -268,14 +268,15 @@ export function createAppsE2BTemplate() {
         ].join(" && "),
         { user: "user" },
       )
-      // The workflow runtime, so a sandbox can run the person's workflows as a
-      // Hatchet worker (api/src/workflows/sandbox.ts): the scripts, the shared
-      // files and the exact packages production builds with.
+      // The workflow runtime, so a sandbox can run the person's workflows on a
+      // Hatchet engine of its own (api/src/workflows/sandbox.ts): the scripts,
+      // the shared files, the exact packages production builds with, and the
+      // embedded engine's binary, fetched now so no box fetches it later.
       .copy(
         [
           "../deploy/workflows/runtime/package.json",
           "../deploy/workflows/runtime/build.mjs",
-          "../deploy/workflows/runtime/dev.mjs",
+          "../deploy/workflows/runtime/run.mjs",
           "../deploy/workflows/runtime/worker.mjs",
         ],
         "/opt/mako-workflows/",
@@ -286,6 +287,12 @@ export function createAppsE2BTemplate() {
       )
       .runCmd(
         "cd /opt/mako-workflows && npm install --no-audit --no-fund && chown -R user:user /opt/mako-workflows",
+      )
+      .runCmd(
+        // Start the engine once and stop it: the binary lands in the user's
+        // cache (~/.hatchet/embedded). The version is run.mjs's.
+        `cd /tmp && node --input-type=module -e 'import { startEmbeddedSidecar } from "/opt/mako-workflows/node_modules/@hatchet-dev/typescript-sdk/v1/embedded.js"; const engine = await startEmbeddedSidecar({ version: "v0.110.5" }); await engine.stop(); process.exit(0);'`,
+        { user: "user" },
       )
       .setWorkdir("/home/user/app")
       .setUser("user")

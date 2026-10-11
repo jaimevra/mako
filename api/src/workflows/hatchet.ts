@@ -282,35 +282,6 @@ export function isHatchetId(value: string): boolean {
   return /^[0-9a-fA-F-]{36}$/.test(value);
 }
 
-/**
- * A person's sandbox worker registers under `sb_<user>_`: the same workflow
- * names as production, in the same tenant, told apart by this prefix
- * (dev.mjs, HATCHET_CLIENT_NAMESPACE). Hatchet lowercases namespaces.
- */
-export const sandboxPrefix = (userId: string) =>
-  `sb_${userId.toLowerCase().replace(/[^a-z0-9]/g, "")}_`;
-
-/** `sb_<user>_<name>` → the name and whose sandbox; a plain name as is. */
-export function splitSandboxName(name: string): {
-  workflowId: string;
-  sandbox?: string;
-} {
-  const match = /^sb_([a-z0-9]+)_(.+)$/.exec(name);
-  return match
-    ? { workflowId: match[2], sandbox: match[1] }
-    : { workflowId: name };
-}
-
-/** The workers connected to the tenant now, by name. */
-export async function listWorkers(
-  tenant: WorkspaceTenant,
-): Promise<Array<{ name: string; status?: string }>> {
-  const list = await tenantJson<{
-    rows?: Array<{ name: string; status?: string }>;
-  }>(tenant, `/api/v1/tenants/${tenant.tenantId}/worker`);
-  return list.rows ?? [];
-}
-
 /** Start a run of a workflow. Returns the run's id. */
 export async function startRun(
   tenant: WorkspaceTenant,
@@ -332,7 +303,7 @@ export async function startRun(
     // Hatchet answers 500 for a name no worker has registered.
     if (error instanceof HatchetError && error.status === 500) {
       throw new HatchetError(
-        `"${workflowName}" is not running. Its last commit may not have built, or the sandbox worker is not up: check the status.`,
+        `"${workflowName}" is not running. Its last commit may not have built: check the status.`,
         409,
       );
     }

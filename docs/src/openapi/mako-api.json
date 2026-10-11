@@ -31569,7 +31569,7 @@
         "tags": [
           "Workflows"
         ],
-        "summary": "Start a run of a workflow: the deployed one, or with `sandbox` the caller's checkout",
+        "summary": "Start a run of the deployed workflow (answers its runId), or with `sandbox` run the caller's checkout in their sandbox (answers the finished run)",
         "security": [
           {
             "cookieAuth": []

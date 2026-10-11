@@ -77,24 +77,6 @@ export async function workerSecretExists(
   }
 }
 
-/** The worker's Mako key, as the pod has it; null when there is no Secret. */
-export async function readWorkerSecret(
-  workspaceId: string,
-): Promise<string | null> {
-  const { core } = await gkeClients();
-  try {
-    const secret = await core.readNamespacedSecret({
-      name: workerName(workspaceId),
-      namespace: NAMESPACE,
-    });
-    const encoded = secret.data?.MAKO_API_KEY;
-    return encoded ? Buffer.from(encoded, "base64").toString() : null;
-  } catch (error) {
-    if (isNotFound(error)) return null;
-    throw error;
-  }
-}
-
 /**
  * Write the worker's credential, replacing an earlier one. A pod reads the
  * Secret at start, so a worker that already runs is restarted afterwards.
@@ -185,17 +167,7 @@ function deploymentBody(workspaceId: string): V1Deployment {
               env: [
                 { name: "MAKO_URL", value: makoUrl() },
                 { name: "HOME", value: "/tmp" },
-                // In the cluster the worker reaches the engine over the
-                // private service, whatever public address the token names
-                // for sandboxes outside; Mako's own engine has no TLS there.
-                ...(process.env.HATCHET_WORKER_HOST_PORT
-                  ? [
-                      {
-                        name: "HATCHET_CLIENT_HOST_PORT",
-                        value: process.env.HATCHET_WORKER_HOST_PORT,
-                      },
-                    ]
-                  : []),
+                // A Hatchet without TLS on its gRPC port, as Mako's own is.
                 ...(tls
                   ? [{ name: "HATCHET_CLIENT_TLS_STRATEGY", value: tls }]
                   : []),

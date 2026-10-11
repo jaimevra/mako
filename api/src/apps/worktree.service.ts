@@ -2582,7 +2582,9 @@ export async function mergeBranchToMain(
   // workflow changes; the merge, which does not run hooks, asks the same.
   if (actorUserId) {
     const { stdout } = await runGit([
-      ...["-C", repoDir, "diff", "--name-only", mainHead, branchHead],
+      // Three dots: what the branch changed since it left main, not what
+      // main changed meanwhile.
+      ...["-C", repoDir, "diff", "--name-only", `${mainHead}...${branchHead}`],
       ...["--", `${WORKFLOWS_DIR}/`],
     ]);
     if (stdout.trim()) {

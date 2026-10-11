@@ -1,105 +1,114 @@
 /**
- * A person's sandbox worker: `dev.mjs` from the workflow runtime, started in
- * their sandbox (the same box their apps dev server runs in), serving the
- * workflows of their checkout as they are on disk under their own names
- * (`sb_<user>_`, hatchet.ts) with every trigger off. Mako starts it when a
- * sandbox run is asked for and leaves it running; it restarts itself on
- * file changes and dies with the box.
+ * A sandbox run: one workflow of a person's checkout, as it is on disk,
+ * uncommitted edits included, run once inside their sandbox on a Hatchet
+ * engine of its own (`run.mjs` in the workflow runtime, Hatchet's embedded
+ * mode). Nothing leaves the box but the result: no shared tenant, no Hatchet
+ * token, no address for the workspace's Hatchet. Schedules are off; the
+ * workflow runs because it was started. This is how a change is tested
+ * before it is on main.
  *
- * It is the workspace's worker in every other respect: the same Hatchet
- * tenant and token, the same Mako key, so `query()`, `call()` and `agent()`
- * behave as they will on main.
+ * The steps call Mako (`query`, `call`, `agent`) with a key made for this
+ * run that acts as the person testing, so a test can do what they can do.
  */
+import { appsGitOriginBase } from "../apps/config";
 import { getSandboxProvider } from "../apps/sandbox/provider";
-import { boxCtx, ensureWorkspaceWorktree } from "../apps/worktree.service";
-import { loggers } from "../logging";
 import {
-  HatchetError,
-  ensureWorkspaceTenant,
-  listWorkers,
-  sandboxPrefix,
-  type WorkspaceTenant,
-} from "./hatchet";
-import { makoUrl } from "./kube";
-import { ensureWorkerKey } from "./on-push";
-
-const logger = loggers.api("workflows-sandbox");
+  boxCtx,
+  ensureWorkspaceWorktree,
+  execInWorktree,
+} from "../apps/worktree.service";
+import { generateApiKey } from "../auth/api-key.middleware";
+import { HatchetError } from "./hatchet";
+import { setKey } from "./on-push";
+import { type RunDetail, shapeRun } from "./runs";
 
 /**
- * Where the runtime (dev.mjs and its packages) is inside a box: the E2B
+ * Where the runtime (run.mjs and its packages) is inside a box: the E2B
  * template's copy, or this checkout's for the local provider. Read when
  * used, not at import: modules load before .env does.
  */
 const runtimeInBox = () =>
   process.env.WORKFLOWS_RUNTIME_DIR_IN_BOX || "/opt/mako-workflows";
-const SOCK = "/tmp/mako-workflows-dev.sock";
-const LOG = "/tmp/mako-workflows-dev.log";
-const START_TIMEOUT_MS = 90_000;
-const POLL_MS = 2_000;
+/** run.mjs ends a run after five minutes; the exec gets a little longer. */
+const EXEC_TIMEOUT_MS = 6 * 60_000;
+const FAILED = "MAKO_SANDBOX_FAILED";
 
-const sh = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+type Result = {
+  buildError?: string;
+  detail?: RunDetail;
+  logs?: Record<string, Array<Record<string, unknown>>>;
+};
 
-/**
- * Make sure the person's sandbox worker is up and registered with Hatchet,
- * and return the tenant to start runs in. The tenant and the worker key are
- * made here when the workspace has none yet: a sandbox needs no deploy
- * first. Idempotent: a running worker is left alone.
- */
-export async function ensureSandboxWorker(
+/** One run at a time per box: two engines cannot share one data folder. */
+const queue = new Map<string, Promise<unknown>>();
+
+export function runInSandbox(
   workspaceId: string,
   userId: string,
-): Promise<WorkspaceTenant> {
-  const tenant = await ensureWorkspaceTenant(workspaceId);
-  const prefix = sandboxPrefix(userId);
-  const up = async () =>
-    (await listWorkers(tenant)).some(
-      w => w.name.startsWith(prefix) && w.status === "ACTIVE",
-    );
-  if (await up()) return tenant;
+  workflowId: string,
+  input: object = {},
+) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(workflowId)) {
+    throw new HatchetError(`Invalid workflow: ${workflowId}`, 400);
+  }
+  const box = `${workspaceId}:${userId}`;
+  const run = (queue.get(box) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => runNow(workspaceId, userId, workflowId, input))
+    .finally(() => {
+      if (queue.get(box) === run) queue.delete(box);
+    });
+  queue.set(box, run);
+  return run;
+}
 
+async function runNow(
+  workspaceId: string,
+  userId: string,
+  workflowId: string,
+  input: object,
+) {
   const provider = getSandboxProvider();
   const handle = await ensureWorkspaceWorktree(workspaceId, userId);
   const ctx = boxCtx(handle);
-  const env = {
-    WORKFLOWS_ROOT: provider.root(ctx),
-    HATCHET_CLIENT_TOKEN: tenant.token,
-    HATCHET_CLIENT_NAMESPACE: prefix,
-    MAKO_URL: makoUrl(),
-    MAKO_API_KEY: await ensureWorkerKey(workspaceId, userId),
-    HOME: "/tmp",
-    // How a box reaches the engine: TLS through the public address the
-    // token names (the default), or plaintext for a local Hatchet.
-    ...(process.env.HATCHET_SANDBOX_TLS_STRATEGY
-      ? {
-          HATCHET_CLIENT_TLS_STRATEGY: process.env.HATCHET_SANDBOX_TLS_STRATEGY,
-        }
-      : {}),
-  };
-  // Same shape as the apps dev server: a headless dtach session, nohup as
-  // the fallback. The env goes to the process, never to a file in the box.
-  const exports = Object.entries(env)
-    .map(([name, value]) => `${name}=${sh(value)}`)
-    .join(" ");
-  const script = `${runtimeInBox()}/dev.mjs`;
-  const run = `${exports} node ${script}`;
-  const command =
-    `if pgrep -f "node ${script}" >/dev/null 2>&1; then echo running; ` +
-    `elif command -v dtach >/dev/null; then rm -f ${SOCK}; dtach -n ${SOCK} sh -c ${sh(`${run} >> ${LOG} 2>&1`)}; echo started; ` +
-    `else nohup sh -c ${sh(run)} >> ${LOG} 2>&1 & echo started; fi`;
-  await provider.execDetached(ctx, command, { timeoutMs: 60_000 });
-  logger.info("Sandbox worker starting", { workspaceId, userId });
+  const { key } = generateApiKey();
+  await setKey(workspaceId, userId, `Workflows sandbox ${userId}`, key);
 
-  const deadline = Date.now() + START_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, POLL_MS));
-    if (await up()) return tenant;
+  const scratch = provider.scratch(ctx);
+  const out = `${scratch}/mako-workflow-run.json`;
+  const log = `${scratch}/mako-workflow-run.log`;
+  const encoded = Buffer.from(JSON.stringify(input)).toString("base64");
+  // Only the result reaches stdout; the engine's and the worker's output go
+  // to a log, shown when there is no result.
+  const command =
+    `rm -f ${out}; MAKO_SANDBOX_RESULT_FILE=${out} node ${runtimeInBox()}/run.mjs ${workflowId} ${encoded} > ${log} 2>&1; ` +
+    `if [ -s ${out} ]; then cat ${out}; else echo ${FAILED}; tail -n 40 ${log}; fi`;
+  const exec = await execInWorktree(handle, command, {
+    timeoutMs: EXEC_TIMEOUT_MS,
+    env: {
+      WORKFLOWS_ROOT: provider.root(ctx),
+      MAKO_URL: appsGitOriginBase(),
+      MAKO_API_KEY: key,
+    },
+  });
+
+  let result: Result | null = null;
+  if (!exec.stdout.startsWith(FAILED)) {
+    try {
+      result = JSON.parse(exec.stdout) as Result;
+    } catch {
+      // Not a result: reported below with what was printed.
+    }
   }
-  const tail = await provider
-    .exec(ctx, `tail -n 30 ${LOG} 2>/dev/null`, { timeoutMs: 15_000 })
-    .then(r => r.stdout.trim())
-    .catch(() => "");
-  throw new HatchetError(
-    `The sandbox worker did not connect to Hatchet.${tail ? `\n${tail}` : ""}`,
-    502,
-  );
+  if (!result) {
+    throw new HatchetError(
+      `The sandbox run did not finish.\n${exec.stdout.replace(FAILED, "").trim() || exec.stderr.trim()}`,
+      502,
+    );
+  }
+  if (result.buildError) throw new HatchetError(result.buildError, 422);
+  return {
+    ...shapeRun(result.detail ?? {}, result.logs ?? {}),
+    sandbox: true as const,
+  };
 }

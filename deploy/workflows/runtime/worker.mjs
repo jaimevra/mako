@@ -1,10 +1,9 @@
 // One Hatchet worker running the workflows under WORKFLOWS_ROOT, started by
-// entrypoint.mjs (a commit, production) or dev.mjs (a checkout, a person's
-// sandbox). A workflow is `workflows/<name>/workflow.ts` whose default export
-// is the workflow named `<name>`. A workflow keeps its schedule and event
+// entrypoint.mjs (a commit, production) or run.mjs (a checkout, a sandbox
+// run). A workflow is `workflows/<name>/workflow.ts` whose default export is
+// the workflow named `<name>`. A workflow keeps its schedule and event
 // triggers only when it is active (WORKFLOWS_ACTIVE, comma-separated names);
-// a sandbox worker (SANDBOX=1) registers under the namespace it was given
-// and keeps none: it runs only when started.
+// in a sandbox (SANDBOX=1) none does: it runs only when started.
 //
 // Env: WORKFLOWS_ROOT, GIT_SHA, HATCHET_CLIENT_TOKEN, WORKFLOWS_ACTIVE, SANDBOX.
 import { existsSync, readdirSync } from "node:fs";
@@ -21,7 +20,7 @@ const load = file => import(pathToFileURL(join(dir, file)).href);
 
 const { hatchet } = await load("hatchet.ts");
 // The client has the token now; workflow code must not: it could otherwise
-// make its own client outside the sandbox's namespace.
+// make its own client and register triggers Mako turned off.
 delete process.env.HATCHET_CLIENT_TOKEN;
 if (!hatchet) {
   console.error("workflows/hatchet.ts must export { hatchet }");

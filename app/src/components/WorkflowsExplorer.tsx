@@ -162,10 +162,10 @@ export function WorkflowsExplorer() {
       registered.add(w.workflowId);
       if (w.active) active.add(w.workflowId);
     }
-    // Runs come newest first: the first main run seen per workflow is its last.
+    // Runs come newest first: the first run seen per workflow is its last.
     const lastStatus = new Map<string, string>();
     for (const run of overview?.recentRuns ?? []) {
-      if (!run.sandbox && !lastStatus.has(run.workflowId)) {
+      if (!lastStatus.has(run.workflowId)) {
         lastStatus.set(run.workflowId, run.status ?? "");
       }
     }

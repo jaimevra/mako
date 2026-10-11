@@ -29,6 +29,7 @@ import {
   fetchWorkflowFile,
   isActiveRun,
   useWorkflowsStore,
+  type WorkflowRun,
   type WorkflowRunSummary,
 } from "../store/workflowsStore";
 import { formatDuration } from "../utils/format";
@@ -154,6 +155,7 @@ function RunDialog({
     sandbox: boolean,
   ) => Promise<string | null>;
 }) {
+  // A sandbox run answers when it is finished, a few seconds at least.
   // Mounted only while open, so the initial state is the dialog's state.
   const [target, setTarget] = useState<"main" | "sandbox">(
     deployed ? "main" : "sandbox",
@@ -230,8 +232,13 @@ function RunDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={submit} disabled={busy}>
-          Run
+        <Button
+          variant="contained"
+          onClick={submit}
+          disabled={busy}
+          startIcon={busy ? <CircularProgress size={12} /> : undefined}
+        >
+          {busy && target === "sandbox" ? "Running in sandbox…" : "Run"}
         </Button>
       </DialogActions>
     </Dialog>
@@ -253,12 +260,15 @@ function RunsView({
   const setWebhook = useWorkflowsStore(s => s.setWebhook);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // The last sandbox run: shown in place of a selected run until one is picked.
+  const [sandboxRun, setSandboxRun] = useState<WorkflowRun | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const selectedRun = useWorkflowsStore(s =>
+  const listedRun = useWorkflowsStore(s =>
     selectedRunId ? s.runsById[selectedRunId] : undefined,
   );
+  const selectedRun = sandboxRun ?? listedRun;
 
   const runs = useMemo(
     () =>
@@ -268,7 +278,8 @@ function RunsView({
       ),
     [overview?.recentRuns, workflowId],
   );
-  const selectedSummary = runs.find(run => run.runId === selectedRunId);
+  const selectedSummary: WorkflowRunSummary | undefined =
+    sandboxRun ?? runs.find(run => run.runId === selectedRunId);
   const selectedStatus = selectedRun?.status ?? selectedSummary?.status;
   const hasActive = runs.some(run => isActiveRun(run.status));
 
@@ -297,6 +308,11 @@ function RunsView({
     fetchOverview,
     fetchRun,
   ]);
+
+  const select = (runId: string) => {
+    setSandboxRun(null);
+    setSelectedRunId(runId);
+  };
 
   // Land on the newest run.
   useEffect(() => {
@@ -386,7 +402,7 @@ function RunsView({
           />
         )}
         {webhookUrl && (
-          <Tooltip title="POST JSON to this URL to start a run while the workflow is active; add ?sandbox=<your user id> to run your sandbox version any time. Click to copy it; ✕ removes it.">
+          <Tooltip title="POST JSON to this URL to start a run while the workflow is active. With ?sandbox=<your user id> it runs your sandbox's version instead, any time. Click to copy it; ✕ removes it.">
             <Chip
               icon={<WebhookIcon size={12} />}
               label={copied ? "Copied" : "Webhook"}
@@ -423,17 +439,6 @@ function RunsView({
               sx={{ height: 20 }}
             />
           )}
-          {overview?.sandbox?.running && (
-            <Tooltip title="Your sandbox worker is up: it runs your checkout">
-              <Chip
-                label="sandbox"
-                size="small"
-                variant="outlined"
-                color="info"
-                sx={{ height: 20 }}
-              />
-            </Tooltip>
-          )}
         </Box>
       </Box>
 
@@ -457,10 +462,8 @@ function RunsView({
                   key={run.runId}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedRunId(run.runId)}
-                  onKeyDown={e =>
-                    e.key === "Enter" && setSelectedRunId(run.runId)
-                  }
+                  onClick={() => select(run.runId)}
+                  onKeyDown={e => e.key === "Enter" && select(run.runId)}
                   sx={{
                     px: 1.5,
                     py: 0.75,
@@ -468,7 +471,7 @@ function RunsView({
                     borderBottom: "1px solid",
                     borderColor: "divider",
                     backgroundColor:
-                      run.runId === selectedRunId
+                      !sandboxRun && run.runId === selectedRunId
                         ? "action.selected"
                         : "transparent",
                     "&:hover": { backgroundColor: "action.hover" },
@@ -500,15 +503,6 @@ function RunsView({
                       {status.label}
                       {isActiveRun(run.status) && <CircularProgress size={9} />}
                     </Typography>
-                    {run.sandbox && (
-                      <Chip
-                        label="sandbox"
-                        size="small"
-                        variant="outlined"
-                        color="info"
-                        sx={SMALL_CHIP_SX}
-                      />
-                    )}
                     {run.durationMs !== undefined && (
                       <Dim>{formatDuration(run.durationMs)}</Dim>
                     )}
@@ -726,8 +720,11 @@ function RunsView({
               sandbox,
             );
             if (!result.ok) return result.error ?? "Failed to start the run";
-            await fetchOverview(workspaceId);
-            if (result.runId) setSelectedRunId(result.runId);
+            if (result.run) setSandboxRun(result.run);
+            else {
+              await fetchOverview(workspaceId);
+              if (result.runId) select(result.runId);
+            }
             return null;
           }}
         />

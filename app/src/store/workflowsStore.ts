@@ -17,8 +17,8 @@ export interface WorkflowDeployment {
 export interface WorkflowRunSummary {
   runId?: string;
   workflowId: string;
-  /** Set on a run of someone's sandbox version: whose. */
-  sandbox?: string;
+  /** A run of the viewer's checkout in their sandbox; it is in no list. */
+  sandbox?: boolean;
   status?: string;
   startedAt?: string;
   durationMs?: number;
@@ -52,8 +52,6 @@ export interface WorkflowsOverview {
   dashboardUrl: string | null;
   /** The viewer is an admin: the switches and webhook URLs are theirs. */
   mayChange?: boolean;
-  /** The viewer's sandbox worker, up or not; null without a viewer. */
-  sandbox?: { running: boolean } | null;
   /** `active`: its schedule and webhook are on. `webhookUrl`: for admins; null while off. */
   workflows?: Array<{
     workflowId: string;
@@ -64,7 +62,14 @@ export interface WorkflowsOverview {
   recentRuns?: WorkflowRunSummary[];
 }
 
-type Result = { ok: boolean; error?: string; runId?: string };
+type Result = {
+  ok: boolean;
+  error?: string;
+  /** A run started on main. */
+  runId?: string;
+  /** A finished sandbox run. */
+  run?: WorkflowRun;
+};
 
 interface WorkflowsState {
   overviewByWorkspace: Record<string, WorkflowsOverview>;
@@ -171,8 +176,8 @@ export const useWorkflowsStore = create<WorkflowsState>()(
             params: { path: { workspaceId, name: workflowId } },
             body: { input, sandbox },
           }),
-        ) as { runId?: string };
-        return { ok: true, runId: body.runId };
+        ) as { runId?: string; run?: WorkflowRun };
+        return { ok: true, runId: body.runId, run: body.run };
       } catch (e) {
         return { ok: false, error: message(e, "Failed to start the run") };
       }

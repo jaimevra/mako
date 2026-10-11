@@ -5117,7 +5117,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start a run of a workflow: the deployed one, or with `sandbox` the caller's checkout */
+        /** Start a run of the deployed workflow (answers its runId), or with `sandbox` run the caller's checkout in their sandbox (answers the finished run) */
         post: operations["post_api_workspaces_workspaceId_workflows_name_run"];
         delete?: never;
         options?: never;

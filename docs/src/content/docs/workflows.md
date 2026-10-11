@@ -5,7 +5,7 @@ description: Write scheduled and multi-step jobs as TypeScript files in your wor
 
 A workflow is a TypeScript file in your workspace repo, in the `workflows/` folder, written with [Hatchet](https://hatchet.run)'s own SDK. Commit it on `main` and it is deployed. Hatchet runs it: schedules, retries and timeouts are Hatchet's.
 
-Three things, each one verb. **Sandbox**: Run → Sandbox (or `workflows_run` with `sandbox: true`) runs the workflow as it is in your sandbox right now, uncommitted edits included, with real data and no schedule; your sandbox runs a worker of its own, next to production, under your name. **Main**: a commit on `main` is the deploy. **Active**: a deployed workflow starts inactive, runnable with Run, schedule and webhook off; when a run looks right, an admin flips it to Active on its tab, and from then on it runs by itself. The same as testing and then activating an n8n workflow.
+Three things, each one verb. **Sandbox**: Run → Sandbox (or `workflows_run` with `sandbox: true`) runs the workflow as it is in your sandbox right now, uncommitted edits included, with real data and no schedule, and shows the finished run. It runs inside your sandbox on a Hatchet engine of its own ([embedded mode](https://docs.hatchet.run/v1/embedded)), so nothing touches production and the run is in nobody's list. **Main**: a commit on `main` is the deploy. **Active**: a deployed workflow starts inactive, runnable with Run, schedule and webhook off; when a run looks right, an admin flips it to Active on its tab, and from then on it runs by itself. The same as testing and then activating an n8n workflow.
 
 **Preview.** Workflows are optional: an installation without a Hatchet runs without them. With one, they have their own panel in Mako: the workflows, their files and their runs.
 
@@ -50,7 +50,7 @@ Every folder with a `workflow.ts` is picked up. There is no list to keep.
 | A person | The Run button, with a JSON input                                                                      |
 | An agent | `workflows_run`                                                                                        |
 
-Anyone with the member role writes workflows in their sandbox and tests them there; only workspace admins put them on `main`, activate them and add webhooks. A webhook is off until an admin adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. The schedule and the webhook start runs only while the workflow is active; Run always works. The webhook URL with `?sandbox=<your user id>` is a test URL: it starts your sandbox version whenever your sandbox worker is up.
+Anyone with the member role writes workflows in their sandbox and tests them there; only workspace admins put them on `main`, activate them and add webhooks. A webhook is off until an admin adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. The schedule and the webhook start runs only while the workflow is active; Run always works. The webhook URL with `?sandbox=<your user id>` is a test URL: a POST to it runs your sandbox's version with the body as input and answers with the finished run, whether or not the workflow is active.
 
 ## Using Mako from a step
 
@@ -129,8 +129,6 @@ A worker run this way serves one workspace and has **no sandbox**: workflow code
 | `MAKO_URL`, `MAKO_API_KEY`                                         | Worker                                | All the worker needs. It gets the Hatchet token from Mako.                                                                                                                                                                |
 | `HATCHET_API_URL`, `HATCHET_ADMIN_EMAIL`, `HATCHET_ADMIN_PASSWORD` | API                                   | Only for a Hatchet you operate: lets Mako create a Hatchet tenant per workspace. Used by the local setup.                                                                                                                 |
 | `WORKFLOWS_RUNTIME_DIR_IN_BOX`                                     | API                                   | Where the workflow runtime is inside a sandbox: `/opt/mako-workflows` in the E2B template (default), this checkout's `deploy/workflows/runtime` for the local provider                                                    |
-| `HATCHET_SANDBOX_TLS_STRATEGY`                                     | API                                   | How a sandbox worker reaches the engine: TLS (default; the public address behind the Cloudflare tunnel) or `none` for a local Hatchet                                                                                     |
-| `HATCHET_WORKER_HOST_PORT`                                         | API                                   | The private gRPC service the shared worker uses in the cluster, whatever public address tokens name for sandboxes                                                                                                         |
 
 With none of these set, Mako runs without workflows.
 
@@ -138,13 +136,13 @@ With none of these set, Mako runs without workflows.
 
 All under `/api/workspaces/<workspaceId>/workflows`:
 
-| Route                                  | Does                                                                                     |
-| -------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `GET /`                                | What is deployed, build errors, the workflows (with `active`), schedules and recent runs |
-| `GET /runs/<id>`                       | One run: its steps in order, with status, output, error and logs                         |
-| `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                     |
-| `POST /<name>/run`                     | Start a run: `{ input, sandbox }` (`sandbox` runs the caller's checkout)                 |
-| `PUT /<name>/active`                   | Turn the schedule and webhook on or off: `{ active }` (admins)                           |
-| `PUT /<name>/webhook`                  | Add or remove the workflow's webhook: `{ enabled }`                                      |
+| Route                                  | Does                                                                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`                                | What is deployed, build errors, the workflows (with `active`), schedules and recent runs                                                        |
+| `GET /runs/<id>`                       | One run: its steps in order, with status, output, error and logs                                                                                |
+| `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                                                                            |
+| `POST /<name>/run`                     | Start a run: `{ input }` answers `runId`; `{ input, sandbox: true }` runs the caller's checkout in their sandbox and answers the finished `run` |
+| `PUT /<name>/active`                   | Turn the schedule and webhook on or off: `{ active }` (admins)                                                                                  |
+| `PUT /<name>/webhook`                  | Add or remove the workflow's webhook: `{ enabled }`                                                                                             |
 
 Over MCP, an API key needs the `workflows:run` scope to start runs or add webhooks; looking needs only `mcp`.

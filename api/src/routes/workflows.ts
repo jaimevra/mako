@@ -31,18 +31,18 @@ import {
 } from "../middleware/workspace.middleware";
 import { AUTH_SECURITY, OPEN_RESPONSES, createRouter } from "../openapi/core";
 import { trackUsage } from "../services/llm-usage.service";
+import { workspaceService } from "../services/workspace.service";
 import { runStepAgent } from "../workflows/agent";
 import {
   HatchetError,
   ensureWorkspaceTenant,
   readWorkspaceTenant,
   requireTenant,
-  sandboxPrefix,
   startRun,
 } from "../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
-import { ensureSandboxWorker } from "../workflows/sandbox";
+import { runInSandbox } from "../workflows/sandbox";
 import { isWebhookSecret, setActive, setWebhook } from "../workflows/webhook";
 
 const logger = loggers.api("workflows");
@@ -121,10 +121,7 @@ workflowRoutes.openapi(
     return c.json(
       {
         success: true as const,
-        ...(await readWorkflowsOverview(workspaceId, RUNS_SHOWN, {
-          asAdmin: mayChange(c),
-          userId: c.get("user")?.id,
-        })),
+        ...(await readWorkflowsOverview(workspaceId, RUNS_SHOWN, mayChange(c))),
       },
       200,
     );
@@ -204,7 +201,7 @@ workflowRoutes.openapi(
     path: "/{name}/run",
     tags: ["Workflows"],
     summary:
-      "Start a run of a workflow: the deployed one, or with `sandbox` the caller's checkout",
+      "Start a run of the deployed workflow (answers its runId), or with `sandbox` run the caller's checkout in their sandbox (answers the finished run)",
     security: AUTH_SECURITY,
     request: {
       params: NameParam,
@@ -225,19 +222,15 @@ workflowRoutes.openapi(
   async c => {
     const { workspaceId, name } = c.req.valid("param");
     const body = await c.req.json().catch(() => ({}));
-    const userId = c.get("user")?.id;
-    let tenant;
-    let workflowName = name;
     if (body?.sandbox === true) {
+      const userId = c.get("user")?.id;
       if (!userId) {
         throw new HatchetError("A sandbox needs a signed-in user", 400);
       }
-      tenant = await ensureSandboxWorker(workspaceId, userId);
-      workflowName = `${sandboxPrefix(userId)}${name}`;
-    } else {
-      tenant = await requireTenant(workspaceId);
+      const run = await runInSandbox(workspaceId, userId, name, body.input);
+      return c.json({ success: true as const, run }, 200);
     }
-    const runId = await startRun(tenant, workflowName, {
+    const runId = await startRun(await requireTenant(workspaceId), name, {
       input: body?.input,
       trigger: c.get("authType") === "session" ? "ui" : "api",
     });
@@ -310,27 +303,37 @@ workflowHookRoutes.post(
           .select("workflows.webhooks workflows.active")
           .lean()
       : null;
-    // The test URL (`?sandbox=<user>`) starts that person's sandbox version
-    // whenever their sandbox worker is up; the production URL works while
-    // the workflow is active, like its schedule.
-    const sandbox = c.req.query("sandbox");
-    const tenant =
-      isWebhookSecret(workspace?.workflows?.webhooks, name, secret) &&
-      (sandbox || workspace?.workflows?.active?.includes(name))
-        ? await readWorkspaceTenant(workspaceId)
-        : null;
+    const { webhooks, active } = workspace?.workflows ?? {};
     // One answer for every wrong URL: it does not say which part was wrong.
-    if (!tenant) return c.json({ error: "Not found" }, 404);
+    if (!isWebhookSecret(webhooks, name, secret)) {
+      return c.json({ error: "Not found" }, 404);
+    }
     const body: unknown = await c.req.json().catch(() => ({}));
     const input =
       body && typeof body === "object" && !Array.isArray(body)
         ? body
         : { body };
-    const workflowName = sandbox ? `${sandboxPrefix(sandbox)}${name}` : name;
-    const runId = await startRun(tenant, workflowName, {
-      input,
-      trigger: "webhook",
-    });
+    // The test URL: `?sandbox=<user id>` runs that member's checkout in
+    // their sandbox with this body and answers with the finished run. It
+    // works whether or not the workflow is active.
+    const tester = c.req.query("sandbox");
+    if (tester) {
+      const member = await workspaceService.hasRole(workspaceId, tester, [
+        "owner",
+        "admin",
+        "member",
+      ]);
+      if (!member) return c.json({ error: "Not found" }, 404);
+      return c.json({
+        run: await runInSandbox(workspaceId, tester, name, input),
+      });
+    }
+    // The production URL works while the workflow is active, like its schedule.
+    const tenant = active?.includes(name)
+      ? await readWorkspaceTenant(workspaceId)
+      : null;
+    if (!tenant) return c.json({ error: "Not found" }, 404);
+    const runId = await startRun(tenant, name, { input, trigger: "webhook" });
     return c.json({ runId }, 202);
   },
 );

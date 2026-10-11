@@ -8,14 +8,10 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { workspaceService } from "../../services/workspace.service";
-import {
-  requireTenant,
-  sandboxPrefix,
-  startRun,
-} from "../../workflows/hatchet";
+import { requireTenant, startRun } from "../../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY } from "../../workflows/policy";
-import { ensureSandboxWorker } from "../../workflows/sandbox";
+import { runInSandbox } from "../../workflows/sandbox";
 import { setActive, setWebhook } from "../../workflows/webhook";
 
 /** How many recent runs an agent is shown. */
@@ -42,7 +38,7 @@ export function createWorkflowTools({
   return {
     workflows_status: tool({
       description:
-        "Look at this workspace's workflows. Without runId: what is deployed (`deployment`: the code on main), the build error if a commit did not start (`buildError` — the old code keeps running), whether your sandbox worker is up (`sandbox.running`), the workflows (each with `active`, and `webhookUrl` when one has a webhook) and schedules, and the last runs (`sandbox` set on a sandbox run). With runId: that run's steps, each with status, output, error and its last log lines (what the step wrote with ctx.logger). While `liveSha` is not yet `targetSha` the worker has not switched to the new commit; call again in a few seconds.",
+        "Look at this workspace's workflows. Without runId: what is deployed (`deployment`: the code on main), the build error if a commit did not start (`buildError` — the old code keeps running), the workflows (each with `active`, and `webhookUrl` when one has a webhook) and schedules, and the last runs. With runId: that run's steps, each with status, output, error and its last log lines (what the step wrote with ctx.logger). While `liveSha` is not yet `targetSha` the worker has not switched to the new commit; call again in a few seconds.",
       inputSchema: z.object({
         runId: z
           .string()
@@ -54,10 +50,11 @@ export function createWorkflowTools({
           if (!runId) {
             return {
               success: true,
-              ...(await readWorkflowsOverview(workspaceId, RECENT_RUNS, {
-                asAdmin: await mayChange(),
-                userId,
-              })),
+              ...(await readWorkflowsOverview(
+                workspaceId,
+                RECENT_RUNS,
+                await mayChange(),
+              )),
             };
           }
           const tenant = await requireTenant(workspaceId);
@@ -70,7 +67,7 @@ export function createWorkflowTools({
 
     workflows_run: tool({
       description:
-        "Start a run of a workflow and get its runId; follow it with workflows_status({ runId }). With `sandbox: true` it runs the workflow as it is in your checkout right now, uncommitted edits included, with real data and no schedule: that is how a change is tested. Without it, the deployed code on main runs, active or not. The first sandbox run after a change takes a few seconds longer while the sandbox worker loads it.",
+        "Run a workflow. With `sandbox: true` it runs the workflow as it is in your checkout right now, uncommitted edits included, inside your sandbox, with real data and no schedule, and returns the finished run: each step's status, output, error and log lines. That is how a change is tested; it takes about ten seconds plus the workflow's own time, five minutes at most. Without `sandbox`, the deployed code on main is started, active or not, and you get a runId to follow with workflows_status({ runId }).",
       inputSchema: z.object({
         workflowId: z
           .string()
@@ -90,22 +87,22 @@ export function createWorkflowTools({
           if (!(await mayRun())) {
             return { success: false, error: "Viewers cannot start runs." };
           }
-          let tenant;
-          let workflowName = workflowId;
           if (sandbox) {
             if (!userId) {
               return { success: false, error: "A sandbox needs a person." };
             }
-            tenant = await ensureSandboxWorker(workspaceId, userId);
-            workflowName = `${sandboxPrefix(userId)}${workflowId}`;
-          } else {
-            tenant = await requireTenant(workspaceId);
+            return {
+              success: true,
+              sandbox: true,
+              run: await runInSandbox(workspaceId, userId, workflowId, input),
+            };
           }
-          const runId = await startRun(tenant, workflowName, {
-            input,
-            trigger: "agent",
-          });
-          return { success: true, runId, workflowId, sandbox: !!sandbox };
+          const runId = await startRun(
+            await requireTenant(workspaceId),
+            workflowId,
+            { input, trigger: "agent" },
+          );
+          return { success: true, runId, workflowId };
         } catch (error) {
           return failure(error);
         }
