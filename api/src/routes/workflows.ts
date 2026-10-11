@@ -37,11 +37,13 @@ import {
   ensureWorkspaceTenant,
   readWorkspaceTenant,
   requireTenant,
+  sandboxPrefix,
   startRun,
 } from "../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
-import { isWebhookSecret, setWebhook } from "../workflows/webhook";
+import { ensureSandboxWorker } from "../workflows/sandbox";
+import { isWebhookSecret, setActive, setWebhook } from "../workflows/webhook";
 
 const logger = loggers.api("workflows");
 
@@ -79,7 +81,7 @@ const NameParam = WorkspaceParam.extend({
   name: z.string().openapi({ param: { name: "name", in: "path" } }),
 });
 
-/** Viewers look; members start runs; admins add webhooks and see them. */
+/** Viewers look; members start runs; admins activate and add webhooks. */
 const mayRun = (c: AuthenticatedContext) =>
   ["owner", "admin", "member"].includes(c.get("memberRole") ?? "");
 const mayChange = (c: AuthenticatedContext) =>
@@ -89,7 +91,7 @@ workflowRoutes.use("*", unifiedAuthMiddleware, requireWorkspace);
 workflowRoutes.use("*", async (c: AuthenticatedContext, next) => {
   const allowed =
     c.req.method === "GET" ||
-    (c.req.path.endsWith("/webhook") ? mayChange(c) : mayRun(c));
+    (c.req.path.endsWith("/run") ? mayRun(c) : mayChange(c));
   if (!allowed) {
     return c.json(
       {
@@ -109,8 +111,7 @@ workflowRoutes.openapi(
     method: "get",
     path: "/",
     tags: ["Workflows"],
-    summary:
-      "What is deployed (live and preview), the workflows, schedules and recent runs",
+    summary: "What is deployed, the workflows, schedules and recent runs",
     security: AUTH_SECURITY,
     request: { params: WorkspaceParam },
     responses: OPEN_RESPONSES,
@@ -120,7 +121,10 @@ workflowRoutes.openapi(
     return c.json(
       {
         success: true as const,
-        ...(await readWorkflowsOverview(workspaceId, RUNS_SHOWN, mayChange(c))),
+        ...(await readWorkflowsOverview(workspaceId, RUNS_SHOWN, {
+          asAdmin: mayChange(c),
+          userId: c.get("user")?.id,
+        })),
       },
       200,
     );
@@ -199,7 +203,8 @@ workflowRoutes.openapi(
     method: "post",
     path: "/{name}/run",
     tags: ["Workflows"],
-    summary: "Start a run of a workflow, or of its preview",
+    summary:
+      "Start a run of a workflow: the deployed one, or with `sandbox` the caller's checkout",
     security: AUTH_SECURITY,
     request: {
       params: NameParam,
@@ -209,7 +214,7 @@ workflowRoutes.openapi(
           "application/json": {
             schema: z.object({
               input: z.record(z.string(), z.unknown()).optional(),
-              preview: z.boolean().optional(),
+              sandbox: z.boolean().optional(),
             }),
           },
         },
@@ -220,12 +225,46 @@ workflowRoutes.openapi(
   async c => {
     const { workspaceId, name } = c.req.valid("param");
     const body = await c.req.json().catch(() => ({}));
-    const runId = await startRun(await requireTenant(workspaceId), name, {
+    const userId = c.get("user")?.id;
+    const tenant = await requireTenant(workspaceId);
+    let workflowName = name;
+    if (body?.sandbox === true) {
+      if (!userId) {
+        throw new HatchetError("A sandbox needs a signed-in user", 400);
+      }
+      await ensureSandboxWorker(tenant, workspaceId, userId);
+      workflowName = `${sandboxPrefix(userId)}${name}`;
+    }
+    const runId = await startRun(tenant, workflowName, {
       input: body?.input,
-      preview: body?.preview === true,
       trigger: c.get("authType") === "session" ? "ui" : "api",
     });
     return c.json({ success: true as const, runId }, 200);
+  },
+);
+
+workflowRoutes.openapi(
+  createRoute({
+    method: "put",
+    path: "/{name}/active",
+    tags: ["Workflows"],
+    summary: "Turn a workflow's schedule and webhook on or off",
+    security: AUTH_SECURITY,
+    request: {
+      params: NameParam,
+      body: {
+        required: true,
+        content: {
+          "application/json": { schema: z.object({ active: z.boolean() }) },
+        },
+      },
+    },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    const { workspaceId, name } = c.req.valid("param");
+    await setActive(workspaceId, name, c.req.valid("json").active);
+    return c.json({ success: true as const }, 200);
   },
 );
 
@@ -266,12 +305,18 @@ workflowHookRoutes.post(
     const { workspaceId, name, secret } = c.req.param();
     const workspace = Types.ObjectId.isValid(workspaceId)
       ? await Workspace.findById(workspaceId)
-          .select("workflows.webhooks")
+          .select("workflows.webhooks workflows.active")
           .lean()
       : null;
-    const tenant = isWebhookSecret(workspace?.workflows?.webhooks, name, secret)
-      ? await readWorkspaceTenant(workspaceId)
-      : null;
+    // The test URL (`?sandbox=<user>`) starts that person's sandbox version
+    // whenever their sandbox worker is up; the production URL works while
+    // the workflow is active, like its schedule.
+    const sandbox = c.req.query("sandbox");
+    const tenant =
+      isWebhookSecret(workspace?.workflows?.webhooks, name, secret) &&
+      (sandbox || workspace?.workflows?.active?.includes(name))
+        ? await readWorkspaceTenant(workspaceId)
+        : null;
     // One answer for every wrong URL: it does not say which part was wrong.
     if (!tenant) return c.json({ error: "Not found" }, 404);
     const body: unknown = await c.req.json().catch(() => ({}));
@@ -279,7 +324,11 @@ workflowHookRoutes.post(
       body && typeof body === "object" && !Array.isArray(body)
         ? body
         : { body };
-    const runId = await startRun(tenant, name, { input, trigger: "webhook" });
+    const workflowName = sandbox ? `${sandboxPrefix(sandbox)}${name}` : name;
+    const runId = await startRun(tenant, workflowName, {
+      input,
+      trigger: "webhook",
+    });
     return c.json({ runId }, 202);
   },
 );
@@ -325,31 +374,25 @@ const asWorker =
       : c.json({ error: "Invalid worker key" }, 401);
   };
 
-const SLOTS = ["live", "preview"] as const;
-type Slot = (typeof SLOTS)[number];
-
-// What the worker should run. It polls this: the commit for each slot, and
-// the Hatchet token to connect with, so the worker holds one credential only.
+// What the worker should run. It polls this: the commit, which workflows
+// have their triggers on, and the Hatchet token to connect with, so the
+// worker holds one credential only.
 workflowRuntimeRoutes.get(
   "/head",
   asWorker(async (c, { workspaceId }) => {
     const [workspace, tenant] = await Promise.all([
       Workspace.findById(workspaceId)
-        .select("workflows.live workflows.preview")
+        .select("workflows.live workflows.active")
         .lean(),
       readWorkspaceTenant(workspaceId),
     ]);
-    const slot = (name: Slot) => {
-      const wanted = workspace?.workflows?.[name];
-      return wanted ? { sha: wanted.sha, tree: wanted.tree } : null;
-    };
-    const live = slot("live");
-    const preview = slot("preview");
+    const wanted = workspace?.workflows?.live;
+    const live = wanted ? { sha: wanted.sha, tree: wanted.tree } : null;
     // Something to run and no token yet (a workspace deployed before tokens
     // were saved per workspace): the worker's poll gives it one.
     const token =
       tenant?.token ??
-      (live || preview
+      (live
         ? await ensureWorkspaceTenant(workspaceId)
             .then(t => t.token)
             .catch((error: unknown) => {
@@ -360,39 +403,41 @@ workflowRuntimeRoutes.get(
               return null;
             })
         : null);
-    return c.json({ hatchetToken: token, live, preview });
+    return c.json({
+      hatchetToken: token,
+      live,
+      active: workspace?.workflows?.active ?? [],
+    });
   }),
 );
 
-// The worker reports each switch of a slot: the commit it now runs, or the
-// commit it could not start and why. This is what the UI shows as live and
-// build error.
+// The worker reports each switch: the commit it now runs, or the commit it
+// could not start and why. This is what the UI shows as live and build
+// error. A report for a commit that is no longer wanted changes nothing.
 workflowRuntimeRoutes.post(
   "/status",
   asWorker(async (c, { workspaceId }) => {
     const body = (await c.req.json().catch(() => null)) as {
-      slot?: unknown;
       sha?: unknown;
       error?: unknown;
     } | null;
-    const slot = SLOTS.find(name => name === body?.slot);
-    if (!slot || typeof body?.sha !== "string" || !isOid(body.sha)) {
+    if (typeof body?.sha !== "string" || !isOid(body.sha)) {
       return c.json({ error: "Invalid report" }, 400);
     }
     await Workspace.updateOne(
-      { _id: new Types.ObjectId(workspaceId) },
+      { _id: new Types.ObjectId(workspaceId), "workflows.live.sha": body.sha },
       typeof body.error === "string"
         ? {
             $set: {
-              [`workflows.${slot}.failed`]: {
+              "workflows.live.failed": {
                 sha: body.sha,
                 error: body.error.slice(-MAX_BUILD_ERROR_CHARS),
               },
             },
           }
         : {
-            $set: { [`workflows.${slot}.running`]: { sha: body.sha } },
-            $unset: { [`workflows.${slot}.failed`]: "" },
+            $set: { "workflows.live.running": { sha: body.sha } },
+            $unset: { "workflows.live.failed": "" },
           },
     );
     return c.json({ ok: true });
@@ -503,25 +548,20 @@ workflowRuntimeRoutes.get(
     const sha = c.req.param("sha");
     if (!isOid(sha)) return c.json({ error: "Invalid commit" }, 400);
     // A fresh API instance has an empty disk: restore the repository and this
-    // commit from the mirror first. A preview's commit is on its own branch.
+    // commit from the mirror first.
     const workspace = await Workspace.findById(workspaceId)
-      .select("workflows.live workflows.preview")
+      .select("workflows.live")
       .lean();
-    const { live, preview } = workspace?.workflows ?? {};
     // Only what the worker was told to run: no browsing the repository.
-    if (sha !== live?.sha && sha !== preview?.sha) {
+    if (sha !== workspace?.workflows?.live?.sha) {
       return c.json({ error: "Not a deployed commit" }, 404);
     }
-    await ensureCommitLocally(
-      workspaceId,
-      sha,
-      preview?.sha === sha ? preview.branch : undefined,
-    );
+    await ensureCommitLocally(workspaceId, sha);
     const repoDir = repoDirFor(workspaceId);
     const present = await resolveCommit(repoDir, sha).catch(() => null);
     if (!present) {
-      // Another instance took the push and the mirror does not have it yet
-      // (previews never push to the mirror): the worker asks again later.
+      // Another instance took the push and the mirror does not have it yet:
+      // the worker asks again later.
       return c.json({ error: "That commit is not on this instance" }, 404);
     }
     const tarball = await runGitBuffer([

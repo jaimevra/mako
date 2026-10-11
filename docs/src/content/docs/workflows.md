@@ -1,9 +1,11 @@
 ---
 title: Workflows (preview)
-description: Write scheduled and multi-step jobs as TypeScript files in your workspace repo. A merge to main deploys them, Hatchet runs them.
+description: Write scheduled and multi-step jobs as TypeScript files in your workspace repo. A commit on main deploys them, Hatchet runs them.
 ---
 
-A workflow is a TypeScript file in your workspace repo, in the `workflows/` folder, written with [Hatchet](https://hatchet.run)'s own SDK. Merge to `main` and it is deployed. Hatchet runs it: schedules, retries and timeouts are Hatchet's.
+A workflow is a TypeScript file in your workspace repo, in the `workflows/` folder, written with [Hatchet](https://hatchet.run)'s own SDK. Commit it on `main` and it is deployed. Hatchet runs it: schedules, retries and timeouts are Hatchet's.
+
+Three things, each one verb. **Sandbox**: Run → Sandbox (or `workflows_run` with `sandbox: true`) runs the workflow as it is in your sandbox right now, uncommitted edits included, with real data and no schedule; your sandbox runs a worker of its own, next to production, under your name. **Main**: a commit on `main` is the deploy. **Active**: a deployed workflow starts inactive, runnable with Run, schedule and webhook off; when a run looks right, an admin flips it to Active on its tab, and from then on it runs by itself. The same as testing and then activating an n8n workflow.
 
 **Preview.** Workflows are optional: an installation without a Hatchet runs without them. With one, they have their own panel in Mako: the workflows, their files and their runs.
 
@@ -48,7 +50,7 @@ Every folder with a `workflow.ts` is picked up. There is no list to keep.
 | A person | The Run button, with a JSON input                                                                      |
 | An agent | `workflows_run`                                                                                        |
 
-Workspace admins write, merge and remove workflows and add webhooks; members and the agent on their behalf start runs. A webhook is off until an admin adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. A preview has no schedule and no webhook.
+Anyone with the member role writes workflows in their sandbox and tests them there; only workspace admins put them on `main`, activate them and add webhooks. A webhook is off until an admin adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. The schedule and the webhook start runs only while the workflow is active; Run always works. The webhook URL with `?sandbox=<your user id>` is a test URL: it starts your sandbox version whenever your sandbox worker is up.
 
 ## Using Mako from a step
 
@@ -76,7 +78,7 @@ const summary = await generateText({
 
 ## How a deploy works
 
-1. You merge a change to `workflows/` into `main`.
+1. You commit a change to `workflows/` on `main`.
 2. Mako saves that commit as the one to run.
 3. The worker notices within ten seconds, typechecks the commit and starts it.
 4. Once the new code is up, the old code finishes its running tasks and stops.
@@ -96,7 +98,7 @@ Mako needs two things: a Hatchet API token, and a worker.
    docker compose --profile workflows up -d
    ```
 
-3. Ask the agent for a workflow, or add `workflows/<name>/workflow.ts` to the workspace repo and merge to `main`.
+3. Ask the agent for a workflow, or add `workflows/<name>/workflow.ts` to the workspace repo on `main`.
 
 Hatchet dashboard: `http://localhost:8086` (`admin@example.com` / `Admin123!!`). The link icon in the Workflows panel opens it. This bundled Hatchet is for testing, not for production.
 
@@ -133,12 +135,13 @@ With none of these set, Mako runs without workflows.
 
 All under `/api/workspaces/<workspaceId>/workflows`:
 
-| Route                                  | Does                                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `GET /`                                | What is deployed (live and preview), build errors, the workflows, schedules and recent runs |
-| `GET /runs/<id>`                       | One run: its steps in order, with status, output, error and logs                            |
-| `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                        |
-| `POST /<name>/run`                     | Start a run: `{ input, preview }`                                                           |
-| `PUT /<name>/webhook`                  | Add or remove the workflow's webhook: `{ enabled }`                                         |
+| Route                                  | Does                                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `GET /`                                | What is deployed, build errors, the workflows (with `active`), schedules and recent runs |
+| `GET /runs/<id>`                       | One run: its steps in order, with status, output, error and logs                         |
+| `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                     |
+| `POST /<name>/run`                     | Start a run: `{ input, sandbox }` (`sandbox` runs the caller's checkout)                 |
+| `PUT /<name>/active`                   | Turn the schedule and webhook on or off: `{ active }` (admins)                           |
+| `PUT /<name>/webhook`                  | Add or remove the workflow's webhook: `{ enabled }`                                      |
 
 Over MCP, an API key needs the `workflows:run` scope to start runs or add webhooks; looking needs only `mcp`.

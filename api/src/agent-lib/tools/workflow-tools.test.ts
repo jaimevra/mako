@@ -1,8 +1,8 @@
 /**
- * workflows_status and workflows_run against a real (in-memory) Mongo and a
- * stand-in Hatchet: what the agent is told about live and preview code, that
- * a preview run starts the prefixed workflow, and that Hatchet's responses
- * are trimmed to what a model needs.
+ * The workflow tools against a real (in-memory) Mongo and a stand-in
+ * Hatchet: what the agent is told about what is deployed, that a run starts
+ * the workflow, that the switches are an admin's, and that Hatchet's
+ * responses are trimmed to what a model needs.
  */
 import assert from "node:assert/strict";
 import { MongoMemoryServer } from "mongodb-memory-server";
@@ -37,7 +37,7 @@ const call = (
 const requests: Array<{ method: string; path: string; body?: any }> = [];
 const responses: Record<string, unknown> = {
   [`GET /api/v1/tenants/${TENANT}/workflows`]: {
-    rows: [{ name: "daily-digest" }, { name: "preview_daily-digest" }],
+    rows: [{ name: "daily-digest" }, { name: "weekly-report" }],
   },
   [`GET /api/v1/tenants/${TENANT}/workflows/crons`]: {
     rows: [{ workflowName: "daily-digest", cron: "0 7 * * 1-5" }],
@@ -46,7 +46,7 @@ const responses: Record<string, unknown> = {
     rows: [
       {
         metadata: { id: RUN },
-        workflowName: "preview_daily-digest",
+        workflowName: "daily-digest",
         status: "FAILED",
         duration: 1200,
         errorMessage: "boom",
@@ -57,13 +57,17 @@ const responses: Record<string, unknown> = {
   [`POST /api/v1/stable/tenants/${TENANT}/workflow-runs/trigger`]: {
     run: { metadata: { id: RUN } },
   },
+  // The member's sandbox worker is up; nobody else's is.
+  [`GET /api/v1/tenants/${TENANT}/worker`]: {
+    rows: [{ name: "sb_member_sandbox", status: "ACTIVE" }],
+  },
   [`GET /api/v1/stable/workflow-runs/${RUN}`]: {
     run: { metadata: { id: RUN }, status: "FAILED", input: { limit: 5 } },
     // As Hatchet returns them: in no order, the error as JSON.
     tasks: [
       {
         metadata: { id: "44444444-4444-4444-4444-444444444444" },
-        actionId: "preview_daily-digest:summarize",
+        actionId: "daily-digest:summarize",
         displayName: "summarize-1791452596182",
         taskInsertedAt: "2026-10-08T09:43:16Z",
         status: "CANCELLED",
@@ -71,7 +75,7 @@ const responses: Record<string, unknown> = {
       },
       {
         metadata: { id: TASK },
-        actionId: "preview_daily-digest:load",
+        actionId: "daily-digest:load",
         displayName: "load-1791452586494",
         taskInsertedAt: "2026-10-08T09:43:06Z",
         status: "FAILED",
@@ -114,13 +118,13 @@ async function main() {
       createdBy: "tester",
       workflows: {
         hatchetToken: encryptString(TOKEN),
-        live: { sha: SHA_A, tree: "ta", running: { sha: SHA_A } },
-        preview: {
-          branch: "workflow/x",
+        live: {
           sha: SHA_B,
           tree: "tb",
+          running: { sha: SHA_A },
           failed: { sha: SHA_B, error: "error TS2322" },
         },
+        active: ["weekly-report"],
       },
     });
     await WorkspaceMember.collection.insertMany([
@@ -133,20 +137,21 @@ async function main() {
     const admin = as("admin");
     const tools = as("member");
 
-    // The overview separates live from preview, and never leaks the token.
+    // The overview: what runs, what was wanted and did not build, which
+    // workflows are active. It never leaks the token.
     const overview = await call(tools, "workflows_status", {});
     assert.equal(overview.success, true);
     // No repository is linked to this workspace: the screen prompts for one.
     assert.equal(overview.repoLinked, false);
     assert.equal(overview.deployment.liveSha, SHA_A);
-    assert.equal(overview.deployment.buildError, null);
-    assert.equal(overview.preview.branch, "workflow/x");
-    assert.equal(overview.preview.buildError, "error TS2322");
+    assert.equal(overview.deployment.targetSha, SHA_B);
+    assert.equal(overview.deployment.buildError, "error TS2322");
     assert.deepEqual(overview.workflows, [
       // A member is not shown webhooks; an admin sees `webhookUrl: null`.
-      { workflowId: "daily-digest", preview: false },
-      { workflowId: "daily-digest", preview: true },
+      { workflowId: "daily-digest", active: false },
+      { workflowId: "weekly-report", active: true },
     ]);
+    assert.equal(overview.mayChange, false);
     assert.equal(
       (await call(admin, "workflows_status", {})).workflows[0].webhookUrl,
       null,
@@ -157,7 +162,6 @@ async function main() {
     assert.deepEqual(overview.recentRuns[0], {
       runId: RUN,
       workflowId: "daily-digest",
-      preview: true,
       status: "FAILED",
       startedAt: undefined,
       durationMs: 1200,
@@ -166,28 +170,29 @@ async function main() {
     });
     assert.ok(!JSON.stringify(overview).includes(TOKEN));
 
-    // A live run starts the workflow by its name; a preview run, its copy.
+    // A run starts the workflow by its name, active or not.
     const live = await call(tools, "workflows_run", {
       workflowId: "daily-digest",
       input: { limit: 5 },
     });
-    assert.deepEqual(
-      [live.success, live.runId, live.preview],
-      [true, RUN, false],
-    );
+    assert.deepEqual([live.success, live.runId], [true, RUN]);
     assert.equal(requests.at(-1)?.body.workflowName, "daily-digest");
     assert.deepEqual(requests.at(-1)?.body.input, { limit: 5 });
     assert.equal(requests.at(-1)?.body.additionalMetadata.trigger, "agent");
-    await call(tools, "workflows_run", {
+
+    // A sandbox run starts the caller's own copy, once their sandbox worker
+    // is listed by Hatchet (it is, for the member).
+    const sandboxed = await call(tools, "workflows_run", {
       workflowId: "daily-digest",
-      preview: true,
+      sandbox: true,
     });
-    assert.equal(requests.at(-1)?.body.workflowName, "preview_daily-digest");
+    assert.deepEqual([sandboxed.success, sandboxed.sandbox], [true, true]);
+    assert.equal(requests.at(-1)?.body.workflowName, "sb_member_daily-digest");
+    assert.equal(overview.sandbox.running, true);
 
     // One run: its steps, with long text and long logs cut down.
     const detail = await call(tools, "workflows_status", { runId: RUN });
     assert.equal(detail.run.workflowId, "daily-digest");
-    assert.equal(detail.run.preview, true);
     assert.equal(detail.run.input, '{"limit":5}');
     const [step, next] = detail.run.steps;
     assert.equal(step.step, "load");
@@ -213,7 +218,21 @@ async function main() {
       workflowId: "daily-digest",
     });
     assert.equal(refused.success, false);
-    assert.equal(requests.length, before + 3, "no run was started");
+    assert.equal(requests.length, before + 4, "no run was started");
+
+    // The switch is an admin's: on, off, and never a name that is not one.
+    const activeOf = async () =>
+      (await Workspace.findById(id).select("workflows.active").lean())
+        ?.workflows?.active;
+    const activate = (who: typeof tools, workflowId: string, active: boolean) =>
+      call(who, "workflows_activate", { workflowId, active });
+    assert.equal((await activate(tools, "daily-digest", true)).success, false);
+    const on = await activate(admin, "daily-digest", true);
+    assert.deepEqual([on.success, on.active], [true, true]);
+    assert.deepEqual(await activeOf(), ["weekly-report", "daily-digest"]);
+    await activate(admin, "daily-digest", false);
+    assert.deepEqual(await activeOf(), ["weekly-report"]);
+    assert.equal((await activate(admin, "../x", true)).success, false);
 
     // A webhook is added per workflow by an admin; a member neither adds
     // nor sees one.
@@ -243,15 +262,6 @@ async function main() {
       enabled: false,
     });
     assert.equal(removed.webhookUrl, null);
-    assert.equal(
-      (
-        await call(admin, "workflows_webhook", {
-          workflowId: "preview_daily-digest",
-          enabled: true,
-        })
-      ).success,
-      false,
-    );
 
     // A Hatchet failure is an answer, not a throw.
     const missing = await call(tools, "workflows_run", { workflowId: "nope" });

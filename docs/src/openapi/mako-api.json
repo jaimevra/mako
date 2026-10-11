@@ -31346,7 +31346,7 @@
         "tags": [
           "Workflows"
         ],
-        "summary": "What is deployed (live and preview), the workflows, schedules and recent runs",
+        "summary": "What is deployed, the workflows, schedules and recent runs",
         "security": [
           {
             "cookieAuth": []
@@ -31569,7 +31569,7 @@
         "tags": [
           "Workflows"
         ],
-        "summary": "Start a run of a workflow, or of its preview",
+        "summary": "Start a run of a workflow: the deployed one, or with `sandbox` the caller's checkout",
         "security": [
           {
             "cookieAuth": []
@@ -31607,7 +31607,7 @@
                     "type": "object",
                     "additionalProperties": {}
                   },
-                  "preview": {
+                  "sandbox": {
                     "type": "boolean"
                   }
                 }
@@ -31658,6 +31658,101 @@
           }
         },
         "operationId": "post_api_workspaces_workspaceId_workflows_name_run"
+      }
+    },
+    "/api/workspaces/{workspaceId}/workflows/{name}/active": {
+      "put": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Turn a workflow's schedule and webhook on or off",
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "workspaceId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "name",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "active"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/GenericJsonResponse"
+                    },
+                    {
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "put_api_workspaces_workspaceId_workflows_name_active"
       }
     },
     "/api/workspaces/{workspaceId}/workflows/{name}/webhook": {

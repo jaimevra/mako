@@ -1,9 +1,12 @@
-// One Hatchet worker running the workflows of one commit, started by
-// entrypoint.mjs. A workflow is `workflows/<name>/workflow.ts` whose default
-// export is the workflow named `<name>`. A preview (PREVIEW=1) gets prefixed
-// names and no schedules or event triggers: it runs only when started.
+// One Hatchet worker running the workflows under WORKFLOWS_ROOT, started by
+// entrypoint.mjs (a commit, production) or dev.mjs (a checkout, a person's
+// sandbox). A workflow is `workflows/<name>/workflow.ts` whose default export
+// is the workflow named `<name>`. A workflow keeps its schedule and event
+// triggers only when it is active (WORKFLOWS_ACTIVE, comma-separated names);
+// a sandbox worker (SANDBOX=1) registers under the namespace it was given
+// and keeps none: it runs only when started.
 //
-// Env: WORKFLOWS_ROOT, GIT_SHA, HATCHET_CLIENT_TOKEN.
+// Env: WORKFLOWS_ROOT, GIT_SHA, HATCHET_CLIENT_TOKEN, WORKFLOWS_ACTIVE, SANDBOX.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,11 +15,13 @@ import { register } from "tsx/esm/api";
 register();
 const READY_TIMEOUT_MS = 45_000;
 const dir = join(process.env.WORKFLOWS_ROOT, "workflows");
+const sandbox = Boolean(process.env.SANDBOX);
+const active = new Set((process.env.WORKFLOWS_ACTIVE ?? "").split(","));
 const load = file => import(pathToFileURL(join(dir, file)).href);
 
 const { hatchet } = await load("hatchet.ts");
-// The client has the token now; workflow code must not. A preview could
-// otherwise make its own client without the preview namespace.
+// The client has the token now; workflow code must not: it could otherwise
+// make its own client outside the sandbox's namespace.
 delete process.env.HATCHET_CLIENT_TOKEN;
 if (!hatchet) {
   console.error("workflows/hatchet.ts must export { hatchet }");
@@ -37,7 +42,7 @@ for (const entry of readdirSync(dir, { withFileTypes: true })) {
     );
     process.exit(1);
   }
-  if (process.env.PREVIEW) {
+  if (sandbox || !active.has(name)) {
     for (const trigger of ["on", "onCrons", "onEvents"]) {
       delete workflow.definition[trigger];
     }
@@ -67,7 +72,7 @@ if (workflows.length === 0) {
   await new Promise(() => {});
 }
 
-const worker = await hatchet.worker("workspace", {
+const worker = await hatchet.worker(sandbox ? "sandbox" : "workspace", {
   workflows,
   slots: 50,
   labels: { git_sha: process.env.GIT_SHA },
@@ -90,6 +95,9 @@ await worker.waitUntilReady(READY_TIMEOUT_MS).catch(err => {
   process.exit(1);
 });
 console.log(
-  `Worker started at ${process.env.GIT_SHA}: ${workflows.length} workflows`,
+  `Worker started at ${process.env.GIT_SHA}: ${workflows.length} workflows` +
+    (sandbox
+      ? " (sandbox)"
+      : `, ${workflows.filter(w => active.has(w.definition.name)).length} active`),
 );
 process.send?.("ready");

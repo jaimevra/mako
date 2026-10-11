@@ -13,6 +13,8 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -74,24 +76,6 @@ export const SMALL_CHIP_SX = {
   flexShrink: 0,
   "& .MuiChip-label": { px: 0.5 },
 } as const;
-
-export function VersionChip({
-  preview,
-  small,
-}: {
-  preview: boolean;
-  small?: boolean;
-}) {
-  return (
-    <Chip
-      label={preview ? "preview" : "live"}
-      size="small"
-      variant="outlined"
-      color={preview ? "info" : "default"}
-      sx={small ? SMALL_CHIP_SX : { height: 20 }}
-    />
-  );
-}
 
 function Note({ children }: { children: string }) {
   return (
@@ -155,27 +139,24 @@ function FileView({
 
 function RunDialog({
   workflowId,
-  hasPreview,
-  live,
+  deployed,
   initialInput,
   onClose,
   onRun,
 }: {
   workflowId: string;
-  /** Unmerged code of this workflow can be run. */
-  hasPreview: boolean;
-  /** False while the workflow exists only on the previewed branch. */
-  live: boolean;
+  /** The workflow is on main; otherwise only the sandbox can run it. */
+  deployed: boolean;
   initialInput: string;
   onClose: () => void;
   onRun: (
     input: Record<string, unknown>,
-    preview: boolean,
+    sandbox: boolean,
   ) => Promise<string | null>;
 }) {
   // Mounted only while open, so the initial state is the dialog's state.
-  const [version, setVersion] = useState<"live" | "preview">(
-    live ? "live" : "preview",
+  const [target, setTarget] = useState<"main" | "sandbox">(
+    deployed ? "main" : "sandbox",
   );
   const [input, setInput] = useState(initialInput);
   const [error, setError] = useState<string | null>(null);
@@ -196,7 +177,7 @@ function RunDialog({
     setBusy(true);
     const failure = await onRun(
       parsed as Record<string, unknown>,
-      version === "preview",
+      target === "sandbox",
     );
     setBusy(false);
     if (failure) setError(failure);
@@ -209,28 +190,30 @@ function RunDialog({
       <DialogContent
         sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 0.5 }}
       >
-        {hasPreview && (
-          <ToggleButtonGroup
-            exclusive
-            fullWidth
-            size="small"
-            color="primary"
-            value={version}
-            onChange={(_event, value) => value && setVersion(value)}
-            aria-label="Version"
-          >
+        <ToggleButtonGroup
+          exclusive
+          fullWidth
+          size="small"
+          color="primary"
+          value={target}
+          onChange={(_event, value) => value && setTarget(value)}
+          aria-label="What to run"
+        >
+          <Tooltip title="The deployed code on main">
             <ToggleButton
-              value="live"
-              disabled={!live}
+              value="main"
+              disabled={!deployed}
               sx={{ textTransform: "none" }}
             >
-              Live
+              Main
             </ToggleButton>
-            <ToggleButton value="preview" sx={{ textTransform: "none" }}>
-              Preview
+          </Tooltip>
+          <Tooltip title="Your checkout as it is now, uncommitted edits included. No schedule.">
+            <ToggleButton value="sandbox" sx={{ textTransform: "none" }}>
+              Sandbox
             </ToggleButton>
-          </ToggleButtonGroup>
-        )}
+          </Tooltip>
+        </ToggleButtonGroup>
         <TextField
           label="Input (JSON)"
           multiline
@@ -266,11 +249,13 @@ function RunsView({
   const fetchOverview = useWorkflowsStore(s => s.fetchOverview);
   const fetchRun = useWorkflowsStore(s => s.fetchRun);
   const startRun = useWorkflowsStore(s => s.run);
+  const setActive = useWorkflowsStore(s => s.setActive);
   const setWebhook = useWorkflowsStore(s => s.setWebhook);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const selectedRun = useWorkflowsStore(s =>
     selectedRunId ? s.runsById[selectedRunId] : undefined,
   );
@@ -319,21 +304,20 @@ function RunsView({
   }, [selectedRunId, runs]);
 
   const schedule = overview?.schedules?.find(s => s.workflowId === workflowId);
-  const entry = (preview: boolean) =>
-    overview?.workflows?.find(
-      w => w.preview === preview && w.workflowId === workflowId,
-    );
-  const live = entry(false);
-  const webhookUrl = live?.webhookUrl;
-  const hasPreview = Boolean(
-    overview?.preview && !overview.preview.buildError && entry(true),
-  );
+  const workflow = overview?.workflows?.find(w => w.workflowId === workflowId);
+  const active = Boolean(workflow?.active);
+  const webhookUrl = workflow?.webhookUrl;
   const deployment = overview?.deployment;
 
-  const toggleWebhook = async (enabled: boolean) => {
-    await setWebhook(workspaceId, workflowId, enabled);
+  // A switch or a webhook change: the next poll shows the result, and a
+  // refusal is shown in the bar.
+  const change = async (result: Promise<{ ok: boolean; error?: string }>) => {
+    const { ok, error: why } = await result;
+    setError(ok ? null : (why ?? "Failed"));
     void fetchOverview(workspaceId);
   };
+  const toggleWebhook = (enabled: boolean) =>
+    change(setWebhook(workspaceId, workflowId, enabled));
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -347,9 +331,50 @@ function RunsView({
         >
           Run
         </Button>
+        {workflow &&
+          (overview?.mayChange ? (
+            <Tooltip
+              title={
+                active
+                  ? "On: the schedule and webhook start runs."
+                  : "Off: it runs only when you press Run."
+              }
+            >
+              <FormControlLabel
+                sx={{ mr: 0, "& .MuiFormControlLabel-label": { fontSize: 13 } }}
+                label={active ? "Active" : "Inactive"}
+                control={
+                  <Switch
+                    size="small"
+                    checked={active}
+                    onChange={(_e, on) =>
+                      void change(setActive(workspaceId, workflowId, on))
+                    }
+                  />
+                }
+              />
+            </Tooltip>
+          ) : (
+            <Chip
+              label={active ? "Active" : "Inactive"}
+              size="small"
+              variant="outlined"
+              color={active ? "success" : "default"}
+              sx={{ height: 20 }}
+            />
+          ))}
         <Dim>
-          {schedule ? `Schedule: ${schedule.cron} (UTC)` : "No schedule"}
+          {schedule
+            ? `Schedule: ${schedule.cron} (UTC)`
+            : workflow
+              ? "No schedule"
+              : "Not on main yet"}
         </Dim>
+        {error && (
+          <Typography variant="caption" color="error.main">
+            {error}
+          </Typography>
+        )}
         {webhookUrl === null && (
           <Chip
             icon={<WebhookIcon size={12} />}
@@ -361,7 +386,7 @@ function RunsView({
           />
         )}
         {webhookUrl && (
-          <Tooltip title="POST JSON to this URL to start a run. Click to copy it; ✕ removes it.">
+          <Tooltip title="POST JSON to this URL to start a run while the workflow is active; add ?sandbox=<your user id> to run your sandbox version any time. Click to copy it; ✕ removes it.">
             <Chip
               icon={<WebhookIcon size={12} />}
               label={copied ? "Copied" : "Webhook"}
@@ -380,15 +405,14 @@ function RunsView({
         )}
         <Box sx={{ ml: "auto", display: "flex", gap: 1, flexWrap: "wrap" }}>
           {deployment?.liveSha && (
-            <>
-              <VersionChip preview={false} />
+            <Tooltip title="The commit the worker runs">
               <Chip
                 label={short(deployment.liveSha)}
                 size="small"
                 variant="outlined"
                 sx={{ height: 20, fontFamily: "monospace" }}
               />
-            </>
+            </Tooltip>
           )}
           {deployment?.buildError && (
             <Chip
@@ -399,16 +423,16 @@ function RunsView({
               sx={{ height: 20 }}
             />
           )}
-          {overview?.preview && (
-            <Chip
-              label={`preview · ${overview.preview.branch}${
-                overview.preview.buildError ? " · build failed" : ""
-              }`}
-              size="small"
-              variant="outlined"
-              color={overview.preview.buildError ? "error" : "info"}
-              sx={{ height: 20 }}
-            />
+          {overview?.sandbox?.running && (
+            <Tooltip title="Your sandbox worker is up: it runs your checkout">
+              <Chip
+                label="sandbox"
+                size="small"
+                variant="outlined"
+                color="info"
+                sx={{ height: 20 }}
+              />
+            </Tooltip>
           )}
         </Box>
       </Box>
@@ -476,7 +500,15 @@ function RunsView({
                       {status.label}
                       {isActiveRun(run.status) && <CircularProgress size={9} />}
                     </Typography>
-                    <VersionChip preview={run.preview} small />
+                    {run.sandbox && (
+                      <Chip
+                        label="sandbox"
+                        size="small"
+                        variant="outlined"
+                        color="info"
+                        sx={SMALL_CHIP_SX}
+                      />
+                    )}
                     {run.durationMs !== undefined && (
                       <Dim>{formatDuration(run.durationMs)}</Dim>
                     )}
@@ -542,7 +574,15 @@ function RunsView({
                   borderColor: statusOf(selectedStatus).color,
                 }}
               />
-              <VersionChip preview={selectedSummary.preview} />
+              {selectedSummary.sandbox && (
+                <Chip
+                  label="sandbox"
+                  size="small"
+                  variant="outlined"
+                  color="info"
+                  sx={{ height: 20 }}
+                />
+              )}
               <Dim>{formatRelativeTimeCompact(selectedSummary.startedAt)}</Dim>
               <Dim>
                 {formatDuration(
@@ -675,16 +715,15 @@ function RunsView({
       {dialogOpen && (
         <RunDialog
           workflowId={workflowId}
-          hasPreview={hasPreview}
-          live={Boolean(live)}
+          deployed={Boolean(workflow)}
           initialInput={formatInput(selectedRun?.input)}
           onClose={() => setDialogOpen(false)}
-          onRun={async (input, preview) => {
+          onRun={async (input, sandbox) => {
             const result = await startRun(
               workspaceId,
               workflowId,
               input,
-              preview,
+              sandbox,
             );
             if (!result.ok) return result.error ?? "Failed to start the run";
             await fetchOverview(workspaceId);

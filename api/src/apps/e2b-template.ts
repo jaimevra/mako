@@ -148,127 +148,148 @@ export function createAppsE2BTemplate() {
 
   const pkgB64 = Buffer.from(scaffoldPkg, "utf8").toString("base64");
 
-  return Template()
-    .fromBaseImage()
-    .runCmd(
-      [
-        "set -eux",
-        "command -v node >/dev/null",
-        // ALL git runs inside the sandbox (the API host has no git and never
-        // shells out to it). Guarantee git is present — install it if the base
-        // image lacks it — then assert.
-        "if ! command -v git >/dev/null; then " +
-          "(apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*) " +
-          "|| (apk add --no-cache git) " +
-          "|| (yum install -y git); fi",
-        "git --version",
-        `npm install -g --force pnpm@${PNPM_VERSION}`,
-        `test "$(pnpm --version)" = "${PNPM_VERSION}"`,
-        // zsh for the interactive terminal. The PTY starts the user's login
-        // shell, so this is what a person actually gets when they open one.
-        // An editor is not a luxury here: `git commit` with no -m opens one,
-        // and the image shipped without vi, vim or nano, so it failed with a
-        // confusing error. vim-tiny provides /usr/bin/vi for muscle memory and
-        // nano for everyone else; together they are a couple of MB.
-        // dtach + tmux make sessions durable, with different jobs: dtach is
-        // the INTERACTIVE session keeper — a pure socket relay with no
-        // screen engine, so xterm.js sees a linear byte stream and its own
-        // native scrollback and wheel work (tmux's redraw engine and a
-        // browser terminal fight over scrolling; see terminal-ws). tmux
-        // remains for HEADLESS sessions (per-app dev servers), where its
-        // attachability is pure upside. script(1) ships in util-linux and
-        // records interactive sessions for reattach history.
-        "if ! command -v zsh >/dev/null || ! command -v vi >/dev/null || ! command -v tmux >/dev/null || ! command -v dtach >/dev/null; then " +
-          "(apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zsh vim-tiny nano bash-completion ca-certificates tmux dtach && rm -rf /var/lib/apt/lists/*) " +
-          "|| (apk add --no-cache zsh vim nano bash-completion ca-certificates tmux dtach) " +
-          "|| (yum install -y zsh vim-minimal nano bash-completion ca-certificates tmux dtach); fi",
-        "zsh --version",
-        "command -v tmux",
-        "command -v dtach",
-        "command -v script",
-        // Prove the editor is really there, rather than discovering it the
-        // first time someone runs `git commit`.
-        "command -v vi",
-        "command -v nano",
-        // bash is the login shell (see the note on BASHRC); zsh is available
-        // for anyone who runs it.
-        'chsh -s "$(command -v bash)" user',
-        "mkdir -p /home/user/app",
-        "chown -R user:user /home/user/app",
-      ].join(" && "),
-      { user: "root" },
-    )
-    .runCmd(
-      [
-        "set -eux",
-        // A default commit identity so `git commit` works without per-command
-        // config (the server overrides author/committer per commit anyway).
-        'git config --global user.name "Mako Agent"',
-        'git config --global user.email "agent@mako.ai"',
-        // Never block on an interactive credential/host prompt; the server
-        // injects a tokenized remote URL for private repos.
-        "git config --global credential.helper ''",
-        "git config --global advice.detachedHead false",
-        // No pager. git pipes into `less` by default, and this terminal
-        // outlives the socket watching it: one `git log` leaves the shell
-        // sitting in a pager, and the NEXT person to open the terminal lands
-        // inside it with no idea why — the scrollback replay faithfully
-        // redraws the pager screen for them.
-        "git config --global core.pager cat",
-        "git config --global init.defaultBranch main",
-      ].join(" && "),
-      { user: "user" },
-    )
-    .runCmd(
-      [
-        "set -eux",
-        // Install the shell config as ONE fragment: these commands are joined
-        // with `&&`, and a heredoc body has to sit on its own lines.
-        // base64 rather than a heredoc, and not by preference: these commands
-        // are joined with ` && `, which lands the terminator on a line reading
-        // `MAKO_BASHRC && printf ...`. That is not a terminator, so the
-        // heredoc ran to end-of-file and swallowed the whole rest of the
-        // script — including the checks meant to catch it, which is why the
-        // build still passed while .bash_profile and .zshrc were never
-        // created. base64 has no such interaction with the join, and is
-        // already how package.json is planted below.
-        `echo ${b64(BASHRC)} | base64 -d > /home/user/.bashrc`,
-        // A login bash reads .bash_profile and then stops, so without this the
-        // terminal would open with none of the config above.
-        `echo ${b64("[ -f ~/.bashrc ] && . ~/.bashrc\n")} | base64 -d > /home/user/.bash_profile`,
-        `echo ${b64(ZSHRC)} | base64 -d > /home/user/.zshrc`,
-        // Fail the build rather than ship a template whose shell quietly fell
-        // back to defaults. Each file's exact byte count is checked, not just
-        // that some marker is present: the heredoc bug this replaced left a
-        // .bashrc that still contained every marker AND the rest of the build
-        // script, and passed a grep-based check happily.
-        // Byte length, not String#length: both files contain em dashes and a
-        // ❯, and `wc -c` counts bytes.
-        `test "$(wc -c < /home/user/.bashrc)" = ${Buffer.byteLength(BASHRC, "utf8")}`,
-        `test "$(wc -c < /home/user/.zshrc)" = ${Buffer.byteLength(ZSHRC, "utf8")}`,
-        "test -s /home/user/.bash_profile",
-        // And prove each shell actually starts with the config it was given.
-        "bash -ic 'exit'",
-        "zsh -ic 'exit'",
-      ].join(" && "),
-      { user: "user" },
-    )
-    .runCmd(
-      [
-        "set -eux",
-        "mkdir -p /tmp/warmup",
-        `echo ${pkgB64} | base64 -d > /tmp/warmup/package.json`,
-        // Warm both caches: new apps install with pnpm (their scaffold pins
-        // it), apps from before the switch still install with npm.
-        "cd /tmp/warmup && npm install --no-audit --no-fund",
-        "rm -rf /tmp/warmup/node_modules /tmp/warmup/package-lock.json",
-        "cd /tmp/warmup && pnpm install",
-        "rm -rf /tmp/warmup",
-      ].join(" && "),
-      { user: "user" },
-    )
-    .setWorkdir("/home/user/app")
-    .setUser("user");
+  return (
+    Template()
+      .fromBaseImage()
+      .runCmd(
+        [
+          "set -eux",
+          "command -v node >/dev/null",
+          // ALL git runs inside the sandbox (the API host has no git and never
+          // shells out to it). Guarantee git is present — install it if the base
+          // image lacks it — then assert.
+          "if ! command -v git >/dev/null; then " +
+            "(apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*) " +
+            "|| (apk add --no-cache git) " +
+            "|| (yum install -y git); fi",
+          "git --version",
+          `npm install -g --force pnpm@${PNPM_VERSION}`,
+          `test "$(pnpm --version)" = "${PNPM_VERSION}"`,
+          // zsh for the interactive terminal. The PTY starts the user's login
+          // shell, so this is what a person actually gets when they open one.
+          // An editor is not a luxury here: `git commit` with no -m opens one,
+          // and the image shipped without vi, vim or nano, so it failed with a
+          // confusing error. vim-tiny provides /usr/bin/vi for muscle memory and
+          // nano for everyone else; together they are a couple of MB.
+          // dtach + tmux make sessions durable, with different jobs: dtach is
+          // the INTERACTIVE session keeper — a pure socket relay with no
+          // screen engine, so xterm.js sees a linear byte stream and its own
+          // native scrollback and wheel work (tmux's redraw engine and a
+          // browser terminal fight over scrolling; see terminal-ws). tmux
+          // remains for HEADLESS sessions (per-app dev servers), where its
+          // attachability is pure upside. script(1) ships in util-linux and
+          // records interactive sessions for reattach history.
+          "if ! command -v zsh >/dev/null || ! command -v vi >/dev/null || ! command -v tmux >/dev/null || ! command -v dtach >/dev/null; then " +
+            "(apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zsh vim-tiny nano bash-completion ca-certificates tmux dtach && rm -rf /var/lib/apt/lists/*) " +
+            "|| (apk add --no-cache zsh vim nano bash-completion ca-certificates tmux dtach) " +
+            "|| (yum install -y zsh vim-minimal nano bash-completion ca-certificates tmux dtach); fi",
+          "zsh --version",
+          "command -v tmux",
+          "command -v dtach",
+          "command -v script",
+          // Prove the editor is really there, rather than discovering it the
+          // first time someone runs `git commit`.
+          "command -v vi",
+          "command -v nano",
+          // bash is the login shell (see the note on BASHRC); zsh is available
+          // for anyone who runs it.
+          'chsh -s "$(command -v bash)" user',
+          "mkdir -p /home/user/app",
+          "chown -R user:user /home/user/app",
+        ].join(" && "),
+        { user: "root" },
+      )
+      .runCmd(
+        [
+          "set -eux",
+          // A default commit identity so `git commit` works without per-command
+          // config (the server overrides author/committer per commit anyway).
+          'git config --global user.name "Mako Agent"',
+          'git config --global user.email "agent@mako.ai"',
+          // Never block on an interactive credential/host prompt; the server
+          // injects a tokenized remote URL for private repos.
+          "git config --global credential.helper ''",
+          "git config --global advice.detachedHead false",
+          // No pager. git pipes into `less` by default, and this terminal
+          // outlives the socket watching it: one `git log` leaves the shell
+          // sitting in a pager, and the NEXT person to open the terminal lands
+          // inside it with no idea why — the scrollback replay faithfully
+          // redraws the pager screen for them.
+          "git config --global core.pager cat",
+          "git config --global init.defaultBranch main",
+        ].join(" && "),
+        { user: "user" },
+      )
+      .runCmd(
+        [
+          "set -eux",
+          // Install the shell config as ONE fragment: these commands are joined
+          // with `&&`, and a heredoc body has to sit on its own lines.
+          // base64 rather than a heredoc, and not by preference: these commands
+          // are joined with ` && `, which lands the terminator on a line reading
+          // `MAKO_BASHRC && printf ...`. That is not a terminator, so the
+          // heredoc ran to end-of-file and swallowed the whole rest of the
+          // script — including the checks meant to catch it, which is why the
+          // build still passed while .bash_profile and .zshrc were never
+          // created. base64 has no such interaction with the join, and is
+          // already how package.json is planted below.
+          `echo ${b64(BASHRC)} | base64 -d > /home/user/.bashrc`,
+          // A login bash reads .bash_profile and then stops, so without this the
+          // terminal would open with none of the config above.
+          `echo ${b64("[ -f ~/.bashrc ] && . ~/.bashrc\n")} | base64 -d > /home/user/.bash_profile`,
+          `echo ${b64(ZSHRC)} | base64 -d > /home/user/.zshrc`,
+          // Fail the build rather than ship a template whose shell quietly fell
+          // back to defaults. Each file's exact byte count is checked, not just
+          // that some marker is present: the heredoc bug this replaced left a
+          // .bashrc that still contained every marker AND the rest of the build
+          // script, and passed a grep-based check happily.
+          // Byte length, not String#length: both files contain em dashes and a
+          // ❯, and `wc -c` counts bytes.
+          `test "$(wc -c < /home/user/.bashrc)" = ${Buffer.byteLength(BASHRC, "utf8")}`,
+          `test "$(wc -c < /home/user/.zshrc)" = ${Buffer.byteLength(ZSHRC, "utf8")}`,
+          "test -s /home/user/.bash_profile",
+          // And prove each shell actually starts with the config it was given.
+          "bash -ic 'exit'",
+          "zsh -ic 'exit'",
+        ].join(" && "),
+        { user: "user" },
+      )
+      .runCmd(
+        [
+          "set -eux",
+          "mkdir -p /tmp/warmup",
+          `echo ${pkgB64} | base64 -d > /tmp/warmup/package.json`,
+          // Warm both caches: new apps install with pnpm (their scaffold pins
+          // it), apps from before the switch still install with npm.
+          "cd /tmp/warmup && npm install --no-audit --no-fund",
+          "rm -rf /tmp/warmup/node_modules /tmp/warmup/package-lock.json",
+          "cd /tmp/warmup && pnpm install",
+          "rm -rf /tmp/warmup",
+        ].join(" && "),
+        { user: "user" },
+      )
+      // The workflow runtime, so a sandbox can run the person's workflows as a
+      // Hatchet worker (api/src/workflows/sandbox.ts): the scripts, the shared
+      // files and the exact packages production builds with.
+      .copy(
+        [
+          "../deploy/workflows/runtime/package.json",
+          "../deploy/workflows/runtime/build.mjs",
+          "../deploy/workflows/runtime/dev.mjs",
+          "../deploy/workflows/runtime/worker.mjs",
+        ],
+        "/opt/mako-workflows/",
+      )
+      .copy(
+        "../deploy/workflows/runtime/defaults",
+        "/opt/mako-workflows/defaults",
+      )
+      .runCmd(
+        "cd /opt/mako-workflows && npm install --no-audit --no-fund && chown -R user:user /opt/mako-workflows",
+      )
+      .setWorkdir("/home/user/app")
+      .setUser("user")
+  );
 }
 
 async function main(): Promise<void> {

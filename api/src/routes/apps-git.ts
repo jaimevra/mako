@@ -116,26 +116,17 @@ while read old new ref; do
     done
   fi
 
-  # Workflows: what is on main runs on a schedule with the workspace's data.
-  # A push that changes workflows/ comes from a workspace admin
-  # (MAKO_WORKFLOWS_ADMIN, set by the endpoint from the member's role), and
-  # it goes to a branch: main takes workflows through a merge in Mako, which
-  # is where the deploy and the second look happen. A new branch is judged
-  # against main, so branching off main changes nothing.
-  if [ "$new" != "$zero" ]; then
+  # Workflows: what is on main is deployed and, once activated, runs on a
+  # schedule with the workspace's data. A push to main that changes
+  # workflows/ comes from a workspace admin (MAKO_WORKFLOWS_ADMIN, set by the
+  # endpoint from the member's role). Any member pushes workflow changes to
+  # a branch.
+  if [ "$ref" = "refs/heads/${DEFAULT_BRANCH}" ] && [ "$new" != "$zero" ] && [ "$MAKO_WORKFLOWS_ADMIN" != "1" ]; then
     base="$old"
-    if [ "$base" = "$zero" ]; then
-      base=$(git rev-parse -q --verify refs/heads/${DEFAULT_BRANCH} || git hash-object -t tree /dev/null)
-    fi
+    [ "$base" = "$zero" ] && base=$(git hash-object -t tree /dev/null)
     if [ -n "$(git diff --name-only "$base" "$new" -- workflows/)" ]; then
-      if [ "$MAKO_WORKFLOWS_ADMIN" != "1" ]; then
-        echo "mako: refusing $ref - only workspace admins change workflows; members run them." >&2
-        exit 1
-      fi
-      if [ "$ref" = "refs/heads/${DEFAULT_BRANCH}" ]; then
-        echo "mako: refusing $ref - workflows reach ${DEFAULT_BRANCH} through a merge in Mako. Push a branch." >&2
-        exit 1
-      fi
+      echo "mako: refusing $ref - only workspace admins put workflows on ${DEFAULT_BRANCH}. Push a branch and ask an admin to merge." >&2
+      exit 1
     fi
   fi
 done

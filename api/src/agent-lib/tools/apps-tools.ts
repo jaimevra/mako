@@ -78,10 +78,6 @@ import {
   parseAppRepoPath,
 } from "../../apps/app-paths";
 import {
-  WORKFLOWS_ADMIN_ONLY,
-  mayChangeWorkflows,
-} from "../../workflows/policy";
-import {
   authorizeAppMove,
   authorizeFolderTarget,
 } from "../../apps/app-authorization";
@@ -268,8 +264,8 @@ export function createAppsTools({
     }
     const role = userId ? await memberRole() : "owner";
     if (!role) return { error: "You cannot see workflows in this workspace." };
-    if (opts.write && !mayChangeWorkflows(role)) {
-      return { error: WORKFLOWS_ADMIN_ONLY };
+    if (opts.write && role === "viewer") {
+      return { error: "Viewers cannot change workflows." };
     }
     // The first workflow may be the first thing in the workspace's repo.
     // Same gate as every other content write: a connected repository.
@@ -290,16 +286,6 @@ export function createAppsTools({
     });
     workflowFolders.add(project);
     return { project };
-  };
-  // Workflows on main are live: a merge is the deploy. So unfinished workflow
-  // files must never be written or committed there — the end-of-turn commit
-  // would push them straight to the worker. A branch is run as a preview.
-  const liveBranchRefusal = async (
-    project: IAppProject,
-  ): Promise<string | null> => {
-    if (!workflowFolders.has(project)) return null;
-    if ((await currentActorBranch(project)) !== DEFAULT_BRANCH) return null;
-    return `The checkout is on ${DEFAULT_BRANCH}, where workflows are live. Switch to a branch first, e.g. app_bash with \`git checkout -b workflow/${project.slug}\`, then retry. Merge with app_merge_to_main when it works.`;
   };
   /**
    * Paths are relative to the target's folder. An agent that knows the repo
@@ -685,8 +671,6 @@ export function createAppsTools({
         if ("error" in loaded) return { success: false, error: loaded.error };
         const relPath = toRelPath(loaded.project, givenPath);
         try {
-          const refusal = await liveBranchRefusal(loaded.project);
-          if (refusal) return { success: false, error: refusal };
           // Read-before-overwrite guard (Claude Code hallmark): a full rewrite
           // of an EXISTING file it hasn't read this turn risks clobbering
           // content blindly. Creating a new file is fine. Anchored edits are
@@ -740,8 +724,6 @@ export function createAppsTools({
         if ("error" in loaded) return { success: false, error: loaded.error };
         const relPath = toRelPath(loaded.project, givenPath);
         try {
-          const refusal = await liveBranchRefusal(loaded.project);
-          if (refusal) return { success: false, error: refusal };
           const handle = await ensureActorWorktree(loaded.project);
           let current: string;
           try {
@@ -1320,8 +1302,6 @@ export function createAppsTools({
         const loaded = await loadTarget({ appId, workflowId }, { write: true });
         if ("error" in loaded) return { success: false, error: loaded.error };
         try {
-          const refusal = await liveBranchRefusal(loaded.project);
-          if (refusal) return { success: false, error: refusal };
           const handle = await ensureActorWorktree(loaded.project);
           markTouched(loaded.project);
           // Scoped to THIS app's folder: the working copy is shared by every

@@ -1,7 +1,6 @@
 /**
- * What a push deploys: the workspace's slots follow `workflows/` in the
- * repository. A branch with workflow changes is the preview; main is live;
- * what leaves the repository leaves the worker. Real git, in-memory Mongo,
+ * What a push deploys: the workspace's slot follows `workflows/` on main.
+ * What leaves the repository leaves the worker. Real git, in-memory Mongo,
  * a stored Hatchet token so no Hatchet is asked anything.
  *
  * Run with: pnpm --filter api exec tsx src/workflows/on-push.test.ts
@@ -24,9 +23,7 @@ async function main() {
   delete process.env.WORKFLOWS_WORKER_KEY;
   const mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
-  const { AppWorktree, Workspace } = await import(
-    "../database/workspace-schema"
-  );
+  const { Workspace } = await import("../database/workspace-schema");
   const { runGit } = await import("../apps/git");
   const { initRepo, repoDirFor } = await import("../apps/repository.service");
   const { deployWorkflowsFromRepo } = await import("./on-push");
@@ -76,34 +73,18 @@ async function main() {
     await deployWorkflowsFromRepo(ws, "owner");
     assert.equal((await slots())?.live, undefined);
 
-    // A pushed branch with a workflow is the preview; main stays empty.
-    await AppWorktree.create({
-      workspaceId: id,
-      userId: "owner",
-      branch: "wf",
-    });
-    const onBranch = await commit("wf", "main", {
+    // A workflow committed on main is live.
+    const onMain = await commit("main", "main", {
       "workflows/digest/workflow.ts": WORKFLOW,
     });
     await deployWorkflowsFromRepo(ws, "owner");
-    let state = await slots();
-    assert.equal(state?.live, undefined);
-    assert.equal(state?.preview?.sha, onBranch);
-    assert.equal(state?.preview?.branch, "wf");
-
-    // Merged (a fast-forward of main): live now, and no preview left, since
-    // the branch holds nothing main does not.
-    await git("update-ref", "refs/heads/main", onBranch);
-    await deployWorkflowsFromRepo(ws);
-    state = await slots();
-    assert.equal(state?.live?.sha, onBranch);
-    assert.equal(state?.preview, undefined);
+    assert.equal((await slots())?.live?.sha, onMain);
 
     // A commit elsewhere in the repository leaves the slot alone: the worker
     // is pointed at a new commit only when `workflows/` changed.
     await commit("main", "main", { "README.md": "changed\n" });
     await deployWorkflowsFromRepo(ws);
-    assert.equal((await slots())?.live?.sha, onBranch);
+    assert.equal((await slots())?.live?.sha, onMain);
 
     // `workflows/` deleted on main: nothing is live.
     await commit("main", "main", { workflows: null });

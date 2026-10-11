@@ -467,7 +467,7 @@ describe("commit authorship enforcement", () => {
   });
 });
 
-describe("workflows are an admin's, and reach main by a merge", () => {
+describe("workflows reach main through an admin", () => {
   const tokenFor = (userId: string) =>
     mintGitToken({ workspaceId: WS, userId, email: "t@t" });
 
@@ -488,18 +488,17 @@ describe("workflows are an admin's, and reach main by a merge", () => {
       env: gitEnv(tokenFor(userId)),
     });
 
-  it("a member cannot push a change under workflows/", async () => {
+  it("a member pushes a change under workflows/ to a branch, not to main", async () => {
     const dir = await workflowCommit("member");
-    await expect(push(dir, "member", "refs/heads/wf-member")).rejects.toThrow(
-      /only workspace admins change workflows/i,
+    await expect(push(dir, "member", "refs/heads/main")).rejects.toThrow(
+      /only workspace admins put workflows on main/i,
     );
+    await push(dir, "member", "refs/heads/wf-member");
   });
 
-  it("an admin pushes it to a branch, not to main", async () => {
+  it("an admin pushes it, to a branch or to main", async () => {
     const dir = await workflowCommit("admin");
-    await expect(push(dir, "admin", "refs/heads/main")).rejects.toThrow(
-      /workflows reach main through a merge/i,
-    );
+    await push(dir, "admin", "refs/heads/main");
     await push(dir, "admin", "refs/heads/wf-admin");
     await expect(
       run("git", [
@@ -512,12 +511,12 @@ describe("workflows are an admin's, and reach main by a merge", () => {
     ).resolves.toBeTruthy();
   });
 
-  it("a member's branch off main is judged by what it changes, not by what main holds", async () => {
+  it("a member's push to main that leaves workflows/ alone is fine", async () => {
     const dir = await freshClone(tokenFor("member"));
     await fs.writeFile(path.join(dir, "note.txt"), "no workflow here\n");
     await run("git", ["-C", dir, "add", "-A"]);
     await run("git", ["-C", dir, "commit", "-qm", "a note"]);
-    await push(dir, "member", "refs/heads/member-note");
+    await push(dir, "member", "refs/heads/main");
   });
 });
 

@@ -1,17 +1,27 @@
 /**
- * Starting a workflow from outside Mako. A webhook is turned on per workflow:
+ * What starts a workflow without a person. A workflow is deployed with its
+ * triggers off and runs only when started by hand; an admin activates it,
+ * and its schedule and webhook go live. A webhook is turned on per workflow:
  * that makes a URL with its own secret, and a POST to it starts a run with
- * the request's JSON as input. Turning it off forgets the secret, so turning
- * it on again makes a new URL.
+ * the request's JSON as input; with `?sandbox=<user>` it starts that
+ * person's sandbox version instead (the test URL, active or not). Turning
+ * it off forgets the secret, so turning it on again makes a new URL.
  */
 import { randomBytes, timingSafeEqual } from "crypto";
 import { Types } from "mongoose";
 
 import { Workspace } from "../database/workspace-schema";
 import { decryptString, encryptString } from "../services/crypto.service";
-import { HatchetError, PREVIEW_PREFIX } from "./hatchet";
+import { HatchetError } from "./hatchet";
 
 type Webhooks = Record<string, string> | undefined;
+
+/** The name becomes a key, a URL segment and a Hatchet workflow name. */
+function checkName(name: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
+    throw new HatchetError(`Invalid workflow: ${name}`, 400);
+  }
+}
 
 function urlOf(workspaceId: string, name: string, secret: string): string {
   const base = (
@@ -23,19 +33,28 @@ function urlOf(workspaceId: string, name: string, secret: string): string {
   return `${base}/api/workflows/hooks/${workspaceId}/${name}/${secret}`;
 }
 
+/** Turn a workflow's triggers on or off. The worker re-registers it. */
+export async function setActive(
+  workspaceId: string,
+  name: string,
+  active: boolean,
+): Promise<void> {
+  checkName(name);
+  await Workspace.updateOne(
+    { _id: new Types.ObjectId(workspaceId) },
+    active
+      ? { $addToSet: { "workflows.active": name } }
+      : { $pull: { "workflows.active": name } },
+  );
+}
+
 /** Turn a workflow's webhook on or off. Returns its URL, or null when off. */
 export async function setWebhook(
   workspaceId: string,
   name: string,
   enabled: boolean,
 ): Promise<string | null> {
-  // The name becomes a key and a URL segment. A preview has no webhook.
-  if (
-    !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name) ||
-    name.startsWith(PREVIEW_PREFIX)
-  ) {
-    throw new HatchetError(`Invalid workflow: ${name}`, 400);
-  }
+  checkName(name);
   const path = `workflows.webhooks.${name}`;
   const secret = randomBytes(24).toString("hex");
   await Workspace.updateOne(

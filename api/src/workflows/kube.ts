@@ -35,7 +35,7 @@ function runtimeImage(): string | undefined {
  * they must use the direct Cloud Run URL the kernels use: the public hostname
  * is behind Cloudflare, which blocks requests from the cluster.
  */
-function makoUrl(): string {
+export function makoUrl(): string {
   const url = process.env.NOTEBOOK_KERNEL_API_URL || process.env.BASE_URL;
   if (!url) throw new Error("Set NOTEBOOK_KERNEL_API_URL or BASE_URL");
   return url.replace(/\/+$/, "");
@@ -73,6 +73,24 @@ export async function workerSecretExists(
     return true;
   } catch (error) {
     if (isNotFound(error)) return false;
+    throw error;
+  }
+}
+
+/** The worker's Mako key, as the pod has it; null when there is no Secret. */
+export async function readWorkerSecret(
+  workspaceId: string,
+): Promise<string | null> {
+  const { core } = await gkeClients();
+  try {
+    const secret = await core.readNamespacedSecret({
+      name: workerName(workspaceId),
+      namespace: NAMESPACE,
+    });
+    const encoded = secret.data?.MAKO_API_KEY;
+    return encoded ? Buffer.from(encoded, "base64").toString() : null;
+  } catch (error) {
+    if (isNotFound(error)) return null;
     throw error;
   }
 }
@@ -167,7 +185,17 @@ function deploymentBody(workspaceId: string): V1Deployment {
               env: [
                 { name: "MAKO_URL", value: makoUrl() },
                 { name: "HOME", value: "/tmp" },
-                // A Hatchet without TLS on its gRPC port, as Mako's own is.
+                // In the cluster the worker reaches the engine over the
+                // private service, whatever public address the token names
+                // for sandboxes outside; Mako's own engine has no TLS there.
+                ...(process.env.HATCHET_WORKER_HOST_PORT
+                  ? [
+                      {
+                        name: "HATCHET_CLIENT_HOST_PORT",
+                        value: process.env.HATCHET_WORKER_HOST_PORT,
+                      },
+                    ]
+                  : []),
                 ...(tls
                   ? [{ name: "HATCHET_CLIENT_TLS_STRATEGY", value: tls }]
                   : []),

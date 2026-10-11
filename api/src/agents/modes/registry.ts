@@ -257,6 +257,7 @@ const TRANSFORM_MODE_TOOL_NAMES: string[] = [
 const WORKFLOW_MODE_TOOL_NAMES: string[] = [
   "workflows_status",
   "workflows_run",
+  "workflows_activate",
   "workflows_webhook",
   "app_bash",
   "app_read_file",

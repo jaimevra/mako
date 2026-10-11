@@ -175,8 +175,12 @@ export interface IWorkspaceWorkflows {
   hatchetToken?: string;
   /** `workflows/` on main. */
   live?: IWorkflowSlot;
-  /** Unmerged work run next to live: the last branch pushed with changes. */
-  preview?: IWorkflowSlot & { branch: string };
+  /**
+   * Workflows whose triggers are on. A workflow starts off: it runs only
+   * when started by hand, until an admin activates it and its schedule and
+   * webhook go live. A sandbox never has triggers.
+   */
+  active?: string[];
   /** Workflows with a webhook turned on: name → its URL's secret, encrypted. */
   webhooks?: Record<string, string>;
 }
@@ -1421,10 +1425,7 @@ const WorkspaceSchema = new Schema<IWorkspace>(
       type: {
         hatchetToken: { type: String },
         live: { type: WorkflowSlotFields, _id: false },
-        preview: {
-          type: { ...WorkflowSlotFields, branch: String },
-          _id: false,
-        },
+        active: { type: [String], default: undefined },
         webhooks: { type: Schema.Types.Mixed },
       },
       default: undefined,

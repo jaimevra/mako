@@ -1,6 +1,6 @@
 ---
 name: workflows
-description: Load when writing, changing, testing, running or debugging a workflow — a scheduled or multi-step job written as a Hatchet TypeScript file in workflows/<name>/workflow.ts of the workspace repo — "run this every morning", "build a workflow that…", "why did the run fail".
+description: Load when writing, changing, testing, running or debugging a workflow — a scheduled or multi-step job written as a Hatchet TypeScript file in workflows/<name>/workflow.ts of the workspace repo — "run this every morning", "build a workflow that…", "test it in the sandbox", "why did the run fail".
 entities:
   - workflows/
   - workflow.ts
@@ -8,7 +8,8 @@ entities:
   - workflows_status
   - workflows_run
   - workflowId
-  - preview run
+  - activate
+  - sandbox
   - cron
   - schedule
   - scheduled job
@@ -36,32 +37,28 @@ the file above is `path: "workflow.ts"`.
 
 ## The loop
 
-Main is live: a merge to main is the deploy. So never write on main.
+Three things, each one verb. **Sandbox**: `workflows_run` with
+`sandbox: true` runs the workflow as it is in your checkout right now,
+uncommitted edits included, with real data and no schedule. **Main**: a
+commit on main is the deploy. **Active**: a deployed workflow starts
+inactive (schedule and webhook off, Run works); an admin switches it on.
+Like n8n: test, then activate.
 
-Only workspace admins change workflows; members run them. For a member,
-say so and do not write files.
+1. Write `workflow.ts` with `app_write_file` / `app_edit_file` and
+   `workflowId: "<name>"`. A new name creates the folder. No commit yet.
+2. `workflows_run` with `sandbox: true` and an input. The first run after a
+   change takes a few seconds longer while your sandbox worker loads it.
+3. `workflows_status` with the `runId`: each step's status, output, error and
+   log lines. Fix and repeat from 1 until the run is `COMPLETED`.
+4. `app_commit`. On main that is the deploy; `workflows_status` until
+   `deployment.liveSha` is your commit (`deployment.buildError` says why
+   not; the previous version keeps running meanwhile). A member commits to
+   a branch and asks an admin to merge: only admins put workflows on main.
+5. Ask the user, then `workflows_activate`: from then on its schedule and
+   webhook start runs by themselves.
 
-1. Switch to a branch: `app_bash` with `workflowId` and
-   `git checkout -b workflow/<name>`. Skip if the checkout is already on a
-   branch other than main.
-2. Write `workflow.ts` with `app_write_file` / `app_edit_file` and
-   `workflowId: "<name>"`. A new name creates the folder.
-3. `app_commit` with the same `workflowId`. The commit is pushed, and the
-   branch becomes the workspace's **preview**: the same code, registered next
-   to the live one, with schedules off.
-4. `workflows_status`. Wait until `preview.liveSha` is your commit. If
-   `preview.buildError` is set, read it, fix the file, commit again.
-5. `workflows_run` with `preview: true` and an input.
-6. `workflows_status` with the `runId`: each step's status, output, error and
-   log lines. Fix and repeat from 2 until the run is `COMPLETED`.
-7. `app_merge_to_main`. Then `workflows_status` until
-   `deployment.liveSha` equals `deployment.targetSha`.
-
-Tell the user before step 7: merging makes the workflow live and starts its
-schedule.
-
-There is one preview per workspace. If `preview.branch` is not your branch,
-someone else's work is being previewed; committing replaces it.
+Changing an active workflow: the same loop; test in the sandbox, and say
+before committing that the new commit is live as soon as it builds.
 
 ## A workflow file
 
@@ -177,13 +174,16 @@ judgement is needed.
 ## What starts a run
 
 - A schedule: `on: { cron: "0 6 * * *" }` in the workflow (UTC).
-- A webhook: off until an admin adds it, with `workflows_webhook` or on the
-  workflow's tab. That gives a URL; a POST to it starts a run
-  with the JSON body as input. Nothing to write in the code. Give the user
-  the URL and tell them it is a secret.
-- A person (Run) or you (`workflows_run`).
+- A webhook: an admin adds it, with `workflows_webhook` or on the workflow's
+  tab. That gives a URL; a POST to it starts a run with the JSON body as
+  input. Nothing to write in the code. Give the user the URL and tell them
+  it is a secret.
+- A person (Run) or you (`workflows_run`), on main or in a sandbox.
 
-A preview has no schedule and no webhook; it runs only when started.
+The schedule and the webhook work only while the workflow is **active**
+(`workflows_activate`, or the switch on its tab). Run and `workflows_run`
+always work. The webhook URL with `?sandbox=<userId>` is a test URL: it
+starts that person's sandbox version whenever their sandbox worker is up.
 
 ## Hatchet's own documentation
 
@@ -194,10 +194,12 @@ markdown (`https://docs.hatchet.run/llms/<section>/<page>.md`).
 
 ## When something is wrong
 
-| You see                                                          | It means                                                                                                               |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `buildError` with `error TS…`                                    | The commit does not typecheck. The previous code keeps running. Fix and commit.                                        |
-| `buildError` with `must default-export the workflow named …`     | Folder name and `name` differ, or the export is not the default.                                                       |
-| `liveSha` is not `targetSha` after a minute, and no `buildError` | The worker is not running. Tell the user.                                                                              |
-| A run stays `QUEUED`                                             | No worker has that workflow: its build failed, or (for `preview: true`) there is no preview. Check `workflows_status`. |
-| Step `FAILED`                                                    | Read that step's `error` and `logs` in `workflows_status({ runId })`.                                                  |
+| You see                                                          | It means                                                                                                            |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `buildError` with `error TS…`                                    | The commit does not typecheck. The previous code keeps running. Fix and commit.                                     |
+| `buildError` with `must default-export the workflow named …`     | Folder name and `name` differ, or the export is not the default.                                                    |
+| `liveSha` is not `targetSha` after a minute, and no `buildError` | The worker is not running. Tell the user.                                                                           |
+| A run stays `QUEUED`                                             | No worker has that workflow: its build failed, or (sandbox) the sandbox worker went down. Check `workflows_status`. |
+| A sandbox run fails with type errors                             | Your checkout does not typecheck; the sandbox worker log shows them. Fix the file and run again.                    |
+| The schedule did not fire                                        | The workflow is not active. `workflows_status` shows `active` per workflow.                                         |
+| Step `FAILED`                                                    | Read that step's `error` and `logs` in `workflows_status({ runId })`.                                               |

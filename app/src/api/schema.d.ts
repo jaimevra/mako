@@ -5064,7 +5064,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What is deployed (live and preview), the workflows, schedules and recent runs */
+        /** What is deployed, the workflows, schedules and recent runs */
         get: operations["get_api_workspaces_workspaceId_workflows"];
         put?: never;
         post?: never;
@@ -5117,8 +5117,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start a run of a workflow, or of its preview */
+        /** Start a run of a workflow: the deployed one, or with `sandbox` the caller's checkout */
         post: operations["post_api_workspaces_workspaceId_workflows_name_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/workflows/{name}/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Turn a workflow's schedule and webhook on or off */
+        put: operations["put_api_workspaces_workspaceId_workflows_name_active"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -22511,7 +22528,54 @@ export interface operations {
                     input?: {
                         [key: string]: unknown;
                     };
-                    preview?: boolean;
+                    sandbox?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenericJsonResponse"] & (Record<string, never> | null);
+                };
+            };
+            /** @description Invalid request */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_api_workspaces_workspaceId_workflows_name_active: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    active: boolean;
                 };
             };
         };

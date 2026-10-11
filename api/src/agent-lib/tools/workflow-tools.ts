@@ -8,10 +8,15 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { workspaceService } from "../../services/workspace.service";
-import { requireTenant, startRun } from "../../workflows/hatchet";
+import {
+  requireTenant,
+  sandboxPrefix,
+  startRun,
+} from "../../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY } from "../../workflows/policy";
-import { setWebhook } from "../../workflows/webhook";
+import { ensureSandboxWorker } from "../../workflows/sandbox";
+import { setActive, setWebhook } from "../../workflows/webhook";
 
 /** How many recent runs an agent is shown. */
 const RECENT_RUNS = 10;
@@ -28,7 +33,7 @@ export function createWorkflowTools({
   workspaceId: string;
   userId?: string;
 }): ToolSet {
-  /** Viewers look; members start runs; admins add webhooks and see them. */
+  /** Viewers look; members start runs; admins activate and add webhooks. */
   const roleIs = async (roles: string[]) =>
     !userId || workspaceService.hasRole(workspaceId, userId, roles);
   const mayRun = () => roleIs(["owner", "admin", "member"]);
@@ -37,7 +42,7 @@ export function createWorkflowTools({
   return {
     workflows_status: tool({
       description:
-        "Look at this workspace's workflows. Without runId: what is deployed (`deployment` is the live code on main; `preview` is the unmerged branch last pushed, registered as its own copy with schedules off), the build error if a commit did not start (`buildError` — the old code keeps running), the workflows (with `webhookUrl` when one has a webhook) and schedules, and the last runs. With runId: that run's steps, each with status, output, error and its last log lines (what the step wrote with ctx.logger). While `liveSha` is not yet `targetSha` the worker has not switched to the new commit; call again in a few seconds.",
+        "Look at this workspace's workflows. Without runId: what is deployed (`deployment`: the code on main), the build error if a commit did not start (`buildError` — the old code keeps running), whether your sandbox worker is up (`sandbox.running`), the workflows (each with `active`, and `webhookUrl` when one has a webhook) and schedules, and the last runs (`sandbox` set on a sandbox run). With runId: that run's steps, each with status, output, error and its last log lines (what the step wrote with ctx.logger). While `liveSha` is not yet `targetSha` the worker has not switched to the new commit; call again in a few seconds.",
       inputSchema: z.object({
         runId: z
           .string()
@@ -49,11 +54,10 @@ export function createWorkflowTools({
           if (!runId) {
             return {
               success: true,
-              ...(await readWorkflowsOverview(
-                workspaceId,
-                RECENT_RUNS,
-                await mayChange(),
-              )),
+              ...(await readWorkflowsOverview(workspaceId, RECENT_RUNS, {
+                asAdmin: await mayChange(),
+                userId,
+              })),
             };
           }
           const tenant = await requireTenant(workspaceId);
@@ -66,7 +70,7 @@ export function createWorkflowTools({
 
     workflows_run: tool({
       description:
-        "Start a run of a workflow and get its runId; follow it with workflows_status({ runId }). By default this runs the LIVE code on main, with real data. Pass preview: true to run the unmerged code of the branch last pushed instead — that is how to test a change before merging it. A preview exists only after its branch was committed and workflows_status shows `preview` without a buildError.",
+        "Start a run of a workflow and get its runId; follow it with workflows_status({ runId }). With `sandbox: true` it runs the workflow as it is in your checkout right now, uncommitted edits included, with real data and no schedule: that is how a change is tested. Without it, the deployed code on main runs, active or not. The first sandbox run after a change takes a few seconds longer while the sandbox worker loads it.",
       inputSchema: z.object({
         workflowId: z
           .string()
@@ -76,27 +80,50 @@ export function createWorkflowTools({
           .record(z.string(), z.unknown())
           .optional()
           .describe("The run's input object (default {})"),
-        preview: z
+        sandbox: z
           .boolean()
           .optional()
-          .describe("Run the pushed branch's code instead of the live code"),
+          .describe("Run your checkout's version instead of the deployed one"),
       }),
-      execute: async ({ workflowId, input, preview }) => {
+      execute: async ({ workflowId, input, sandbox }) => {
         try {
           if (!(await mayRun())) {
             return { success: false, error: "Viewers cannot start runs." };
           }
-          const runId = await startRun(
-            await requireTenant(workspaceId),
-            workflowId,
-            { input, preview, trigger: "agent" },
-          );
-          return {
-            success: true,
-            runId,
-            workflowId,
-            preview: preview === true,
-          };
+          const tenant = await requireTenant(workspaceId);
+          let workflowName = workflowId;
+          if (sandbox) {
+            if (!userId) {
+              return { success: false, error: "A sandbox needs a person." };
+            }
+            await ensureSandboxWorker(tenant, workspaceId, userId);
+            workflowName = `${sandboxPrefix(userId)}${workflowId}`;
+          }
+          const runId = await startRun(tenant, workflowName, {
+            input,
+            trigger: "agent",
+          });
+          return { success: true, runId, workflowId, sandbox: !!sandbox };
+        } catch (error) {
+          return failure(error);
+        }
+      },
+    }),
+
+    workflows_activate: tool({
+      description:
+        "Turn a workflow's triggers on or off. A workflow is deployed with its schedule and webhook off and runs only when started; activating it starts its `on: { cron }` schedule and its webhook. Ask the user before activating: from then on it runs by itself.",
+      inputSchema: z.object({
+        workflowId: z.string().describe("The workflow's name"),
+        active: z.boolean(),
+      }),
+      execute: async ({ workflowId, active }) => {
+        try {
+          if (!(await mayChange())) {
+            return { success: false, error: WORKFLOWS_ADMIN_ONLY };
+          }
+          await setActive(workspaceId, workflowId, active);
+          return { success: true, workflowId, active };
         } catch (error) {
           return failure(error);
         }
@@ -105,7 +132,7 @@ export function createWorkflowTools({
 
     workflows_webhook: tool({
       description:
-        "Give a live workflow a webhook, or remove it. With `enabled: true` it returns a new URL: a POST to it starts a run with the request's JSON body as the input. The URL carries its own secret; removing the webhook and adding it again gives a new URL and the old one stops working. A schedule is not set here: write `on: { cron }` in the workflow's code.",
+        "Give a workflow a webhook, or remove it. With `enabled: true` it returns a new URL: a POST to it starts a run with the request's JSON body as the input, while the workflow is active. The URL carries its own secret; removing the webhook and adding it again gives a new URL and the old one stops working. A schedule is not set here: write `on: { cron }` in the workflow's code.",
       inputSchema: z.object({
         workflowId: z.string().describe("The workflow's name"),
         enabled: z.boolean(),

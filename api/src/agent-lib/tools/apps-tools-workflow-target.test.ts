@@ -89,28 +89,15 @@ describe("workflowId as the tools' target", () => {
     }
   });
 
-  it("lets a member read but not write: workflows are an admin's", async () => {
-    for (const userId of [MEMBER, VIEWER]) {
-      const tools = await toolsFor(userId);
-      const write = await call(tools, "app_write_file", {
-        workflowId: "score-leads",
-        path: "workflow.ts",
-        contents: WORKFLOW,
-      });
-      expect(write.success).toBe(false);
-      expect(write.error).toMatch(/Only workspace admins change workflows/);
-    }
-  });
-
-  it("refuses to write a workflow on main, where workflows are live", async () => {
-    const tools = await toolsFor(ADMIN);
+  it("lets a viewer read but not write", async () => {
+    const tools = await toolsFor(VIEWER);
     const write = await call(tools, "app_write_file", {
       workflowId: "score-leads",
       path: "workflow.ts",
       contents: WORKFLOW,
     });
     expect(write.success).toBe(false);
-    expect(write.error).toMatch(/git checkout -b/);
+    expect(write.error).toMatch(/Viewers cannot change workflows/);
   });
 
   it("writes, reads, edits, commits and merges a workflow folder", async () => {
@@ -194,7 +181,7 @@ describe("workflowId as the tools' target", () => {
         undefined,
         MEMBER,
       ),
-    ).rejects.toThrow(/Only workspace admins change workflows/);
+    ).rejects.toThrow(/Only workspace admins put workflows on main/);
 
     const merge = await call(tools, "app_merge_to_main", target);
     expect(merge.success, merge.error).toBe(true);

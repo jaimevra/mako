@@ -1,8 +1,9 @@
 /**
  * Workflow tools. Looking is read-only; starting a run executes the
  * workspace's own code, so it needs the member role and the `workflows-run`
- * grant (the `workflows:run` scope on an API key). A webhook changes what
- * starts a workflow, which is an admin's call, like changing its code.
+ * grant (the `workflows:run` scope on an API key). Activating a workflow or
+ * giving it a webhook changes what starts it, which is an admin's call, like
+ * changing its code.
  */
 import { ALL_AGENT_SURFACES, type AgentCapabilityDefinition } from "./types";
 
@@ -33,6 +34,14 @@ export const WORKFLOW_CAPABILITIES: readonly WorkflowCapabilityDefinition[] = [
     requiredGrant: "workflows-run",
     surfaces: ALL_AGENT_SURFACES,
     resultKind: "run",
+  }),
+  define({
+    name: "workflows_activate",
+    risk: "write",
+    minimumWorkspaceRole: "admin",
+    requiredGrant: "workflows-run",
+    surfaces: ALL_AGENT_SURFACES,
+    resultKind: "ui-effect",
   }),
   define({
     name: "workflows_webhook",

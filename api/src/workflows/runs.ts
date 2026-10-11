@@ -13,9 +13,11 @@ import {
 import { getWorkspaceRepo } from "../services/workspace-repos.service";
 import {
   HatchetError,
-  PREVIEW_PREFIX,
   hasInstanceHatchet,
   isHatchetId,
+  listWorkers,
+  sandboxPrefix,
+  splitSandboxName,
   tenantJson,
   tenantOfToken,
   type WorkspaceTenant,
@@ -39,14 +41,6 @@ const cap = (value: unknown): string | undefined => {
 
 const idOf = (row: Row): string | undefined =>
   (row.metadata as { id?: string } | undefined)?.id;
-
-/** A workflow's name as people write it, and whether it is the preview's. */
-function splitName(name: unknown): { workflowId: string; preview: boolean } {
-  const text = String(name ?? "");
-  return text.startsWith(PREVIEW_PREFIX)
-    ? { workflowId: text.slice(PREVIEW_PREFIX.length), preview: true }
-    : { workflowId: text, preview: false };
-}
 
 /**
  * Hatchet reports a step's error as JSON, `{ message, stack }`. The message
@@ -77,7 +71,7 @@ const metadataOf = (run: Row) =>
 
 const runSummary = (run: Row, workflowName: unknown = run.workflowName) => ({
   runId: idOf(run),
-  ...splitName(workflowName),
+  ...splitSandboxName(String(workflowName ?? "")),
   status: run.status,
   startedAt: run.startedAt ?? run.createdAt,
   durationMs: run.duration,
@@ -109,10 +103,6 @@ function statusOf(state: IWorkspaceWorkflows | undefined, repoLinked: boolean) {
     // installation has none to share: the UI hides Workflows.
     configured: Boolean(state?.hatchetToken) || hasInstanceHatchet(),
     deployment: deployment(state?.live),
-    /** Unmerged work running next to live, or null when there is none. */
-    preview: state?.preview
-      ? { branch: state.preview.branch, ...deployment(state.preview) }
-      : null,
     dashboardUrl: process.env.HATCHET_DASHBOARD_URL ?? null,
   };
 }
@@ -125,7 +115,7 @@ async function loadState(workspaceId: string) {
   return { state: workspace?.workflows, repoLinked: Boolean(repo) };
 }
 
-/** What is deployed for a workspace: the live code and, if any, its preview. */
+/** What is deployed for a workspace. */
 export async function readWorkflowsStatus(workspaceId: string) {
   const { state, repoLinked } = await loadState(workspaceId);
   return statusOf(state, repoLinked);
@@ -138,19 +128,26 @@ export async function readWorkflowsStatus(workspaceId: string) {
 export async function readWorkflowsOverview(
   workspaceId: string,
   limit: number,
-  /** Include each live workflow's webhook URL (null when off): only for who may start runs. */
-  withWebhooks = false,
+  viewer: {
+    /** An admin sees each workflow's webhook URL (null when off). */
+    asAdmin?: boolean;
+    /** Whose sandbox worker to report on. */
+    userId?: string;
+  } = {},
 ) {
   const { state, repoLinked } = await loadState(workspaceId);
-  const status = statusOf(state, repoLinked);
+  const status = {
+    ...statusOf(state, repoLinked),
+    mayChange: !!viewer.asAdmin,
+  };
   const tenant = tenantOfToken(state?.hatchetToken);
   if (!tenant) return status;
-  const webhooks = withWebhooks
+  const webhooks = viewer.asAdmin
     ? webhookUrls(workspaceId, state?.webhooks)
     : null;
   const base = `/api/v1/tenants/${tenant.tenantId}`;
   const since = new Date(Date.now() - RECENT_RUNS_DAYS * 864e5).toISOString();
-  const [workflows, crons, runs] = await Promise.all([
+  const [workflows, crons, runs, workers] = await Promise.all([
     tenantJson<Rows>(tenant, `${base}/workflows`),
     tenantJson<Rows>(tenant, `${base}/workflows/crons`),
     tenantJson<Rows>(
@@ -164,15 +161,29 @@ export async function readWorkflowsOverview(
         }),
       },
     ),
+    viewer.userId ? listWorkers(tenant) : [],
   ]);
+  const mine = viewer.userId ? sandboxPrefix(viewer.userId) : null;
+  const active = new Set(state?.active ?? []);
   return {
     ...status,
-    workflows: (workflows.rows ?? []).map(w => {
-      const workflow = splitName(w.name);
-      return webhooks && !workflow.preview
-        ? { ...workflow, webhookUrl: webhooks[workflow.workflowId] ?? null }
-        : workflow;
-    }),
+    // The viewer's sandbox worker: up when Hatchet lists it as active.
+    sandbox: mine
+      ? {
+          running: workers.some(
+            w => w.name.startsWith(mine) && w.status === "ACTIVE",
+          ),
+        }
+      : null,
+    // Production workflows only; a sandbox registers the same names.
+    workflows: (workflows.rows ?? [])
+      .map(w => String(w.name ?? ""))
+      .filter(name => !splitSandboxName(name).sandbox)
+      .map(workflowId => ({
+        workflowId,
+        active: active.has(workflowId),
+        ...(webhooks ? { webhookUrl: webhooks[workflowId] ?? null } : {}),
+      })),
     schedules: (crons.rows ?? []).map(c => ({
       workflowId: c.workflowName,
       cron: c.cron,

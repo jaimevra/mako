@@ -3,9 +3,9 @@
  * (docs/src/content/docs/workflows.md).
  *
  * A deploy is one write: the commit and tree of `workflows/` at `main`, saved
- * as the workspace's target; another branch is saved as its preview. The
- * worker asks for both and switches to what builds. Before the first deploy
- * this also gives the workspace its Hatchet token and its worker.
+ * as the workspace's target. The worker asks for it and switches to it when
+ * it builds. Before the first deploy this also gives the workspace its
+ * Hatchet token and its worker.
  */
 import { Types } from "mongoose";
 
@@ -20,7 +20,7 @@ import {
 } from "../apps/repository.service";
 import { generateApiKey, hashApiKey } from "../auth/api-key.middleware";
 import type { WorkspaceApiKeyScope } from "../auth/api-key-scopes";
-import { AppWorktree, Workspace } from "../database/workspace-schema";
+import { Workspace } from "../database/workspace-schema";
 import { loggers } from "../logging";
 import {
   ensureWorkspaceTenant,
@@ -37,7 +37,8 @@ import {
 const logger = loggers.api("workflows-on-push");
 
 /** One key per environment that runs a worker: previews share a database. */
-const workerKeyName = () => `Workflows worker ${workflowsNamePrefix()}`.trim();
+export const workerKeyName = () =>
+  `Workflows worker ${workflowsNamePrefix()}`.trim();
 const WORKER_KEY_SCOPES: WorkspaceApiKeyScope[] = [
   "mcp",
   "query:read",
@@ -156,9 +157,8 @@ async function workflowsAt(
 const deploys = new Map<string, Promise<void>>();
 
 /**
- * Point the worker at `workflows/` on `main`, and at the pusher's branch. One
- * at a time per workspace, in order: a push that lands during a deploy is
- * deployed after it, not dropped.
+ * Point the worker at `workflows/` on `main`. One at a time per workspace, in
+ * order: a push that lands during a deploy is deployed after it, not dropped.
  */
 export function deployWorkflowsFromRepo(
   workspaceId: string,
@@ -188,53 +188,31 @@ async function deployWorkflowsNow(
   const repoDir = repoDirFor(workspaceId);
   if (!(await repoExists(repoDir))) return;
   const main = await workflowsAt(repoDir, DEFAULT_BRANCH);
-
-  // The pusher's branch is the workspace's one preview: the last branch
-  // pushed with workflow changes wins. Once it matches main (merged, or
-  // reverted) there is nothing left to preview.
-  const worktree = userId
-    ? await AppWorktree.findOne({ workspaceId: workspace._id, userId })
-        .select("branch")
-        .lean()
-    : null;
-  // Without a pusher (a merge), look again at the branch already previewed.
-  const branch = worktree?.branch ?? state.preview?.branch;
-  const pushed =
-    branch && branch !== DEFAULT_BRANCH
-      ? await workflowsAt(repoDir, branch)
-      : null;
-  const preview = pushed && pushed.tree !== main?.tree ? pushed : null;
-
-  if (main || preview) {
+  if (main) {
     await ensureWorkspaceTenant(workspaceId);
     await ensureWorker(workspaceId, userId ?? workspace.createdBy);
   }
 
-  // A slot follows what the repository holds: gone from the repository
-  // (`workflows/` deleted on main, a preview merged) is gone from the worker.
-  // The commit changes under the slot; what the worker reported for the old
-  // one stays until it reports again, so the screen shows old-live, new-wanted.
-  const set: Record<string, unknown> = {};
-  const unset: Record<string, ""> = {};
+  // The slot follows what the repository holds: `workflows/` deleted on main
+  // is gone from the worker. The commit changes under the slot; what the
+  // worker reported for the old one stays until it reports again, so the
+  // screen shows old-live, new-wanted.
   if (main && state.live?.tree !== main.tree) {
-    set["workflows.live.sha"] = main.sha;
-    set["workflows.live.tree"] = main.tree;
+    await Workspace.updateOne(
+      { _id: workspace._id },
+      {
+        $set: {
+          "workflows.live.sha": main.sha,
+          "workflows.live.tree": main.tree,
+        },
+      },
+    );
+    logger.info("Set workflows target", { workspaceId, sha: main.sha });
+  } else if (!main && state.live) {
+    await Workspace.updateOne(
+      { _id: workspace._id },
+      { $unset: { "workflows.live": "" } },
+    );
+    logger.info("Unset workflows target", { workspaceId });
   }
-  if (!main && state.live) unset["workflows.live"] = "";
-  if (preview && branch && state.preview?.tree !== preview.tree) {
-    set["workflows.preview.sha"] = preview.sha;
-    set["workflows.preview.tree"] = preview.tree;
-    set["workflows.preview.branch"] = branch;
-  } else if (!preview && branch && state.preview?.branch === branch) {
-    unset["workflows.preview"] = "";
-  }
-  if (Object.keys(set).length + Object.keys(unset).length === 0) return;
-  await Workspace.updateOne(
-    { _id: workspace._id },
-    {
-      ...(Object.keys(set).length ? { $set: set } : {}),
-      ...(Object.keys(unset).length ? { $unset: unset } : {}),
-    },
-  );
-  logger.info("Set workflows target", { workspaceId, ...set, unset });
 }

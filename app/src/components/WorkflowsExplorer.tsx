@@ -2,9 +2,9 @@
  * Workflows explorer: the same tree component as Apps. A workflow is a row
  * that opens its runs; its caret shows its files, which open read-only.
  * Shared folders and files under `workflows/` follow. A workflow whose last
- * live run failed is marked, so a failed schedule is seen without opening
- * it. When the last merge did not build, the shell's error slot says so:
- * the previous version stays live.
+ * run on main failed is marked, so a failed schedule is seen without opening
+ * it; an inactive one is marked too. When the last commit did not build, the
+ * shell's error slot says so: the previous version stays live.
  */
 import {
   useCallback,
@@ -35,7 +35,7 @@ import { useConsoleStore } from "../store/consoleStore";
 import { useWorkflowsStore } from "../store/workflowsStore";
 import ExplorerShell from "./ExplorerShell";
 import ResourceTree, { type ResourceTreeNode } from "./ResourceTree";
-import { SMALL_CHIP_SX, VersionChip } from "./WorkflowView";
+import { SMALL_CHIP_SX } from "./WorkflowView";
 
 const WorkflowIcon = EXPLORER_ICONS.workflows;
 const POLL_INTERVAL_MS = 8_000;
@@ -45,7 +45,7 @@ const KEEP_OTHER_TABS = { replacePristine: false };
 
 /** A tree node: a workflow, a shared folder, or a file. */
 interface Node extends ResourceTreeNode {
-  workflow?: { previewOnly: boolean; failed: boolean };
+  workflow?: { active: boolean; failed: boolean };
 }
 
 function Prompt({
@@ -91,12 +91,15 @@ const getItemIcon = (node: ResourceTreeNode) =>
   );
 const getRightAdornment = (node: ResourceTreeNode) => {
   const { workflow } = node as Node;
-  if (workflow?.failed) {
+  if (!workflow) return null;
+  if (workflow.failed) {
     return (
       <Chip label="failed" size="small" color="error" sx={SMALL_CHIP_SX} />
     );
   }
-  return workflow?.previewOnly ? <VersionChip preview small /> : null;
+  return workflow.active ? null : (
+    <Chip label="off" size="small" variant="outlined" sx={SMALL_CHIP_SX} />
+  );
 };
 const isWorkflow = (node: ResourceTreeNode) => Boolean((node as Node).workflow);
 const nodeId = (node: ResourceTreeNode) => node.id;
@@ -151,18 +154,18 @@ export function WorkflowsExplorer() {
 
   // One node per folder under `workflows/` and per registered workflow, with
   // the folder's files under it; workflows first, then shared folders such as
-  // `lib`, then shared files. A workflow only on the previewed branch is marked.
+  // `lib`, then shared files.
   const nodes = useMemo((): Node[] => {
-    const live = new Set<string>();
+    const active = new Set<string>();
     const registered = new Set<string>();
     for (const w of overview?.workflows ?? []) {
       registered.add(w.workflowId);
-      if (!w.preview) live.add(w.workflowId);
+      if (w.active) active.add(w.workflowId);
     }
-    // Runs come newest first: the first live run seen per workflow is its last.
+    // Runs come newest first: the first main run seen per workflow is its last.
     const lastStatus = new Map<string, string>();
     for (const run of overview?.recentRuns ?? []) {
-      if (!run.preview && !lastStatus.has(run.workflowId)) {
+      if (!run.sandbox && !lastStatus.has(run.workflowId)) {
         lastStatus.set(run.workflowId, run.status ?? "");
       }
     }
@@ -195,7 +198,7 @@ export function WorkflowsExplorer() {
             isDirectory: true,
             workflow: isWorkflow
               ? {
-                  previewOnly: registered.has(name) && !live.has(name),
+                  active: active.has(name),
                   failed: lastStatus.get(name) === "FAILED",
                 }
               : undefined,
@@ -278,7 +281,7 @@ export function WorkflowsExplorer() {
       {({ searchQuery }) =>
         overview?.repoLinked === false ? (
           <Prompt
-            text="Workflows live in a GitHub repository. Link one to get started — each workflow is a folder in the repo, and merging to the default branch puts it live."
+            text="Workflows live in a GitHub repository. Link one to get started — each workflow is a folder in the repo, deployed from the default branch."
             action="Link a GitHub repo"
             icon={<LinkIcon size={16} />}
             onClick={() => openSettingsSection("github")}

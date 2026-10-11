@@ -17,8 +17,8 @@ export interface WorkflowDeployment {
 export interface WorkflowRunSummary {
   runId?: string;
   workflowId: string;
-  /** True for a run of unmerged branch code. */
-  preview: boolean;
+  /** Set on a run of someone's sandbox version: whose. */
+  sandbox?: string;
   status?: string;
   startedAt?: string;
   durationMs?: number;
@@ -48,13 +48,16 @@ export interface WorkflowsOverview {
   /** False when the workspace has no repository to keep workflow files in. */
   repoLinked: boolean;
   deployment: WorkflowDeployment;
-  preview: (WorkflowDeployment & { branch: string }) | null;
   /** Where an admin opens the Hatchet dashboard, when the installation has one. */
   dashboardUrl: string | null;
-  /** `webhookUrl`: set for who may start runs, on a live workflow; null while off. */
+  /** The viewer is an admin: the switches and webhook URLs are theirs. */
+  mayChange?: boolean;
+  /** The viewer's sandbox worker, up or not; null without a viewer. */
+  sandbox?: { running: boolean } | null;
+  /** `active`: its schedule and webhook are on. `webhookUrl`: for admins; null while off. */
   workflows?: Array<{
     workflowId: string;
-    preview: boolean;
+    active: boolean;
     webhookUrl?: string | null;
   }>;
   schedules?: Array<{ workflowId: string; cron: string }>;
@@ -74,13 +77,18 @@ interface WorkflowsState {
     workspaceId: string,
     workflowId: string,
     input: Record<string, unknown>,
-    preview: boolean,
+    sandbox: boolean,
+  ) => Promise<Result>;
+  setActive: (
+    workspaceId: string,
+    workflowId: string,
+    active: boolean,
   ) => Promise<Result>;
   setWebhook: (
     workspaceId: string,
     workflowId: string,
     enabled: boolean,
-  ) => Promise<void>;
+  ) => Promise<Result>;
 }
 
 export const isActiveRun = (status?: string) =>
@@ -156,12 +164,12 @@ export const useWorkflowsStore = create<WorkflowsState>()(
       }
     },
 
-    run: async (workspaceId, workflowId, input, preview) => {
+    run: async (workspaceId, workflowId, input, sandbox) => {
       try {
         const body = unwrapBody(
           await api.POST("/api/workspaces/{workspaceId}/workflows/{name}/run", {
             params: { path: { workspaceId, name: workflowId } },
-            body: { input, preview },
+            body: { input, sandbox },
           }),
         ) as { runId?: string };
         return { ok: true, runId: body.runId };
@@ -170,11 +178,38 @@ export const useWorkflowsStore = create<WorkflowsState>()(
       }
     },
 
+    setActive: async (workspaceId, workflowId, active) => {
+      try {
+        unwrapBody(
+          await api.PUT(
+            "/api/workspaces/{workspaceId}/workflows/{name}/active",
+            {
+              params: { path: { workspaceId, name: workflowId } },
+              body: { active },
+            },
+          ),
+        );
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: message(e, "Failed to change the switch") };
+      }
+    },
+
     setWebhook: async (workspaceId, workflowId, enabled) => {
-      await api.PUT("/api/workspaces/{workspaceId}/workflows/{name}/webhook", {
-        params: { path: { workspaceId, name: workflowId } },
-        body: { enabled },
-      });
+      try {
+        unwrapBody(
+          await api.PUT(
+            "/api/workspaces/{workspaceId}/workflows/{name}/webhook",
+            {
+              params: { path: { workspaceId, name: workflowId } },
+              body: { enabled },
+            },
+          ),
+        );
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: message(e, "Failed to change the webhook") };
+      }
     },
   })),
 );
