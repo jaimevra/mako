@@ -1,8 +1,10 @@
 /**
  * Workflows explorer: the same tree component as Apps. A workflow is a row
  * that opens its runs; its caret shows its files, which open read-only.
- * Shared folders and files under `workflows/` follow. When the last merge did
- * not build, the shell's error slot says so: the previous version stays live.
+ * Shared folders and files under `workflows/` follow. A workflow whose last
+ * live run failed is marked, so a failed schedule is seen without opening
+ * it. When the last merge did not build, the shell's error slot says so:
+ * the previous version stays live.
  */
 import {
   useCallback,
@@ -11,7 +13,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Chip,
+  IconButton,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import {
   ExternalLink as DashboardIcon,
   FileCode as FileIcon,
@@ -26,7 +35,7 @@ import { useConsoleStore } from "../store/consoleStore";
 import { useWorkflowsStore } from "../store/workflowsStore";
 import ExplorerShell from "./ExplorerShell";
 import ResourceTree, { type ResourceTreeNode } from "./ResourceTree";
-import { VersionChip } from "./WorkflowView";
+import { SMALL_CHIP_SX, VersionChip } from "./WorkflowView";
 
 const WorkflowIcon = EXPLORER_ICONS.workflows;
 const POLL_INTERVAL_MS = 8_000;
@@ -36,7 +45,7 @@ const KEEP_OTHER_TABS = { replacePristine: false };
 
 /** A tree node: a workflow, a shared folder, or a file. */
 interface Node extends ResourceTreeNode {
-  workflow?: { previewOnly: boolean };
+  workflow?: { previewOnly: boolean; failed: boolean };
 }
 
 function Prompt({
@@ -80,8 +89,15 @@ const getItemIcon = (node: ResourceTreeNode) =>
   ) : (
     <FileIcon size={16} strokeWidth={1.5} />
   );
-const getRightAdornment = (node: ResourceTreeNode) =>
-  (node as Node).workflow?.previewOnly ? <VersionChip preview small /> : null;
+const getRightAdornment = (node: ResourceTreeNode) => {
+  const { workflow } = node as Node;
+  if (workflow?.failed) {
+    return (
+      <Chip label="failed" size="small" color="error" sx={SMALL_CHIP_SX} />
+    );
+  }
+  return workflow?.previewOnly ? <VersionChip preview small /> : null;
+};
 const isWorkflow = (node: ResourceTreeNode) => Boolean((node as Node).workflow);
 const nodeId = (node: ResourceTreeNode) => node.id;
 const never = () => false;
@@ -143,6 +159,13 @@ export function WorkflowsExplorer() {
       registered.add(w.workflowId);
       if (!w.preview) live.add(w.workflowId);
     }
+    // Runs come newest first: the first live run seen per workflow is its last.
+    const lastStatus = new Map<string, string>();
+    for (const run of overview?.recentRuns ?? []) {
+      if (!run.preview && !lastStatus.has(run.workflowId)) {
+        lastStatus.set(run.workflowId, run.status ?? "");
+      }
+    }
     const folders = new Map<string, string[]>();
     const rootFiles: string[] = [];
     for (const id of registered) folders.set(id, []);
@@ -171,7 +194,10 @@ export function WorkflowsExplorer() {
             path: name,
             isDirectory: true,
             workflow: isWorkflow
-              ? { previewOnly: registered.has(name) && !live.has(name) }
+              ? {
+                  previewOnly: registered.has(name) && !live.has(name),
+                  failed: lastStatus.get(name) === "FAILED",
+                }
               : undefined,
             children: paths.map(p => file(p, p.slice(name.length + 1))),
           };
@@ -183,7 +209,7 @@ export function WorkflowsExplorer() {
         ),
       ...rootFiles.map(p => file(p)),
     ];
-  }, [overview?.workflows, files]);
+  }, [overview?.workflows, overview?.recentRuns, files]);
 
   const sections = useMemo(
     () => [

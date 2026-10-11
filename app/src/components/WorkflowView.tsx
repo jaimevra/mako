@@ -68,7 +68,7 @@ const statusOf = (status?: string) =>
 
 const short = (sha: string | null | undefined) => (sha ?? "").slice(0, 7);
 
-const SMALL_CHIP_SX = {
+export const SMALL_CHIP_SX = {
   height: 16,
   fontSize: "0.62rem",
   flexShrink: 0,
