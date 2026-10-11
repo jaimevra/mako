@@ -8,7 +8,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { api, unwrapBody, toErrorMessage as message } from "../api";
 
-export interface WorkflowDeployment {
+interface WorkflowDeployment {
   liveSha: string | null;
   targetSha: string | null;
   buildError: string | null;
@@ -26,7 +26,7 @@ export interface WorkflowRunSummary {
   trigger?: string;
 }
 
-export interface WorkflowRunStep {
+interface WorkflowRunStep {
   step?: string;
   status?: string;
   attempt?: number;
@@ -42,7 +42,7 @@ export interface WorkflowRun extends WorkflowRunSummary {
   steps: WorkflowRunStep[];
 }
 
-export interface WorkflowsOverview {
+interface WorkflowsOverview {
   /** False when this installation has no Hatchet: the section is hidden. */
   configured: boolean;
   /** False when the workspace has no repository to keep workflow files in. */

@@ -35,7 +35,7 @@ function runtimeImage(): string | undefined {
  * they must use the direct Cloud Run URL the kernels use: the public hostname
  * is behind Cloudflare, which blocks requests from the cluster.
  */
-export function makoUrl(): string {
+function makoUrl(): string {
   const url = process.env.NOTEBOOK_KERNEL_API_URL || process.env.BASE_URL;
   if (!url) throw new Error("Set NOTEBOOK_KERNEL_API_URL or BASE_URL");
   return url.replace(/\/+$/, "");

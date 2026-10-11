@@ -75,7 +75,7 @@ export function tenantFromToken(token: string): WorkspaceTenant {
   return { tenantId: claims.sub, token, apiUrl: apiUrl.replace(/\/+$/, "") };
 }
 
-export interface HatchetRequest {
+interface HatchetRequest {
   method?: "GET" | "POST";
   query?: URLSearchParams;
   body?: unknown;

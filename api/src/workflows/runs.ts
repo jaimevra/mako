@@ -112,12 +112,6 @@ async function loadState(workspaceId: string) {
   return { state: workspace?.workflows, repoLinked: Boolean(repo) };
 }
 
-/** What is deployed for a workspace. */
-export async function readWorkflowsStatus(workspaceId: string) {
-  const { state, repoLinked } = await loadState(workspaceId);
-  return statusOf(state, repoLinked);
-}
-
 /**
  * Everything a screen or an agent shows first: what is deployed, the
  * workflows and schedules, and the last `limit` runs.

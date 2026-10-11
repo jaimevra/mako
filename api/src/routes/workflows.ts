@@ -35,7 +35,6 @@ import { workspaceService } from "../services/workspace.service";
 import { runStepAgent } from "../workflows/agent";
 import {
   HatchetError,
-  ensureWorkspaceTenant,
   readWorkspaceTenant,
   requireTenant,
   startRun,
@@ -393,23 +392,8 @@ workflowRuntimeRoutes.get(
     ]);
     const wanted = workspace?.workflows?.live;
     const live = wanted ? { sha: wanted.sha, tree: wanted.tree } : null;
-    // Something to run and no token yet (a workspace deployed before tokens
-    // were saved per workspace): the worker's poll gives it one.
-    const token =
-      tenant?.token ??
-      (live
-        ? await ensureWorkspaceTenant(workspaceId)
-            .then(t => t.token)
-            .catch((error: unknown) => {
-              logger.warn("No Hatchet tenant for the worker", {
-                workspaceId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-              return null;
-            })
-        : null);
     return c.json({
-      hatchetToken: token,
+      hatchetToken: tenant?.token ?? null,
       live,
       active: workspace?.workflows?.active ?? [],
     });

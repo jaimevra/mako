@@ -1,8 +1,8 @@
-// What a worker needs before it can load `workflows/`: the shared files the
-// image supplies, the runtime's packages, and a typecheck. Used by
+// What it takes to run `workflows/`: the shared files the image supplies, the
+// runtime's packages, a typecheck, and a started worker. Used by
 // entrypoint.mjs (a commit, in the workspace's worker) and run.mjs (a
 // checkout, in a person's sandbox) the same way.
-import { execFileSync } from "node:child_process";
+import { execFileSync, fork } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const RUNTIME_DIR = dirname(fileURLToPath(import.meta.url));
+const START_TIMEOUT_MS = 60_000;
 
 /**
  * Make `root` (a folder holding `workflows/`) loadable: the Hatchet client
@@ -63,4 +64,32 @@ export function typecheck(root) {
   } catch (err) {
     return err.stdout?.toString() || err.message;
   }
+}
+
+/**
+ * Start worker.mjs on a prepared `root` with `env` on top of this process's.
+ * Resolves with the process once it is connected to Hatchet; rejects with
+ * what it printed.
+ */
+export function startWorker(root, env) {
+  return new Promise((resolve, reject) => {
+    const child = fork(join(RUNTIME_DIR, "worker.mjs"), {
+      env: { ...process.env, WORKFLOWS_ROOT: root, ...env },
+      stdio: ["ignore", "inherit", "pipe", "ipc"],
+    });
+    let stderr = "";
+    child.stderr.on("data", chunk => {
+      process.stderr.write(chunk);
+      stderr = (stderr + chunk).slice(-4000);
+    });
+    const timer = setTimeout(() => child.kill("SIGKILL"), START_TIMEOUT_MS);
+    child.once("message", () => {
+      clearTimeout(timer);
+      resolve(child);
+    });
+    child.once("exit", code => {
+      clearTimeout(timer);
+      reject(new Error(stderr || `worker exited with code ${code}`));
+    });
+  });
 }

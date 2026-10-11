@@ -13,7 +13,6 @@ import { hashApiKey } from "../auth/api-key.middleware";
 import { User } from "../database/schema";
 import { Workspace } from "../database/workspace-schema";
 import { encryptString } from "../services/crypto.service";
-import { readWorkflowsStatus } from "../workflows/runs";
 import { workflowRuntimeRoutes } from "./workflows";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
@@ -125,9 +124,6 @@ async function main() {
       sha: SHA_B,
       error: "TS2322",
     });
-    let status = await readWorkflowsStatus(id.toString());
-    assert.equal(status.deployment.liveSha, SHA_A);
-    assert.equal(status.deployment.buildError, "TS2322");
 
     // The next good build of it clears the error.
     assert.equal(
@@ -136,8 +132,6 @@ async function main() {
     );
     assert.deepEqual((await state())?.live?.running, { sha: SHA_B });
     assert.equal((await state())?.live?.failed, undefined);
-    status = await readWorkflowsStatus(id.toString());
-    assert.equal(status.deployment.buildError, null);
 
     // A late report for a commit no longer wanted changes nothing.
     await call("/status", WORKER_KEY, { sha: SHA_A, error: "stale" });

@@ -5,15 +5,14 @@
 // keeps running.
 //
 // Env: MAKO_URL, MAKO_API_KEY. The Hatchet token comes from Mako.
-import { execFileSync, fork } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { RUNTIME_DIR, prepare, typecheck } from "./build.mjs";
+import { prepare, startWorker, typecheck } from "./build.mjs";
 
 const READY_FILE = "/tmp/ready";
 const SOURCE_ROOT = "/tmp/src";
 const POLL_MS = 10_000;
-const START_TIMEOUT_MS = 60_000;
 // A failed target is tried again, later: a commit that does not build costs
 // a typecheck now and then, and a Hatchet that was down is not waited on
 // forever.
@@ -53,36 +52,6 @@ async function fetchSource(sha) {
   }
 }
 
-/** Start a worker process. Resolves once it is up; rejects with its output. */
-function startWorker(root, sha, hatchetToken, active) {
-  return new Promise((resolve, reject) => {
-    const child = fork(join(RUNTIME_DIR, "worker.mjs"), {
-      env: {
-        ...process.env,
-        WORKFLOWS_ROOT: root,
-        GIT_SHA: sha,
-        HATCHET_CLIENT_TOKEN: hatchetToken,
-        WORKFLOWS_ACTIVE: active.join(","),
-      },
-      stdio: ["ignore", "inherit", "pipe", "ipc"],
-    });
-    let stderr = "";
-    child.stderr.on("data", chunk => {
-      process.stderr.write(chunk);
-      stderr = (stderr + chunk).slice(-4000);
-    });
-    const timer = setTimeout(() => child.kill("SIGKILL"), START_TIMEOUT_MS);
-    child.once("message", () => {
-      clearTimeout(timer);
-      resolve(child);
-    });
-    child.once("exit", code => {
-      clearTimeout(timer);
-      reject(new Error(stderr || `worker exited with code ${code}`));
-    });
-  });
-}
-
 /**
  * The running worker process (`current`) and the target that last failed
  * (`failed`, with when to try it again), so a broken commit is not rebuilt
@@ -105,7 +74,11 @@ async function switchTo(target, hatchetToken, active) {
     prepare(root);
     const errors = typecheck(root);
     if (errors) throw new Error(errors);
-    child = await startWorker(root, target.sha, hatchetToken, active);
+    child = await startWorker(root, {
+      GIT_SHA: target.sha,
+      HATCHET_CLIENT_TOKEN: hatchetToken,
+      WORKFLOWS_ACTIVE: active.join(","),
+    });
   } catch (err) {
     console.error(`Build failed at ${target.sha}:\n${err.message}`);
     // Source that could not be fetched is tried again on the next poll; a
