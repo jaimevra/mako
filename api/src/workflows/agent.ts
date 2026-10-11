@@ -25,6 +25,9 @@ import { HatchetError } from "./hatchet";
 
 const DEFAULT_MAX_STEPS = 30;
 const MAX_STEPS = 100;
+/** A step's agent run ends here whatever the model does; the step's own
+ * executionTimeout is usually shorter. */
+const TIME_LIMIT_MS = 10 * 60_000;
 
 export async function runStepAgent(params: {
   workspaceId: string;
@@ -54,6 +57,11 @@ export async function runStepAgent(params: {
     headless: true,
   });
   const startedAt = Date.now();
+  // What ran is recorded whatever happens next: the transcript as a chat and
+  // the tokens as usage, after a clean finish, an error or the time limit.
+  const toolCalls: string[] = [];
+  let inputTokens = 0;
+  let outputTokens = 0;
   const result = streamText({
     model: getModel(modelId),
     system: runtime.system,
@@ -63,46 +71,53 @@ export async function runStepAgent(params: {
     stopWhen: stepCountIs(
       Math.min(params.maxSteps ?? DEFAULT_MAX_STEPS, MAX_STEPS),
     ),
+    abortSignal: AbortSignal.timeout(TIME_LIMIT_MS),
+    onStepFinish: step => {
+      inputTokens += step.usage.inputTokens ?? 0;
+      outputTokens += step.usage.outputTokens ?? 0;
+      toolCalls.push(...step.toolCalls.map(call => call.toolName));
+    },
   });
 
   // Draining the UI stream is what builds the messages a chat is made of.
   let transcript = messages;
-  const stream = result.toUIMessageStream({
-    originalMessages: messages,
-    onFinish: ({ messages: all }) => {
-      transcript = all;
-    },
-  });
-  for await (const _part of stream) void _part;
-
+  let failure: unknown;
   const chatId = new Types.ObjectId();
-  await Chat.create({
-    _id: chatId,
-    workspaceId: new Types.ObjectId(workspaceId),
-    createdBy: userId,
-    title: goal.slice(0, 80),
-    titleGenerated: true,
-    source: "workflow",
-    messages: [],
-  });
-  await saveChat(chatId.toString(), workspaceId, userId, transcript);
-
-  const usage = await result.totalUsage;
-  void trackUsage({
-    workspaceId,
-    userId,
-    invocationType: "workflow",
-    modelId,
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-    totalTokens: usage.totalTokens ?? 0,
-    durationMs: Date.now() - startedAt,
-  });
-  return {
-    text: await result.text,
-    toolCalls: (await result.steps).flatMap(step =>
-      step.toolCalls.map(call => call.toolName),
-    ),
-    chatId: chatId.toString(),
-  };
+  try {
+    const stream = result.toUIMessageStream({
+      originalMessages: messages,
+      onFinish: ({ messages: all }) => {
+        transcript = all;
+      },
+    });
+    for await (const _part of stream) void _part;
+  } catch (error) {
+    failure = error;
+  } finally {
+    await Chat.create({
+      _id: chatId,
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: userId,
+      title: goal.slice(0, 80),
+      titleGenerated: true,
+      source: "workflow",
+      messages: [],
+    });
+    await saveChat(chatId.toString(), workspaceId, userId, transcript);
+    void trackUsage({
+      workspaceId,
+      userId,
+      invocationType: "workflow",
+      modelId,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      durationMs: Date.now() - startedAt,
+    });
+  }
+  if (failure) {
+    const why = failure instanceof Error ? failure.message : String(failure);
+    throw new HatchetError(`The agent did not finish: ${why}`, 502);
+  }
+  return { text: await result.text, toolCalls, chatId: chatId.toString() };
 }
