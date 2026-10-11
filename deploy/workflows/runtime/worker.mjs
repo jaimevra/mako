@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { register } from "tsx/esm/api";
 
 register();
+const READY_TIMEOUT_MS = 45_000;
 const dir = join(process.env.WORKFLOWS_ROOT, "workflows");
 const load = file => import(pathToFileURL(join(dir, file)).href);
 
@@ -45,16 +46,25 @@ for (const entry of readdirSync(dir, { withFileTypes: true })) {
 }
 
 if (workflows.length === 0) {
-  // Nothing to run is a mistake in the layout, not a deploy: say where the
-  // files are, so a file one folder too deep is seen at once.
+  // A workflow file in the wrong place is a mistake in the layout, not a
+  // deploy: say where it is, so a file one folder too deep is seen at once.
   const found = readdirSync(dir, { recursive: true })
     .filter(file => String(file).endsWith("workflow.ts"))
     .map(file => `workflows/${file}`);
-  console.error(
-    "No workflow found. A workflow is the file workflows/<name>/workflow.ts." +
-      (found.length ? ` Found instead: ${found.join(", ")}` : ""),
-  );
-  process.exit(1);
+  if (found.length) {
+    console.error(
+      "No workflow found. A workflow is the file workflows/<name>/workflow.ts." +
+        ` Found instead: ${found.join(", ")}`,
+    );
+    process.exit(1);
+  }
+  // No workflow at all (the last one was deleted, shared files remain) is a
+  // deploy of nothing: this process takes over from the previous one and
+  // idles, so what was deleted stops running.
+  console.log(`Worker started at ${process.env.GIT_SHA}: no workflows`);
+  process.send?.("ready");
+  process.on("SIGTERM", () => process.exit(0));
+  await new Promise(() => {});
 }
 
 const worker = await hatchet.worker("workspace", {
@@ -71,6 +81,12 @@ process.on("SIGTERM", async () => {
 
 worker.start().catch(err => {
   console.error("Worker stopped:", err);
+  process.exit(1);
+});
+// Ready means connected and registered, not merely started: the previous
+// worker is stopped only once this one can take its place.
+await worker.waitUntilReady(READY_TIMEOUT_MS).catch(err => {
+  console.error("Worker did not connect to Hatchet:", err.message);
   process.exit(1);
 });
 console.log(

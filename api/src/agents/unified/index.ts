@@ -38,7 +38,7 @@ export function unifiedAgentFactory(context: AgentContext): AgentConfig {
     consoleId,
     userId,
     context.toolExecutionContext,
-    { chatId: context.chatId },
+    { chatId: context.chatId, queryAccess: context.queryAccess },
   );
   const flowTools = createFlowTools(workspaceId, context.toolExecutionContext);
   const flowFileTools = createFlowFileTools(workspaceId);

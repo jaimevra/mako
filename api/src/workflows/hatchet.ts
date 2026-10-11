@@ -122,15 +122,17 @@ async function parse<T>(res: Response, what: string): Promise<T> {
 
 // --- The workspace's token ---------------------------------------------------
 
-/** The tenant for a workspace's saved token, else the installation's. */
+/**
+ * The tenant for a workspace's saved token, or null without one. Only a
+ * saved token counts: the installation's token is given to one workspace at
+ * deploy (`ensureWorkspaceTenant`), never read on behalf of every workspace,
+ * or any member of any workspace could look at and start that tenant's runs.
+ */
 export function tenantOfToken(stored?: string): WorkspaceTenant | null {
-  const token = stored
-    ? decryptString(stored)
-    : process.env.HATCHET_CLIENT_TOKEN;
-  return token ? tenantFromToken(token) : null;
+  return stored ? tenantFromToken(decryptString(stored)) : null;
 }
 
-/** The workspace's tenant, or null when it has no token and none is shared. */
+/** The workspace's tenant, or null when it has none. */
 export async function readWorkspaceTenant(
   workspaceId: string,
 ): Promise<WorkspaceTenant | null> {
@@ -169,12 +171,34 @@ export async function ensureWorkspaceTenant(
   if (stored) return tenantOfToken(stored)!;
   const adminUrl = process.env.HATCHET_API_URL?.replace(/\/+$/, "");
   if (!process.env.HATCHET_ADMIN_PASSWORD || !adminUrl) {
-    // One tenant for the whole installation: every workspace sees the same
-    // runs. Fine for a single-workspace install, and all it can be without
-    // admin access to a Hatchet.
-    const shared = tenantOfToken(undefined);
-    if (shared) return shared;
-    throw new HatchetError("No Hatchet token. Set HATCHET_CLIENT_TOKEN.", 400);
+    // One tenant for the whole installation, and so one workspace: the
+    // first to deploy keeps the token; a second is refused, since it would
+    // see and start the first one's runs. All it can be without admin
+    // access to a Hatchet.
+    const token = process.env.HATCHET_CLIENT_TOKEN;
+    if (!token) {
+      throw new HatchetError(
+        "No Hatchet token. Set HATCHET_CLIENT_TOKEN.",
+        400,
+      );
+    }
+    const holder = await Workspace.findOne({
+      _id: { $ne: new Types.ObjectId(workspaceId) },
+      "workflows.hatchetToken": { $exists: true },
+    })
+      .select("slug")
+      .lean();
+    if (holder) {
+      throw new HatchetError(
+        `HATCHET_CLIENT_TOKEN is one tenant, and workspace "${holder.slug}" has it. For workflows in more than one workspace set HATCHET_API_URL and HATCHET_ADMIN_PASSWORD, and Mako makes a tenant per workspace.`,
+        409,
+      );
+    }
+    await Workspace.updateOne(
+      { _id: new Types.ObjectId(workspaceId) },
+      { $set: { "workflows.hatchetToken": encryptString(token) } },
+    );
+    return tenantFromToken(token);
   }
 
   const login = await send(

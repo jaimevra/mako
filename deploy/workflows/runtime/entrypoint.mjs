@@ -22,6 +22,11 @@ const READY_FILE = "/tmp/ready";
 const SOURCE_ROOT = "/tmp/src";
 const POLL_MS = 10_000;
 const START_TIMEOUT_MS = 60_000;
+// A failed target is tried again, later: a commit that does not build costs
+// a typecheck now and then, and a Hatchet that was down is not waited on
+// forever.
+const RETRY_MIN_MS = 60_000;
+const RETRY_MAX_MS = 15 * 60_000;
 // Preview workflows are registered in Hatchet as `preview_<name>`.
 const PREVIEW_PREFIX = "preview_";
 const auth = { Authorization: `Bearer ${process.env.MAKO_API_KEY}` };
@@ -139,7 +144,8 @@ function startWorker(slot, root, sha, hatchetToken) {
 /**
  * The two things a worker can run: the live code, and a preview of unmerged
  * work. Each has its running process (`current`) and the target that last
- * failed (`failed`), so a broken commit is not rebuilt on every poll.
+ * failed (`failed`, with when to try it again), so a broken commit is not
+ * rebuilt on every poll.
  */
 const slots = {
   live: { name: "live", current: null, failed: null },
@@ -148,7 +154,9 @@ const slots = {
 
 async function switchTo(slot, target, hatchetToken) {
   const key = `${target.tree}:${hatchetToken}`;
-  if (slot.current?.key === key || slot.failed === key) return;
+  if (slot.current?.key === key) return;
+  const failed = slot.failed?.key === key ? slot.failed : null;
+  if (failed && Date.now() < failed.retryAt) return;
   console.log(`Switching ${slot.name} to ${target.sha}`);
   let root;
   let child;
@@ -162,9 +170,12 @@ async function switchTo(slot, target, hatchetToken) {
       `Build failed (${slot.name}) at ${target.sha}:\n${err.message}`,
     );
     // Source that could not be fetched is tried again on the next poll; a
-    // commit that does not build is reported once and left alone.
+    // commit that did not build or start is reported and tried again later,
+    // each time after a longer wait.
     if (!root) return;
-    slot.failed = key;
+    const attempts = (failed?.attempts ?? 0) + 1;
+    const wait = Math.min(RETRY_MIN_MS * 2 ** (attempts - 1), RETRY_MAX_MS);
+    slot.failed = { key, attempts, retryAt: Date.now() + wait };
     rmSync(root, { recursive: true, force: true });
     await report(slot, target.sha, err.message);
     return;

@@ -12,6 +12,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { hashApiKey } from "../auth/api-key.middleware";
 import { User } from "../database/schema";
 import { Workspace } from "../database/workspace-schema";
+import { encryptString } from "../services/crypto.service";
 import { readWorkflowsStatus } from "../workflows/runs";
 import { workflowRuntimeRoutes } from "./workflows";
 
@@ -41,6 +42,7 @@ async function main() {
   const mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
   process.env.HATCHET_CLIENT_TOKEN = HATCHET_TOKEN;
+  process.env.ENCRYPTION_KEY ??= "0".repeat(64);
   try {
     const id = new Types.ObjectId();
     await User.create({ _id: "tester", email: "tester@example.com" });
@@ -62,7 +64,10 @@ async function main() {
         key("worker", WORKER_KEY, ["mcp", "query:read", "workflows:runtime"]),
         key("ordinary", OTHER_KEY, ["mcp", "query:read"]),
       ],
-      workflows: { live: { sha: SHA_A, tree: "tree-a" } },
+      workflows: {
+        hatchetToken: encryptString(HATCHET_TOKEN),
+        live: { sha: SHA_A, tree: "tree-a" },
+      },
     });
     const state = async () =>
       (await Workspace.findById(id).select("workflows").lean())?.workflows;

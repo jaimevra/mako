@@ -154,8 +154,9 @@ ctx.logger.info(`used: ${toolCalls.join(", ")}`);
 ```
 
 Write the goal as you would brief a colleague: what to find, where, and what
-to answer with. It acts as the person who set workflows up and can change
-things in Mako, so say so when it should only read.
+to answer with. It acts as the person who set workflows up: its SQL is
+read-only, like `query`, and it can change things in Mako (consoles, apps),
+so say so when it should only read.
 
 **A plain model call**, for one small judgement on data you already hold
 (classify, summarize, extract). No tools unless you pass some.

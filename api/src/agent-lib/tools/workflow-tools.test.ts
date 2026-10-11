@@ -9,6 +9,7 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose, { Types } from "mongoose";
 
 import { Workspace, WorkspaceMember } from "../../database/workspace-schema";
+import { encryptString } from "../../services/crypto.service";
 import { createWorkflowTools } from "./workflow-tools";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
@@ -112,6 +113,7 @@ async function main() {
       slug: `t-${id}`,
       createdBy: "tester",
       workflows: {
+        hatchetToken: encryptString(TOKEN),
         live: { sha: SHA_A, tree: "ta", running: { sha: SHA_A } },
         preview: {
           branch: "workflow/x",

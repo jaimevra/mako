@@ -14,6 +14,7 @@ import {
   DatabaseConnection,
 } from "../../database/workspace-schema";
 import type { AgentToolExecutionContext } from "../../agents/types";
+import type { QueryAccess } from "../../auth/api-key-scopes";
 import type { ConsoleDataV2 } from "../types";
 import {
   clientConsoleTools,
@@ -208,7 +209,7 @@ export const createUniversalTools = (
   preferredConsoleId?: string,
   userId?: string,
   toolExecutionContext?: AgentToolExecutionContext,
-  options?: { chatId?: string },
+  options?: { chatId?: string; queryAccess?: QueryAccess },
 ) => {
   // Get MongoDB tools and extract just the database-specific ones
   const mongoTools = createMongoToolsV2(
@@ -234,6 +235,7 @@ export const createUniversalTools = (
     preferredConsoleId,
     userId,
     toolExecutionContext,
+    options?.queryAccess,
   );
 
   return {
@@ -245,6 +247,7 @@ export const createUniversalTools = (
       userId,
       executionContext: toolExecutionContext,
       chatId: options?.chatId,
+      queryAccess: options?.queryAccess,
     }),
 
     // Remaining client-side console tool: listing OPEN TABS is inherently a

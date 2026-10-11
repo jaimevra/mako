@@ -50,8 +50,10 @@ export async function runStepAgent(params: {
   const messages: UIMessage[] = [
     { id: "goal", role: "user", parts: [{ type: "text", text: goal }] },
   ];
+  // Reads only, like the worker's own key: a step that must write does it
+  // through a tool made for that, not through SQL nobody reviewed.
   const runtime = buildUnifiedModeRuntime({
-    context: { workspaceId, userId },
+    context: { workspaceId, userId, queryAccess: "read" },
     messages,
     modelId,
     headless: true,
