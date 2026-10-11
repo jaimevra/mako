@@ -38,6 +38,9 @@ the file above is `path: "workflow.ts"`.
 
 Main is live: a merge to main is the deploy. So never write on main.
 
+Only workspace admins change workflows; members run them. For a member,
+say so and do not write files.
+
 1. Switch to a branch: `app_bash` with `workflowId` and
    `git checkout -b workflow/<name>`. Skip if the checkout is already on a
    branch other than main.
@@ -173,8 +176,8 @@ judgement is needed.
 ## What starts a run
 
 - A schedule: `on: { cron: "0 6 * * *" }` in the workflow (UTC).
-- A webhook: off until it is added, by you with `workflows_webhook` or by a
-  person on the workflow's tab. That gives a URL; a POST to it starts a run
+- A webhook: off until an admin adds it, with `workflows_webhook` or on the
+  workflow's tab. That gives a URL; a POST to it starts a run
   with the JSON body as input. Nothing to write in the code. Give the user
   the URL and tell them it is a secret.
 - A person (Run) or you (`workflows_run`).

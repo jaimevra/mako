@@ -122,13 +122,14 @@ async function main() {
       },
     });
     await WorkspaceMember.collection.insertMany([
+      { workspaceId: id, userId: "admin", role: "admin" },
       { workspaceId: id, userId: "member", role: "member" },
       { workspaceId: id, userId: "viewer", role: "viewer" },
     ]);
-    const tools = createWorkflowTools({
-      workspaceId: id.toString(),
-      userId: "member",
-    });
+    const as = (userId: string) =>
+      createWorkflowTools({ workspaceId: id.toString(), userId });
+    const admin = as("admin");
+    const tools = as("member");
 
     // The overview separates live from preview, and never leaks the token.
     const overview = await call(tools, "workflows_status", {});
@@ -140,10 +141,14 @@ async function main() {
     assert.equal(overview.preview.branch, "workflow/x");
     assert.equal(overview.preview.buildError, "error TS2322");
     assert.deepEqual(overview.workflows, [
-      // No webhook yet. A preview never has one.
-      { workflowId: "daily-digest", preview: false, webhookUrl: null },
+      // A member is not shown webhooks; an admin sees `webhookUrl: null`.
+      { workflowId: "daily-digest", preview: false },
       { workflowId: "daily-digest", preview: true },
     ]);
+    assert.equal(
+      (await call(admin, "workflows_status", {})).workflows[0].webhookUrl,
+      null,
+    );
     assert.deepEqual(overview.schedules, [
       { workflowId: "daily-digest", cron: "0 7 * * 1-5" },
     ]);
@@ -200,10 +205,7 @@ async function main() {
     assert.equal(requests.length, before);
 
     // Viewers look, they do not start runs.
-    const viewer = createWorkflowTools({
-      workspaceId: id.toString(),
-      userId: "viewer",
-    });
+    const viewer = as("viewer");
     assert.equal((await call(viewer, "workflows_status", {})).success, true);
     const refused = await call(viewer, "workflows_run", {
       workflowId: "daily-digest",
@@ -211,36 +213,37 @@ async function main() {
     assert.equal(refused.success, false);
     assert.equal(requests.length, before + 3, "no run was started");
 
-    // A webhook is added per workflow, and a viewer neither adds nor sees one.
+    // A webhook is added per workflow by an admin; a member neither adds
+    // nor sees one.
     const webhook = { workflowId: "daily-digest", enabled: true };
     assert.equal(
-      (await call(viewer, "workflows_webhook", webhook)).success,
+      (await call(tools, "workflows_webhook", webhook)).success,
       false,
     );
-    const added = await call(tools, "workflows_webhook", webhook);
+    const added = await call(admin, "workflows_webhook", webhook);
     assert.match(
       added.webhookUrl,
       /\/api\/workflows\/hooks\/.+\/daily-digest\/[0-9a-f]{48}$/,
     );
     const isLive = (w: { preview: boolean }) => !w.preview;
     assert.equal(
-      (await call(tools, "workflows_status", {})).workflows.find(isLive)
+      (await call(admin, "workflows_status", {})).workflows.find(isLive)
         .webhookUrl,
       added.webhookUrl,
     );
     assert.equal(
       "webhookUrl" in
-        (await call(viewer, "workflows_status", {})).workflows.find(isLive),
+        (await call(tools, "workflows_status", {})).workflows.find(isLive),
       false,
     );
-    const removed = await call(tools, "workflows_webhook", {
+    const removed = await call(admin, "workflows_webhook", {
       ...webhook,
       enabled: false,
     });
     assert.equal(removed.webhookUrl, null);
     assert.equal(
       (
-        await call(tools, "workflows_webhook", {
+        await call(admin, "workflows_webhook", {
           workflowId: "preview_daily-digest",
           enabled: true,
         })

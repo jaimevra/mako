@@ -39,6 +39,7 @@ import {
   startRun,
 } from "../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../workflows/runs";
+import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
 import { isWebhookSecret, setWebhook } from "../workflows/webhook";
 
 const logger = loggers.api("workflows");
@@ -77,15 +78,25 @@ const NameParam = WorkspaceParam.extend({
   name: z.string().openapi({ param: { name: "name", in: "path" } }),
 });
 
-/** Viewers look; starting runs and changing webhooks need a member. */
+/** Viewers look; members start runs; admins add webhooks and see them. */
 const mayRun = (c: AuthenticatedContext) =>
   ["owner", "admin", "member"].includes(c.get("memberRole") ?? "");
+const mayChange = (c: AuthenticatedContext) =>
+  mayChangeWorkflows(c.get("memberRole"));
 
 workflowRoutes.use("*", unifiedAuthMiddleware, requireWorkspace);
 workflowRoutes.use("*", async (c: AuthenticatedContext, next) => {
-  if (c.req.method !== "GET" && !mayRun(c)) {
+  const allowed =
+    c.req.method === "GET" ||
+    (c.req.path.endsWith("/webhook") ? mayChange(c) : mayRun(c));
+  if (!allowed) {
     return c.json(
-      { success: false, error: "Viewers cannot change workflows" },
+      {
+        success: false,
+        error: mayRun(c)
+          ? WORKFLOWS_ADMIN_ONLY
+          : "Viewers cannot change workflows",
+      },
       403,
     );
   }
@@ -108,7 +119,7 @@ workflowRoutes.openapi(
     return c.json(
       {
         success: true as const,
-        ...(await readWorkflowsOverview(workspaceId, RUNS_SHOWN, mayRun(c))),
+        ...(await readWorkflowsOverview(workspaceId, RUNS_SHOWN, mayChange(c))),
       },
       200,
     );

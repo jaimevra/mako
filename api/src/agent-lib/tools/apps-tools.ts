@@ -78,6 +78,10 @@ import {
   parseAppRepoPath,
 } from "../../apps/app-paths";
 import {
+  WORKFLOWS_ADMIN_ONLY,
+  mayChangeWorkflows,
+} from "../../workflows/policy";
+import {
   authorizeAppMove,
   authorizeFolderTarget,
 } from "../../apps/app-authorization";
@@ -262,9 +266,10 @@ export function createAppsTools({
     if (!isSafeSegment(target.workflowId)) {
       return { error: `Invalid workflow: ${target.workflowId}` };
     }
-    const role = userId ? await memberRole() : "member";
-    if (!role || (opts.write && role === "viewer")) {
-      return { error: "You cannot change workflows in this workspace." };
+    const role = userId ? await memberRole() : "owner";
+    if (!role) return { error: "You cannot see workflows in this workspace." };
+    if (opts.write && !mayChangeWorkflows(role)) {
+      return { error: WORKFLOWS_ADMIN_ONLY };
     }
     // The first workflow may be the first thing in the workspace's repo.
     // Same gate as every other content write: a connected repository.
@@ -1264,6 +1269,8 @@ export function createAppsTools({
           const result = await mergeBranchToMain(
             scopeFor(loaded.project),
             target,
+            undefined,
+            userId,
           );
           return { success: result.merged, ...result, branch: target };
         } catch (error) {

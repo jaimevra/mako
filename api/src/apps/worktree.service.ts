@@ -109,6 +109,7 @@ import {
   APP_MANIFEST,
   APPS_DIR,
   FOLDER_KEEP_FILE,
+  WORKFLOWS_DIR,
   appRepoPath,
   parseAppRepoPath,
   appTreeRoot,
@@ -119,6 +120,8 @@ import {
   type AppScope,
 } from "./app-paths";
 import { appSdkDependency } from "./app-sdk-package";
+import { workspaceService } from "../services/workspace.service";
+import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
 
 // Identity helpers moved to app-paths.ts (pure); re-exported so existing
 // importers keep working.
@@ -2552,6 +2555,8 @@ export async function mergeBranchToMain(
   scope: RepoScope,
   branch: string,
   author?: GitAuthor,
+  /** Who merges. Given, a branch that changes `workflows/` needs an admin. */
+  actorUserId?: string,
 ): Promise<MergeResult> {
   const repoDir = await repoForWorkspace(scope.workspaceId);
   const defaultBranch = scope.defaultBranch;
@@ -2572,6 +2577,23 @@ export async function mergeBranchToMain(
   }
   if (branchHead === mainHead) {
     return { merged: false, reason: "Already up to date" };
+  }
+  // Main is where workflows go live. The git endpoint lets only admins push
+  // workflow changes; the merge, which does not run hooks, asks the same.
+  if (actorUserId) {
+    const { stdout } = await runGit([
+      ...["-C", repoDir, "diff", "--name-only", mainHead, branchHead],
+      ...["--", `${WORKFLOWS_DIR}/`],
+    ]);
+    if (stdout.trim()) {
+      const member = await workspaceService.getMember(
+        scope.workspaceId,
+        actorUserId,
+      );
+      if (!mayChangeWorkflows(member?.role)) {
+        throw new WorktreeConflictError(WORKFLOWS_ADMIN_ONLY);
+      }
+    }
   }
 
   // Fast-forward when main is an ancestor of the branch.

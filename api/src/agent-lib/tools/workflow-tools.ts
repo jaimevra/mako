@@ -10,6 +10,7 @@ import { z } from "zod";
 import { workspaceService } from "../../services/workspace.service";
 import { requireTenant, startRun } from "../../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../../workflows/runs";
+import { WORKFLOWS_ADMIN_ONLY } from "../../workflows/policy";
 import { setWebhook } from "../../workflows/webhook";
 
 /** How many recent runs an agent is shown. */
@@ -27,10 +28,11 @@ export function createWorkflowTools({
   workspaceId: string;
   userId?: string;
 }): ToolSet {
-  /** Viewers look; starting runs and changing webhooks need a member. */
-  const mayRun = async () =>
-    !userId ||
-    workspaceService.hasRole(workspaceId, userId, ["owner", "admin", "member"]);
+  /** Viewers look; members start runs; admins add webhooks and see them. */
+  const roleIs = async (roles: string[]) =>
+    !userId || workspaceService.hasRole(workspaceId, userId, roles);
+  const mayRun = () => roleIs(["owner", "admin", "member"]);
+  const mayChange = () => roleIs(["owner", "admin"]);
 
   return {
     workflows_status: tool({
@@ -50,7 +52,7 @@ export function createWorkflowTools({
               ...(await readWorkflowsOverview(
                 workspaceId,
                 RECENT_RUNS,
-                await mayRun(),
+                await mayChange(),
               )),
             };
           }
@@ -110,8 +112,8 @@ export function createWorkflowTools({
       }),
       execute: async ({ workflowId, enabled }) => {
         try {
-          if (!(await mayRun())) {
-            return { success: false, error: "Viewers cannot change webhooks." };
+          if (!(await mayChange())) {
+            return { success: false, error: WORKFLOWS_ADMIN_ONLY };
           }
           return {
             success: true,

@@ -48,7 +48,7 @@ Every folder with a `workflow.ts` is picked up. There is no list to keep.
 | A person | The Run button, with a JSON input                                                                      |
 | An agent | `workflows_run`                                                                                        |
 
-A webhook is off until someone adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. A preview has no schedule and no webhook.
+Workspace admins write, merge and remove workflows and add webhooks; members and the agent on their behalf start runs. A webhook is off until an admin adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. A preview has no schedule and no webhook.
 
 ## Using Mako from a step
 

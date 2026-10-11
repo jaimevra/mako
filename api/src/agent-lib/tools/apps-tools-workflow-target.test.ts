@@ -24,6 +24,7 @@ let mongo: MongoMemoryServer;
 let tmpRoot: string;
 let gitServer: TestGitServer;
 const WS = new Types.ObjectId().toString();
+const ADMIN = "admin-user";
 const MEMBER = "member-user";
 const VIEWER = "viewer-user";
 const WORKFLOW = `import { hatchet } from "../hatchet";
@@ -58,6 +59,7 @@ beforeAll(async () => {
   await bindTestWorkspaceRepo(WS);
   const { WorkspaceMember } = await import("../../database/workspace-schema");
   await WorkspaceMember.collection.insertMany([
+    { workspaceId: new Types.ObjectId(WS), userId: ADMIN, role: "admin" },
     { workspaceId: new Types.ObjectId(WS), userId: MEMBER, role: "member" },
     { workspaceId: new Types.ObjectId(WS), userId: VIEWER, role: "viewer" },
   ]);
@@ -87,19 +89,21 @@ describe("workflowId as the tools' target", () => {
     }
   });
 
-  it("lets a viewer read but not write", async () => {
-    const tools = await toolsFor(VIEWER);
-    const write = await call(tools, "app_write_file", {
-      workflowId: "score-leads",
-      path: "workflow.ts",
-      contents: WORKFLOW,
-    });
-    expect(write.success).toBe(false);
-    expect(write.error).toMatch(/cannot change workflows/);
+  it("lets a member read but not write: workflows are an admin's", async () => {
+    for (const userId of [MEMBER, VIEWER]) {
+      const tools = await toolsFor(userId);
+      const write = await call(tools, "app_write_file", {
+        workflowId: "score-leads",
+        path: "workflow.ts",
+        contents: WORKFLOW,
+      });
+      expect(write.success).toBe(false);
+      expect(write.error).toMatch(/Only workspace admins change workflows/);
+    }
   });
 
   it("refuses to write a workflow on main, where workflows are live", async () => {
-    const tools = await toolsFor(MEMBER);
+    const tools = await toolsFor(ADMIN);
     const write = await call(tools, "app_write_file", {
       workflowId: "score-leads",
       path: "workflow.ts",
@@ -110,7 +114,7 @@ describe("workflowId as the tools' target", () => {
   });
 
   it("writes, reads, edits, commits and merges a workflow folder", async () => {
-    const tools = await toolsFor(MEMBER);
+    const tools = await toolsFor(ADMIN);
     const target = { workflowId: "score-leads" };
 
     const branch = await call(tools, "app_bash", {
@@ -177,6 +181,20 @@ describe("workflowId as the tools' target", () => {
     await expect(
       runGit(["-C", repoDir, "show", `main:${file}`]),
     ).rejects.toThrow();
+
+    // The merge is the deploy: a member cannot do it, even from the
+    // Source Control panel, which merges without the tools.
+    const { mergeBranchToMain, workspaceScope } = await import(
+      "../../apps/worktree.service"
+    );
+    await expect(
+      mergeBranchToMain(
+        workspaceScope(WS),
+        "workflow/score-leads",
+        undefined,
+        MEMBER,
+      ),
+    ).rejects.toThrow(/Only workspace admins change workflows/);
 
     const merge = await call(tools, "app_merge_to_main", target);
     expect(merge.success, merge.error).toBe(true);
