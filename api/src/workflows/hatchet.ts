@@ -180,22 +180,29 @@ export async function ensureWorkspaceTenant(
         400,
       );
     }
+    // Saved first, checked after: two workspaces deploying at once both see
+    // the other and both step back, instead of both keeping the token.
+    const _id = new Types.ObjectId(workspaceId);
+    await Workspace.updateOne(
+      { _id },
+      { $set: { "workflows.hatchetToken": encryptString(token) } },
+    );
     const holder = await Workspace.findOne({
-      _id: { $ne: new Types.ObjectId(workspaceId) },
+      _id: { $ne: _id },
       "workflows.hatchetToken": { $exists: true },
     })
       .select("slug")
       .lean();
     if (holder) {
+      await Workspace.updateOne(
+        { _id },
+        { $unset: { "workflows.hatchetToken": "" } },
+      );
       throw new HatchetError(
         `HATCHET_CLIENT_TOKEN is one tenant, and workspace "${holder.slug}" has it. For workflows in more than one workspace set HATCHET_API_URL and HATCHET_ADMIN_PASSWORD, and Mako makes a tenant per workspace.`,
         409,
       );
     }
-    await Workspace.updateOne(
-      { _id: new Types.ObjectId(workspaceId) },
-      { $set: { "workflows.hatchetToken": encryptString(token) } },
-    );
     return tenantFromToken(token);
   }
 

@@ -75,6 +75,19 @@ const ALL_CAPABILITY_GRANTS: ReadonlySet<CapabilityGrant> = new Set(
  */
 const PLAN_GRANT_GATING_ENABLED = false;
 
+/**
+ * What a turn nobody is watching (a workflow step's agent) may not use: the
+ * shell and what puts code on main or starts workflows. Its goal can carry
+ * text from outside (a webhook body), and it acts as the person who deployed
+ * the workflows. It reads, queries and works on consoles and apps' data.
+ */
+const HEADLESS_DENIED_TOOLS = new Set([
+  "app_bash",
+  "app_commit",
+  "app_merge_to_main",
+  "workflows_triggers",
+]);
+
 /** Grants held by the native Chat surface for the current request. */
 export function nativeCapabilityGrants(
   modeState: ModeState,
@@ -548,7 +561,9 @@ export function buildUnifiedModeRuntime(params: {
   const tools: ToolSet = enforceCapabilityGrantsAtExecution(
     headless
       ? Object.fromEntries(
-          Object.entries(offered).filter(([, tool]) => tool.execute),
+          Object.entries(offered).filter(
+            ([name, tool]) => tool.execute && !HEADLESS_DENIED_TOOLS.has(name),
+          ),
         )
       : offered,
     () => nativeCapabilityGrants(modeState),

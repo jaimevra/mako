@@ -83,6 +83,7 @@ export async function runStepAgent(params: {
 
   // Draining the UI stream is what builds the messages a chat is made of.
   let transcript = messages;
+  let text = "";
   let failure: unknown;
   const chatId = new Types.ObjectId();
   try {
@@ -93,6 +94,9 @@ export async function runStepAgent(params: {
       },
     });
     for await (const _part of stream) void _part;
+    // A model error or the time limit ends the stream quietly and rejects
+    // here, where it is reported like any other failure.
+    text = await result.text;
   } catch (error) {
     failure = error;
   } finally {
@@ -121,5 +125,5 @@ export async function runStepAgent(params: {
     const why = failure instanceof Error ? failure.message : String(failure);
     throw new HatchetError(`The agent did not finish: ${why}`, 502);
   }
-  return { text: await result.text, toolCalls, chatId: chatId.toString() };
+  return { text, toolCalls, chatId: chatId.toString() };
 }
