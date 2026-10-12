@@ -21,16 +21,13 @@ import { generateApiKey } from "../auth/api-key.middleware";
 import { HatchetError } from "./hatchet";
 import { setKey } from "./on-push";
 import { type RunDetail, shapeRun } from "./runs";
+import { RUNTIME_IN_BOX, installRuntimeCommand } from "./runtime-files";
 
 /**
- * Where the runtime (run.mjs and its packages) is inside a box: the E2B
- * template's copy, or this checkout's for the local provider. Read when
- * used, not at import: modules load before .env does.
+ * run.mjs ends a run after five minutes; the exec gets longer, for a box
+ * that installs the runtime and fetches the engine first.
  */
-const runtimeInBox = () =>
-  process.env.WORKFLOWS_RUNTIME_DIR_IN_BOX || "/opt/mako-workflows";
-/** run.mjs ends a run after five minutes; the exec gets a little longer. */
-const EXEC_TIMEOUT_MS = 6 * 60_000;
+const EXEC_TIMEOUT_MS = 8 * 60_000;
 const FAILED = "MAKO_SANDBOX_FAILED";
 
 type Result = {
@@ -78,10 +75,11 @@ async function runNow(
   const out = `${scratch}/mako-workflow-run.json`;
   const log = `${scratch}/mako-workflow-run.log`;
   const encoded = Buffer.from(JSON.stringify(input)).toString("base64");
-  // Only the result reaches stdout; the engine's and the worker's output go
-  // to a log, shown when there is no result.
+  // Only the result reaches stdout; the install's, the engine's and the
+  // worker's output go to a log, shown when there is no result.
   const command =
-    `rm -f ${out}; MAKO_SANDBOX_RESULT_FILE=${out} node ${runtimeInBox()}/run.mjs ${workflowId} ${encoded} > ${log} 2>&1; ` +
+    `rm -f ${out}; { ${installRuntimeCommand()}; } > ${log} 2>&1; ` +
+    `MAKO_SANDBOX_RESULT_FILE=${out} node "${RUNTIME_IN_BOX}/run.mjs" ${workflowId} ${encoded} >> ${log} 2>&1; ` +
     `if [ -s ${out} ]; then cat ${out}; else echo ${FAILED}; tail -n 40 ${log}; fi`;
   const exec = await execInWorktree(handle, command, {
     timeoutMs: EXEC_TIMEOUT_MS,
@@ -103,7 +101,7 @@ async function runNow(
   if (!result) {
     throw new HatchetError(
       `The sandbox run did not finish.\n${exec.stdout.replace(FAILED, "").trim() || exec.stderr.trim()}`,
-      502,
+      500,
     );
   }
   if (result.buildError) throw new HatchetError(result.buildError, 422);

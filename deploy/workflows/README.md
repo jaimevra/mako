@@ -47,11 +47,16 @@ Testing a workflow needs nothing here. A sandbox run happens inside the
 person's sandbox: `runtime/run.mjs` starts Hatchet's embedded engine (a local
 engine with a bundled Postgres, no token, no network), runs the checkout's
 workflow once with `runtime/worker.mjs`, and prints the run
-(`api/src/workflows/sandbox.ts`). The E2B template carries the runtime and
-the engine's binary at `/opt/mako-workflows` (`api/src/apps/e2b-template.ts`;
-rebuild it with `pnpm --filter api apps:build-template` when the runtime's
-packages or `ENGINE_VERSION` in `run.mjs` change). Nothing in this cluster is
-reachable from a sandbox, and nothing needs to be.
+(`api/src/workflows/sandbox.ts`).
+
+Mako installs the runtime in the box itself, by content
+(`api/src/workflows/runtime-files.ts`): a box without it, or with an older
+one, gets the current files under `~/.mako-workflows` on its next sandbox
+run, so nothing has to be rebuilt when these scripts change. The sandbox
+image carries it preinstalled with the engine fetched
+(`api/src/apps/e2b-template.ts`), which only saves the first run its ~40 s
+of install; rebuild it now and then with
+`pnpm --filter api apps:build-template`.
 
 ## PR previews
 

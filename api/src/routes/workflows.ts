@@ -49,12 +49,16 @@ const logger = loggers.api("workflows");
 /** How many recent runs the Workflows screen lists. */
 const RUNS_SHOWN = 100;
 
-/** Every route answers an error the same way. */
+/**
+ * Every route answers an error the same way. An upstream failure is a 500
+ * with its reason, never a 502: the proxy in front of Mako replaces an
+ * origin's 502 with its own page, and the reason is lost.
+ */
 function fail(error: unknown, c: Context): Response {
   if (error instanceof HatchetError) {
     const status =
-      error.status >= 400 && error.status < 500 ? error.status : 502;
-    return c.json({ success: false, error: error.message }, status as 502);
+      error.status >= 400 && error.status < 500 ? error.status : 500;
+    return c.json({ success: false, error: error.message }, status as 500);
   }
   logger.error("Workflows route error", { error });
   return c.json(

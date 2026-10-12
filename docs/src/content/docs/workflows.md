@@ -128,7 +128,6 @@ A worker run this way serves one workspace and has **no sandbox**: workflow code
 | `WORKFLOWS_WORKER_KEY`                                             | API, and the worker as `MAKO_API_KEY` | The worker's Mako API key                                                                                                                                                                                                 |
 | `MAKO_URL`, `MAKO_API_KEY`                                         | Worker                                | All the worker needs. It gets the Hatchet token from Mako.                                                                                                                                                                |
 | `HATCHET_API_URL`, `HATCHET_ADMIN_EMAIL`, `HATCHET_ADMIN_PASSWORD` | API                                   | Only for a Hatchet you operate: lets Mako create a Hatchet tenant per workspace. Used by the local setup.                                                                                                                 |
-| `WORKFLOWS_RUNTIME_DIR_IN_BOX`                                     | API                                   | Where the workflow runtime is inside a sandbox: `/opt/mako-workflows` in the E2B template (default), this checkout's `deploy/workflows/runtime` for the local provider                                                    |
 
 With none of these set, Mako runs without workflows.
 
