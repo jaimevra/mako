@@ -105,6 +105,8 @@ Rules:
   `await ctx.parentOutput(step)`.
 - Give every step `retries: 1` or more: a step interrupted by a deploy or a
   crash is retried, and a step with no retries left fails the run.
+- A scheduled run has no input: read it as `input?.name ?? "default"`, or
+  the first cron run fails on `null`.
 - A step may run twice. Make writes safe to repeat.
 - To log from a step use `ctx.logger.info("...")` (also `.warn`, `.error`).
   `console.log` does not reach the step's log lines.
