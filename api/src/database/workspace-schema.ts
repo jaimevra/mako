@@ -163,6 +163,8 @@ export interface IWorkspace extends Document {
 export interface IWorkflowSlot {
   sha: string;
   tree: string;
+  /** The workflow folders at that commit: what the screen lists. */
+  names: string[];
   running?: { sha: string };
   failed?: { sha: string; error: string };
 }
@@ -1316,6 +1318,7 @@ export interface IConnectionVerification extends Document {
 const WorkflowSlotFields = {
   sha: String,
   tree: String,
+  names: { type: [String], default: undefined },
   running: { type: { sha: String }, _id: false },
   failed: { type: { sha: String, error: String }, _id: false },
 };

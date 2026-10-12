@@ -129,8 +129,7 @@ export async function readWorkflowsOverview(
   const webhooks = asAdmin ? webhookUrls(workspaceId, state?.webhooks) : null;
   const base = `/api/v1/tenants/${tenant.tenantId}`;
   const since = new Date(Date.now() - RECENT_RUNS_DAYS * 864e5).toISOString();
-  const [workflows, crons, runs] = await Promise.all([
-    tenantJson<Rows>(tenant, `${base}/workflows`),
+  const [crons, runs] = await Promise.all([
     tenantJson<Rows>(tenant, `${base}/workflows/crons`),
     tenantJson<Rows>(
       tenant,
@@ -145,16 +144,16 @@ export async function readWorkflowsOverview(
     ),
   ]);
   const active = new Set(state?.active ?? []);
+  // What is deployed is what the repository held at the deploy: a workflow
+  // Hatchet still knows from an earlier commit is not one.
+  const deployed = state?.live?.names ?? [];
   return {
     ...status,
-    workflows: (workflows.rows ?? []).map(w => {
-      const workflowId = String(w.name ?? "");
-      return {
-        workflowId,
-        active: active.has(workflowId),
-        ...(webhooks ? { webhookUrl: webhooks[workflowId] ?? null } : {}),
-      };
-    }),
+    workflows: deployed.map(workflowId => ({
+      workflowId,
+      active: active.has(workflowId),
+      ...(webhooks ? { webhookUrl: webhooks[workflowId] ?? null } : {}),
+    })),
     schedules: (crons.rows ?? []).map(c => ({
       workflowId: c.workflowName,
       cron: c.cron,

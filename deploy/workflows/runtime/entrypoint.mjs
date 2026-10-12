@@ -101,7 +101,6 @@ async function switchTo(target, hatchetToken, active) {
     if (current?.child === child) current = null;
   });
   previous?.child.kill("SIGTERM");
-  writeFileSync(READY_FILE, target.sha);
   await report(target.sha);
 }
 
@@ -110,6 +109,9 @@ async function poll() {
     const res = await mako("/head");
     if (!res.ok) throw new Error(`head: ${res.status} ${await res.text()}`);
     const head = await res.json();
+    // Ready means this pod reaches Mako with its key; a rollout then
+    // finishes whether or not anything is deployed yet.
+    writeFileSync(READY_FILE, "");
     if (!head.hatchetToken) return;
     if (head.live) {
       await switchTo(head.live, head.hatchetToken, head.active ?? []);

@@ -44,10 +44,10 @@ const WORKER_KEY_SCOPES: WorkspaceApiKeyScope[] = [
   "workflows:runtime",
 ];
 
-/** The tree id of `workflows/` at a commit, or null when it has none. */
+/** The object id at `spec` (a commit's `workflows/` by default), or null. */
 async function workflowsTree(
   repoDir: string,
-  commit: string,
+  spec: string,
 ): Promise<string | null> {
   try {
     const { stdout } = await runGit([
@@ -56,7 +56,7 @@ async function workflowsTree(
       "rev-parse",
       "--verify",
       "--quiet",
-      `${commit}:${WORKFLOWS_DIR}`,
+      spec.includes(":") ? spec : `${spec}:${WORKFLOWS_DIR}`,
     ]);
     return stdout.trim() || null;
   } catch {
@@ -143,7 +143,7 @@ async function ensureWorker(
   await ensureWorkerDeployment(workspaceId, rotate);
 }
 
-type Commit = { sha: string; tree: string };
+type Commit = { sha: string; tree: string; names: string[] };
 
 /** `workflows/` on a branch, or null when the branch or the folder is missing. */
 async function workflowsAt(
@@ -152,7 +152,20 @@ async function workflowsAt(
 ): Promise<Commit | null> {
   const sha = await resolveCommit(repoDir, `refs/heads/${branch}`);
   const tree = sha ? await workflowsTree(repoDir, sha) : null;
-  return sha && tree ? { sha, tree } : null;
+  if (!sha || !tree) return null;
+  // A workflow is a folder holding workflow.ts, as worker.mjs reads it.
+  const { stdout } = await runGit([
+    ...["-C", repoDir, "ls-tree", "--name-only", tree],
+  ]);
+  const names: string[] = [];
+  for (const name of stdout.split("\n").filter(Boolean)) {
+    const file = await workflowsTree(
+      repoDir,
+      `${sha}:${WORKFLOWS_DIR}/${name}/workflow.ts`,
+    );
+    if (file) names.push(name);
+  }
+  return { sha, tree, names };
 }
 
 const deploys = new Map<string, Promise<void>>();
@@ -205,6 +218,7 @@ async function deployWorkflowsNow(
         $set: {
           "workflows.live.sha": main.sha,
           "workflows.live.tree": main.tree,
+          "workflows.live.names": main.names,
         },
       },
     );

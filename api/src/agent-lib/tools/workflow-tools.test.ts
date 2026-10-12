@@ -117,6 +117,7 @@ async function main() {
         live: {
           sha: SHA_B,
           tree: "tb",
+          names: ["daily-digest", "weekly-report"],
           running: { sha: SHA_A },
           failed: { sha: SHA_B, error: "error TS2322" },
         },
@@ -204,7 +205,7 @@ async function main() {
       workflowId: "daily-digest",
     });
     assert.equal(refused.success, false);
-    assert.equal(requests.length, before + 3, "no run was started");
+    assert.equal(requests.length, before + 2, "no run was started");
 
     // The triggers are an admin's: active on and off, and never a name that
     // is not one.
