@@ -142,31 +142,48 @@ export const ZSHRC = [
 const b64 = (text: string): string =>
   Buffer.from(text, "utf8").toString("base64");
 
+/** The workflow runtime's files, as the worker image has them. */
+const RUNTIME_DIR = path.resolve(
+  __dirname,
+  "../../../deploy/workflows/runtime",
+);
+const RUNTIME_FILES = [
+  "package.json",
+  "build.mjs",
+  "run.mjs",
+  "worker.mjs",
+  "defaults/hatchet.ts",
+  "defaults/lib/mako.ts",
+];
+
 /**
- * The workflow runtime, so a sandbox can run the person's workflows on a
- * Hatchet engine of its own (api/src/workflows/sandbox.ts): the scripts, the
- * shared files, the exact packages production builds with, and the embedded
- * engine with its Postgres, fetched now so no box fetches them later (the
- * version is run.mjs's).
+ * The apps template plus the workflow runtime, so a sandbox can run the
+ * person's workflows on a Hatchet engine of its own
+ * (api/src/workflows/sandbox.ts): the scripts, the shared files, the exact
+ * packages production builds with, and the embedded engine with its
+ * Postgres, fetched now so no box fetches them later (the version is
+ * run.mjs's). The files are planted like the shell config above, not copied:
+ * they live outside this package, which is all a template build may read.
  */
 export function createAppsE2BTemplate() {
-  const runtime = "../deploy/workflows/runtime";
-  const asRoot = { user: "root" };
+  const dir = "/opt/mako-workflows";
+  const plant = RUNTIME_FILES.map(
+    file =>
+      `echo ${b64(fs.readFileSync(path.join(RUNTIME_DIR, file), "utf8"))} | base64 -d > ${dir}/${file}`,
+  );
   return appsTemplate()
-    .copy(
-      ["package.json", "build.mjs", "run.mjs", "worker.mjs"].map(
-        file => `${runtime}/${file}`,
-      ),
-      "/opt/mako-workflows/",
-      asRoot,
-    )
-    .copy(`${runtime}/defaults`, "/opt/mako-workflows/defaults", asRoot)
     .runCmd(
-      "cd /opt/mako-workflows && npm install --no-audit --no-fund && chown -R user:user /opt/mako-workflows",
-      asRoot,
+      [
+        "set -eux",
+        `mkdir -p ${dir}/defaults/lib`,
+        ...plant,
+        `cd ${dir} && npm install --no-audit --no-fund`,
+        `chown -R user:user ${dir}`,
+      ].join(" && "),
+      { user: "root" },
     )
     .runCmd(
-      `cd /tmp && node --input-type=module -e 'import { startEmbeddedSidecar } from "/opt/mako-workflows/node_modules/@hatchet-dev/typescript-sdk/v1/embedded.js"; const engine = await startEmbeddedSidecar({ version: "v0.110.5" }); await engine.stop(); process.exit(0);'`,
+      `cd /tmp && node --input-type=module -e 'import { startEmbeddedSidecar } from "${dir}/node_modules/@hatchet-dev/typescript-sdk/v1/embedded.js"; setInterval(() => {}, 60000); const engine = await startEmbeddedSidecar({ version: "v0.110.5" }); await engine.stop(); process.exit(0);'`,
     );
 }
 

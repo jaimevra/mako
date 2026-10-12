@@ -29,6 +29,9 @@ const input = JSON.parse(
   Buffer.from(encodedInput ?? "", "base64").toString() || "{}",
 );
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Waiting for the engine does not by itself keep Node alive (it exits with
+// code 13 on Node 20.9, the sandbox's); this does, until finish() exits.
+setInterval(() => {}, 60_000);
 /** A step's output can be any size; Mako shows the start of it. */
 const clip = value => {
   const text = typeof value === "string" ? value : JSON.stringify(value);
