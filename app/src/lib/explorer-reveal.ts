@@ -140,9 +140,8 @@ export function tabRevealTarget(
       // The Workflows explorer marks its open item from the active tab itself.
       return null;
     case "app-diff":
-    case "console-diff":
+    case "history-diff":
     case "repo-diff":
-    case "notebook-diff":
       // A transient diff view; nothing in an explorer corresponds to it.
       return null;
     default: {
