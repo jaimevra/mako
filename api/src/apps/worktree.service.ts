@@ -346,12 +346,16 @@ export function syncRepoBackedResources(
     });
 }
 
-/** Roll the workspace's workflow worker to what `main` and the branch hold. */
+/**
+ * Ask for the workspace's workflows to be deployed from `main`, durably
+ * (inngest/functions/workflows-deploy.ts): the request that moved main
+ * returns now, and the deploy runs to completion elsewhere.
+ */
 function deployWorkflows(workspaceId: string, userId?: string): void {
-  void import("../workflows/on-push")
-    .then(m => m.deployWorkflowsFromRepo(workspaceId, userId))
+  void import("../inngest/functions/workflows-deploy")
+    .then(m => m.requestWorkflowsDeploy(workspaceId, userId, "push"))
     .catch(error => {
-      logger.warn("Workflows deploy failed", {
+      logger.warn("Workflows deploy request failed", {
         workspaceId,
         error: error instanceof Error ? error.message : String(error),
       });

@@ -78,7 +78,7 @@ const summary = await generateText({
 
 ## How a deploy works
 
-1. You commit a change to `workflows/` on `main`.
+1. You commit a change to `workflows/` on `main`. Mako records the commit as the workspace's target, durably (an Inngest function, like app deploys), and checks every deployed workspace against `main` once an hour in case a push was missed.
 2. Mako saves that commit as the one to run.
 3. The worker notices within ten seconds, typechecks the commit and starts it.
 4. Once the new code is up, the old code finishes its running tasks and stops.

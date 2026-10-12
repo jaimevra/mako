@@ -10,7 +10,7 @@
 import { Types } from "mongoose";
 
 import { WORKFLOWS_DIR } from "../apps/app-paths";
-import { ensureLocalRepo } from "../apps/cloud-repo.service";
+import { ensureLocalRepo, freshenForServe } from "../apps/cloud-repo.service";
 import { runGit } from "../apps/git";
 import {
   DEFAULT_BRANCH,
@@ -198,9 +198,12 @@ async function deployWorkflowsNow(
   // Nothing to deploy to without a Hatchet: Mako runs without workflows.
   const state = workspace?.workflows ?? {};
   if (!workspace || !(state.hatchetToken || hasInstanceHatchet())) return;
+  // The deploy runs on whichever instance Inngest calls: read the mirror's
+  // main, not this instance's last copy of it.
   await ensureLocalRepo(workspaceId);
   const repoDir = repoDirFor(workspaceId);
   if (!(await repoExists(repoDir))) return;
+  await freshenForServe(workspaceId, 0);
   const main = await workflowsAt(repoDir, DEFAULT_BRANCH);
   if (main) {
     await ensureWorkspaceTenant(workspaceId);

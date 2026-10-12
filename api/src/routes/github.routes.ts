@@ -37,6 +37,7 @@ import { loggers } from "../logging";
 import { deployAppsForPush } from "../apps/deploy-on-push";
 import { ensureLocalRepo, fetchFromCloud } from "../apps/cloud-repo.service";
 import { findWorkspaceIdsByRepoBinding } from "../services/workspace-repos.service";
+import { requestWorkflowsDeploy } from "../inngest/functions/workflows-deploy";
 import { syncRepoBackedResources } from "../apps/worktree.service";
 import { repoDirFor } from "../apps/repository.service";
 
@@ -147,6 +148,8 @@ async function handleAppsPush(input: {
     await ensureLocalRepo(workspaceId);
     await fetchFromCloud(workspaceId, branch);
     syncRepoBackedResources(workspaceId);
+    // Workflows deploy from main the same way apps do, durably.
+    await requestWorkflowsDeploy(workspaceId, undefined, "push");
     const requested = await deployAppsForPush({
       workspaceId,
       repoDir: repoDirFor(workspaceId),
