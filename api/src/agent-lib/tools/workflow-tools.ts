@@ -12,7 +12,7 @@ import { requireTenant, startRun } from "../../workflows/hatchet";
 import { readRun, readWorkflowsOverview } from "../../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY } from "../../workflows/policy";
 import { runInSandbox } from "../../workflows/sandbox";
-import { setActive, setWebhook } from "../../workflows/webhook";
+import { setTriggers } from "../../workflows/webhook";
 
 /** How many recent runs an agent is shown. */
 const RECENT_RUNS = 10;
@@ -109,34 +109,15 @@ export function createWorkflowTools({
       },
     }),
 
-    workflows_activate: tool({
+    workflows_triggers: tool({
       description:
-        "Turn a workflow's triggers on or off. A workflow is deployed with its schedule and webhook off and runs only when started; activating it starts its `on: { cron }` schedule and its webhook. Ask the user before activating: from then on it runs by itself.",
+        "Change what starts a workflow by itself. `active`: a workflow is deployed inactive and runs only when started; true turns its `on: { cron }` schedule and its webhook on, false turns them off. `webhook`: true gives it a webhook and returns the new URL (a POST to it starts a run with the JSON body as input, while the workflow is active; the URL carries its own secret), false removes it. Ask the user before activating: from then on it runs by itself. A schedule is not set here: write it in the workflow's code.",
       inputSchema: z.object({
         workflowId: z.string().describe("The workflow's name"),
-        active: z.boolean(),
+        active: z.boolean().optional(),
+        webhook: z.boolean().optional(),
       }),
-      execute: async ({ workflowId, active }) => {
-        try {
-          if (!(await mayChange())) {
-            return { success: false, error: WORKFLOWS_ADMIN_ONLY };
-          }
-          await setActive(workspaceId, workflowId, active);
-          return { success: true, workflowId, active };
-        } catch (error) {
-          return failure(error);
-        }
-      },
-    }),
-
-    workflows_webhook: tool({
-      description:
-        "Give a workflow a webhook, or remove it. With `enabled: true` it returns a new URL: a POST to it starts a run with the request's JSON body as the input, while the workflow is active. The URL carries its own secret; removing the webhook and adding it again gives a new URL and the old one stops working. A schedule is not set here: write `on: { cron }` in the workflow's code.",
-      inputSchema: z.object({
-        workflowId: z.string().describe("The workflow's name"),
-        enabled: z.boolean(),
-      }),
-      execute: async ({ workflowId, enabled }) => {
+      execute: async ({ workflowId, ...change }) => {
         try {
           if (!(await mayChange())) {
             return { success: false, error: WORKFLOWS_ADMIN_ONLY };
@@ -144,7 +125,8 @@ export function createWorkflowTools({
           return {
             success: true,
             workflowId,
-            webhookUrl: await setWebhook(workspaceId, workflowId, enabled),
+            ...change,
+            ...(await setTriggers(workspaceId, workflowId, change)),
           };
         } catch (error) {
           return failure(error);

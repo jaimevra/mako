@@ -84,15 +84,11 @@ interface WorkflowsState {
     input: Record<string, unknown>,
     sandbox: boolean,
   ) => Promise<Result>;
-  setActive: (
+  /** Change what starts a workflow: its Active switch, its webhook. */
+  setTriggers: (
     workspaceId: string,
     workflowId: string,
-    active: boolean,
-  ) => Promise<Result>;
-  setWebhook: (
-    workspaceId: string,
-    workflowId: string,
-    enabled: boolean,
+    change: { active?: boolean; webhook?: boolean },
   ) => Promise<Result>;
 }
 
@@ -183,37 +179,20 @@ export const useWorkflowsStore = create<WorkflowsState>()(
       }
     },
 
-    setActive: async (workspaceId, workflowId, active) => {
+    setTriggers: async (workspaceId, workflowId, change) => {
       try {
         unwrapBody(
           await api.PUT(
-            "/api/workspaces/{workspaceId}/workflows/{name}/active",
+            "/api/workspaces/{workspaceId}/workflows/{name}/triggers",
             {
               params: { path: { workspaceId, name: workflowId } },
-              body: { active },
+              body: change,
             },
           ),
         );
         return { ok: true };
       } catch (e) {
-        return { ok: false, error: message(e, "Failed to change the switch") };
-      }
-    },
-
-    setWebhook: async (workspaceId, workflowId, enabled) => {
-      try {
-        unwrapBody(
-          await api.PUT(
-            "/api/workspaces/{workspaceId}/workflows/{name}/webhook",
-            {
-              params: { path: { workspaceId, name: workflowId } },
-              body: { enabled },
-            },
-          ),
-        );
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, error: message(e, "Failed to change the webhook") };
+        return { ok: false, error: message(e, "Failed to change the trigger") };
       }
     },
   })),

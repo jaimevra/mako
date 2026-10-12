@@ -142,7 +142,6 @@ All under `/api/workspaces/<workspaceId>/workflows`:
 | `GET /runs/<id>`                       | One run: its steps in order, with status, output, error and logs                                                                                |
 | `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                                                                            |
 | `POST /<name>/run`                     | Start a run: `{ input }` answers `runId`; `{ input, sandbox: true }` runs the caller's checkout in their sandbox and answers the finished `run` |
-| `PUT /<name>/active`                   | Turn the schedule and webhook on or off: `{ active }` (admins)                                                                                  |
-| `PUT /<name>/webhook`                  | Add or remove the workflow's webhook: `{ enabled }`                                                                                             |
+| `PUT /<name>/triggers`                 | Change what starts it: `{ active }` (its schedule and webhook), `{ webhook }` (add: answers the new URL; remove). Admins                        |
 
 Over MCP, an API key needs the `workflows:run` scope to start runs or add webhooks; looking needs only `mcp`.

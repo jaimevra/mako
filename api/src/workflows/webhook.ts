@@ -33,37 +33,31 @@ function urlOf(workspaceId: string, name: string, secret: string): string {
   return `${base}/api/workflows/hooks/${workspaceId}/${name}/${secret}`;
 }
 
-/** Turn a workflow's triggers on or off. The worker re-registers it. */
-export async function setActive(
+/**
+ * Change what starts a workflow: `active` turns its schedule and webhook on
+ * or off (the worker registers it again), `webhook` adds a webhook (a new
+ * URL, returned) or removes it (null). What is left out stays as it is.
+ */
+export async function setTriggers(
   workspaceId: string,
   name: string,
-  active: boolean,
-): Promise<void> {
-  checkName(name);
-  await Workspace.updateOne(
-    { _id: new Types.ObjectId(workspaceId) },
-    active
-      ? { $addToSet: { "workflows.active": name } }
-      : { $pull: { "workflows.active": name } },
-  );
-}
-
-/** Turn a workflow's webhook on or off. Returns its URL, or null when off. */
-export async function setWebhook(
-  workspaceId: string,
-  name: string,
-  enabled: boolean,
-): Promise<string | null> {
+  change: { active?: boolean; webhook?: boolean },
+): Promise<{ webhookUrl?: string | null }> {
   checkName(name);
   const path = `workflows.webhooks.${name}`;
   const secret = randomBytes(24).toString("hex");
-  await Workspace.updateOne(
-    { _id: new Types.ObjectId(workspaceId) },
-    enabled
-      ? { $set: { [path]: encryptString(secret) } }
-      : { $unset: { [path]: "" } },
-  );
-  return enabled ? urlOf(workspaceId, name, secret) : null;
+  const update = {
+    ...(change.active === true && { $addToSet: { "workflows.active": name } }),
+    ...(change.active === false && { $pull: { "workflows.active": name } }),
+    ...(change.webhook === true && { $set: { [path]: encryptString(secret) } }),
+    ...(change.webhook === false && { $unset: { [path]: "" } }),
+  };
+  if (Object.keys(update).length > 0) {
+    await Workspace.updateOne({ _id: new Types.ObjectId(workspaceId) }, update);
+  }
+  return change.webhook === undefined
+    ? {}
+    : { webhookUrl: change.webhook ? urlOf(workspaceId, name, secret) : null };
 }
 
 /** The workspace's webhook URLs, by workflow. */

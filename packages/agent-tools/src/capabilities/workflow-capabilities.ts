@@ -36,15 +36,7 @@ export const WORKFLOW_CAPABILITIES: readonly WorkflowCapabilityDefinition[] = [
     resultKind: "run",
   }),
   define({
-    name: "workflows_activate",
-    risk: "write",
-    minimumWorkspaceRole: "admin",
-    requiredGrant: "workflows-run",
-    surfaces: ALL_AGENT_SURFACES,
-    resultKind: "ui-effect",
-  }),
-  define({
-    name: "workflows_webhook",
+    name: "workflows_triggers",
     risk: "write",
     minimumWorkspaceRole: "admin",
     requiredGrant: "workflows-run",

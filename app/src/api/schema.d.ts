@@ -5125,7 +5125,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{workspaceId}/workflows/{name}/active": {
+    "/api/workspaces/{workspaceId}/workflows/{name}/triggers": {
         parameters: {
             query?: never;
             header?: never;
@@ -5133,25 +5133,8 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Turn a workflow's schedule and webhook on or off */
-        put: operations["put_api_workspaces_workspaceId_workflows_name_active"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/workspaces/{workspaceId}/workflows/{name}/webhook": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Turn a workflow's webhook on (a new URL) or off */
-        put: operations["put_api_workspaces_workspaceId_workflows_name_webhook"];
+        /** Change what starts a workflow: `active` (its schedule and webhook), `webhook` (add: a new URL; remove) */
+        put: operations["put_api_workspaces_workspaceId_workflows_name_triggers"];
         post?: never;
         delete?: never;
         options?: never;
@@ -22562,7 +22545,7 @@ export interface operations {
             };
         };
     };
-    put_api_workspaces_workspaceId_workflows_name_active: {
+    put_api_workspaces_workspaceId_workflows_name_triggers: {
         parameters: {
             query?: never;
             header?: never;
@@ -22575,54 +22558,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    active: boolean;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            "2XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GenericJsonResponse"] & (Record<string, never> | null);
-                };
-            };
-            /** @description Invalid request */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Internal server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    put_api_workspaces_workspaceId_workflows_name_webhook: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspaceId: string;
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    enabled: boolean;
+                    active?: boolean;
+                    webhook?: boolean;
                 };
             };
         };

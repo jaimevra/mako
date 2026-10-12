@@ -256,8 +256,7 @@ function RunsView({
   const fetchOverview = useWorkflowsStore(s => s.fetchOverview);
   const fetchRun = useWorkflowsStore(s => s.fetchRun);
   const startRun = useWorkflowsStore(s => s.run);
-  const setActive = useWorkflowsStore(s => s.setActive);
-  const setWebhook = useWorkflowsStore(s => s.setWebhook);
+  const setTriggers = useWorkflowsStore(s => s.setTriggers);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // The last sandbox run: shown in place of a selected run until one is picked.
@@ -325,15 +324,13 @@ function RunsView({
   const webhookUrl = workflow?.webhookUrl;
   const deployment = overview?.deployment;
 
-  // A switch or a webhook change: the next poll shows the result, and a
+  // The Active switch or the webhook: the next poll shows the result, and a
   // refusal is shown in the bar.
-  const change = async (result: Promise<{ ok: boolean; error?: string }>) => {
-    const { ok, error: why } = await result;
-    setError(ok ? null : (why ?? "Failed"));
+  const change = async (triggers: { active?: boolean; webhook?: boolean }) => {
+    const result = await setTriggers(workspaceId, workflowId, triggers);
+    setError(result.ok ? null : (result.error ?? "Failed"));
     void fetchOverview(workspaceId);
   };
-  const toggleWebhook = (enabled: boolean) =>
-    change(setWebhook(workspaceId, workflowId, enabled));
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -363,9 +360,7 @@ function RunsView({
                   <Switch
                     size="small"
                     checked={active}
-                    onChange={(_e, on) =>
-                      void change(setActive(workspaceId, workflowId, on))
-                    }
+                    onChange={(_e, on) => void change({ active: on })}
                   />
                 }
               />
@@ -397,7 +392,7 @@ function RunsView({
             label="Add webhook"
             size="small"
             variant="outlined"
-            onClick={() => void toggleWebhook(true)}
+            onClick={() => void change({ webhook: true })}
             sx={{ height: 20, borderStyle: "dashed" }}
           />
         )}
@@ -414,7 +409,7 @@ function RunsView({
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               }}
-              onDelete={() => void toggleWebhook(false)}
+              onDelete={() => void change({ webhook: false })}
               sx={{ height: 20 }}
             />
           </Tooltip>

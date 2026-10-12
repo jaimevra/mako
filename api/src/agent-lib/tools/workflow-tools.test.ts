@@ -206,48 +206,51 @@ async function main() {
     assert.equal(refused.success, false);
     assert.equal(requests.length, before + 3, "no run was started");
 
-    // The switch is an admin's: on, off, and never a name that is not one.
+    // The triggers are an admin's: active on and off, and never a name that
+    // is not one.
     const activeOf = async () =>
       (await Workspace.findById(id).select("workflows.active").lean())
         ?.workflows?.active;
-    const activate = (who: typeof tools, workflowId: string, active: boolean) =>
-      call(who, "workflows_activate", { workflowId, active });
-    assert.equal((await activate(tools, "daily-digest", true)).success, false);
-    const on = await activate(admin, "daily-digest", true);
-    assert.deepEqual([on.success, on.active], [true, true]);
+    const triggers = (who: typeof tools, change: object) =>
+      call(who, "workflows_triggers", {
+        workflowId: "daily-digest",
+        ...change,
+      });
+    assert.equal((await triggers(tools, { active: true })).success, false);
+    const on = await triggers(admin, { active: true });
+    assert.deepEqual(
+      [on.success, on.active, "webhookUrl" in on],
+      [true, true, false],
+    );
     assert.deepEqual(await activeOf(), ["weekly-report", "daily-digest"]);
-    await activate(admin, "daily-digest", false);
+    await triggers(admin, { active: false });
     assert.deepEqual(await activeOf(), ["weekly-report"]);
-    assert.equal((await activate(admin, "../x", true)).success, false);
+    assert.equal(
+      (
+        await call(admin, "workflows_triggers", {
+          workflowId: "../x",
+          active: true,
+        })
+      ).success,
+      false,
+    );
 
     // A webhook is added per workflow by an admin; a member neither adds
     // nor sees one.
-    const webhook = { workflowId: "daily-digest", enabled: true };
-    assert.equal(
-      (await call(tools, "workflows_webhook", webhook)).success,
-      false,
-    );
-    const added = await call(admin, "workflows_webhook", webhook);
+    assert.equal((await triggers(tools, { webhook: true })).success, false);
+    const added = await triggers(admin, { webhook: true });
     assert.match(
       added.webhookUrl,
       /\/api\/workflows\/hooks\/.+\/daily-digest\/[0-9a-f]{48}$/,
     );
-    const isLive = (w: { preview: boolean }) => !w.preview;
-    assert.equal(
-      (await call(admin, "workflows_status", {})).workflows.find(isLive)
-        .webhookUrl,
-      added.webhookUrl,
-    );
-    assert.equal(
-      "webhookUrl" in
-        (await call(tools, "workflows_status", {})).workflows.find(isLive),
-      false,
-    );
-    const removed = await call(admin, "workflows_webhook", {
-      ...webhook,
-      enabled: false,
-    });
-    assert.equal(removed.webhookUrl, null);
+    const digestOf = async (who: typeof tools) =>
+      (await call(who, "workflows_status", {})).workflows.find(
+        (w: { workflowId: string }) => w.workflowId === "daily-digest",
+      );
+    assert.equal((await digestOf(admin)).webhookUrl, added.webhookUrl);
+    assert.equal("webhookUrl" in (await digestOf(tools)), false);
+    assert.equal((await triggers(admin, { webhook: false })).webhookUrl, null);
+    assert.deepEqual(await activeOf(), ["weekly-report"], "active untouched");
 
     // A Hatchet failure is an answer, not a throw.
     const missing = await call(tools, "workflows_run", { workflowId: "nope" });

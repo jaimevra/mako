@@ -42,7 +42,7 @@ import {
 import { readRun, readWorkflowsOverview } from "../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
 import { runInSandbox } from "../workflows/sandbox";
-import { isWebhookSecret, setActive, setWebhook } from "../workflows/webhook";
+import { isWebhookSecret, setTriggers } from "../workflows/webhook";
 
 const logger = loggers.api("workflows");
 
@@ -240,16 +240,22 @@ workflowRoutes.openapi(
 workflowRoutes.openapi(
   createRoute({
     method: "put",
-    path: "/{name}/active",
+    path: "/{name}/triggers",
     tags: ["Workflows"],
-    summary: "Turn a workflow's schedule and webhook on or off",
+    summary:
+      "Change what starts a workflow: `active` (its schedule and webhook), `webhook` (add: a new URL; remove)",
     security: AUTH_SECURITY,
     request: {
       params: NameParam,
       body: {
         required: true,
         content: {
-          "application/json": { schema: z.object({ active: z.boolean() }) },
+          "application/json": {
+            schema: z.object({
+              active: z.boolean().optional(),
+              webhook: z.boolean().optional(),
+            }),
+          },
         },
       },
     },
@@ -257,33 +263,8 @@ workflowRoutes.openapi(
   }),
   async c => {
     const { workspaceId, name } = c.req.valid("param");
-    await setActive(workspaceId, name, c.req.valid("json").active);
-    return c.json({ success: true as const }, 200);
-  },
-);
-
-workflowRoutes.openapi(
-  createRoute({
-    method: "put",
-    path: "/{name}/webhook",
-    tags: ["Workflows"],
-    summary: "Turn a workflow's webhook on (a new URL) or off",
-    security: AUTH_SECURITY,
-    request: {
-      params: NameParam,
-      body: {
-        required: true,
-        content: {
-          "application/json": { schema: z.object({ enabled: z.boolean() }) },
-        },
-      },
-    },
-    responses: OPEN_RESPONSES,
-  }),
-  async c => {
-    const { workspaceId, name } = c.req.valid("param");
-    await setWebhook(workspaceId, name, c.req.valid("json").enabled);
-    return c.json({ success: true as const }, 200);
+    const changed = await setTriggers(workspaceId, name, c.req.valid("json"));
+    return c.json({ success: true as const, ...changed }, 200);
   },
 );
 

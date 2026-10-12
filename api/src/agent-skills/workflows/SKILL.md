@@ -54,7 +54,7 @@ off, Run works); an admin switches it on. Like n8n: test, then activate.
    `deployment.liveSha` is your commit (`deployment.buildError` says why
    not; the previous version keeps running meanwhile). A member commits to
    a branch and asks an admin to merge: only admins put workflows on main.
-5. Ask the user, then `workflows_activate`: from then on its schedule and
+5. Ask the user, then `workflows_triggers` with `active: true`: from then on its schedule and
    webhook start runs by themselves.
 
 A sandbox run is real: `query` reads real data, and `call` and `agent` act
@@ -178,14 +178,14 @@ judgement is needed.
 ## What starts a run
 
 - A schedule: `on: { cron: "0 6 * * *" }` in the workflow (UTC).
-- A webhook: an admin adds it, with `workflows_webhook` or on the workflow's
+- A webhook: an admin adds it, with `workflows_triggers` (`webhook: true`) or on the workflow's
   tab. That gives a URL; a POST to it starts a run with the JSON body as
   input. Nothing to write in the code. Give the user the URL and tell them
   it is a secret.
 - A person (Run) or you (`workflows_run`), on main or in a sandbox.
 
 The schedule and the webhook work only while the workflow is **active**
-(`workflows_activate`, or the switch on its tab). Run and `workflows_run`
+(`workflows_triggers` with `active: true`, or the switch on its tab). Run and `workflows_run`
 always work. The webhook URL with `?sandbox=<userId>` is a test URL: a POST
 to it runs that person's sandbox version with the body as input and answers
 with the finished run, whether or not the workflow is active.
