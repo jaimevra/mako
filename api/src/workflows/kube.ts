@@ -79,13 +79,14 @@ export async function workerSecretExists(
 
 /**
  * Write the worker's credential, replacing an earlier one. A pod reads the
- * Secret at start, so a worker that already runs is restarted afterwards.
+ * Secret when it starts, so the caller restarts a running worker afterwards
+ * (`ensureWorkerDeployment` with `restart`).
  */
 export async function writeWorkerSecret(
   workspaceId: string,
   makoApiKey: string,
 ): Promise<void> {
-  const { core, apps } = await gkeClients();
+  const { core } = await gkeClients();
   const name = workerName(workspaceId);
   const body = {
     metadata: { name, labels: resourceLabels(workspaceId) },
@@ -93,28 +94,9 @@ export async function writeWorkerSecret(
   };
   if (await workerSecretExists(workspaceId)) {
     await core.replaceNamespacedSecret({ name, namespace: NAMESPACE, body });
-    await apps
-      .patchNamespacedDeployment({
-        name,
-        namespace: NAMESPACE,
-        body: {
-          spec: {
-            template: {
-              metadata: {
-                annotations: {
-                  "mako.ai/key-rotated": new Date().toISOString(),
-                },
-              },
-            },
-          },
-        },
-      })
-      .catch(error => {
-        if (!isNotFound(error)) throw error;
-      });
-    return;
+  } else {
+    await core.createNamespacedSecret({ namespace: NAMESPACE, body });
   }
-  await core.createNamespacedSecret({ namespace: NAMESPACE, body });
 }
 
 function deploymentBody(workspaceId: string): V1Deployment {
@@ -198,10 +180,12 @@ function deploymentBody(workspaceId: string): V1Deployment {
 
 /**
  * Make sure the workspace's worker pod exists and runs the current runtime
- * image. An existing Deployment is replaced only when its image differs.
+ * image. An existing Deployment is replaced, which starts new pods, only
+ * when its image differs or `restart` is asked for (a new credential).
  */
 export async function ensureWorkerDeployment(
   workspaceId: string,
+  restart = false,
 ): Promise<void> {
   const { apps } = await gkeClients();
   const name = workerName(workspaceId);
@@ -219,11 +203,15 @@ export async function ensureWorkerDeployment(
     return;
   }
   const image = existing.spec?.template?.spec?.containers?.[0]?.image;
-  if (image === runtimeImage()) return;
+  if (image === runtimeImage() && !restart) return;
   body.metadata = {
     ...body.metadata,
     resourceVersion: existing.metadata?.resourceVersion,
   };
+  // A changed pod template is what makes Kubernetes start new pods.
+  body.spec!.template.metadata!.annotations = {
+    "mako.ai/restarted": new Date().toISOString(),
+  };
   await apps.replaceNamespacedDeployment({ name, namespace: NAMESPACE, body });
-  logger.info("Updated workflow worker image", { workspaceId, image });
+  logger.info("Replaced workflow worker", { workspaceId, image, restart });
 }

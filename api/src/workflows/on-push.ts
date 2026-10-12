@@ -134,12 +134,13 @@ async function ensureWorker(
     .select("apiKeys.name")
     .lean();
   const hasKey = workspace?.apiKeys?.some(k => k.name === workerKeyName());
-  if (!hasKey || !(await workerSecretExists(workspaceId))) {
+  const rotate = !hasKey || !(await workerSecretExists(workspaceId));
+  if (rotate) {
     const { key } = generateApiKey();
     await setKey(workspaceId, userId, workerKeyName(), key);
     await writeWorkerSecret(workspaceId, key);
   }
-  await ensureWorkerDeployment(workspaceId);
+  await ensureWorkerDeployment(workspaceId, rotate);
 }
 
 type Commit = { sha: string; tree: string };
