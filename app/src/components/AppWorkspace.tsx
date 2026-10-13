@@ -66,7 +66,7 @@ import {
   Separator,
   useDefaultLayout,
 } from "react-resizable-panels";
-import { trackSeparatorDrag } from "../lib/iframe-drag-guard";
+import { separatorDragRef } from "../lib/iframe-drag-guard";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useUIStore } from "../store/uiStore";
 import { TerminalTypeAhead } from "../lib/terminal-type-ahead";
@@ -111,6 +111,10 @@ const TerminalResizeHandle = styled(Separator)(({ theme }) => ({
     backgroundColor: theme.palette.primary.main,
   },
 }));
+
+// Makes iframes ignore the pointer while a divider is dragged (a cross-
+// origin preview would otherwise swallow the drag). Stable: see separatorDragRef.
+const guardSeparatorDrag = separatorDragRef();
 
 const HIDDEN_PAUSE_MS = 10 * 60 * 1000;
 
@@ -1794,7 +1798,7 @@ export default function AppWorkspace({
             {previewPane}
           </Panel>
 
-          <TerminalResizeHandle onPointerDown={trackSeparatorDrag()} />
+          <TerminalResizeHandle elementRef={guardSeparatorDrag} />
 
           <Panel
             id="terminal"

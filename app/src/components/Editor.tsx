@@ -116,7 +116,7 @@ import { useSqlAutocomplete } from "../hooks/useSqlAutocomplete";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { trackEvent } from "../lib/analytics";
 import { getApiBasePath } from "../lib/api-base-path";
-import { trackSeparatorDrag } from "../lib/iframe-drag-guard";
+import { separatorDragRef } from "../lib/iframe-drag-guard";
 import { consoleLeafName } from "../lib/console-name";
 import { generateObjectId } from "../utils/objectId";
 import {
@@ -162,6 +162,10 @@ interface TabPaginationState {
   pageSize: number;
   capApplied: boolean;
 }
+
+// Makes iframes ignore the pointer while a divider is dragged (a cross-
+// origin preview would otherwise swallow the drag). Stable: see separatorDragRef.
+const guardSeparatorDrag = separatorDragRef();
 
 // Styled Separator components
 const StyledVerticalResizeHandle = styled(Separator)(({ theme }) => ({
@@ -3050,7 +3054,7 @@ function Editor({
                           </Panel>
 
                           <StyledVerticalResizeHandle
-                            onPointerDown={trackSeparatorDrag()}
+                            elementRef={guardSeparatorDrag}
                           />
 
                           <Panel defaultSize="40%" minSize="1%">

@@ -34,22 +34,43 @@ export function setIframeDragGuard(active: boolean): void {
 }
 
 /**
- * `onPointerDown` for a resize `Separator`. react-resizable-panels v4 has no
- * drag-state callback (v3's `onDragging`), so report the drag as started on
- * press and as ended when that pointer is released anywhere on the page —
- * with the guard engaged the release can't be swallowed by an iframe.
+ * `elementRef` for resize `Separator`s that reports drags like
+ * react-resizable-panels v3's `onDragging`. v4 has no drag callback, but it
+ * marks the separator being dragged `data-separator="active"` — including
+ * drags started in its hit area outside the visible strip, which never reach
+ * the separator element's own pointer events.
+ *
+ * Create one per call site and keep it stable (module scope or useMemo): v4
+ * re-attaches the ref whenever its identity changes. One instance can serve
+ * many separators. React detaches with `ref(null)` without saying which
+ * element, so separators that have left the document are dropped then.
  */
-export function trackSeparatorDrag(
+export function separatorDragRef(
   onDragging: (isDragging: boolean) => void = setIframeDragGuard,
-): () => void {
-  return () => {
-    onDragging(true);
-    const end = () => {
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      onDragging(false);
+): (element: HTMLElement | null) => void {
+  type Entry = { observer: MutationObserver; dragging: boolean };
+  const tracked = new Map<HTMLElement, Entry>();
+  return element => {
+    for (const [node, entry] of tracked) {
+      if (node.isConnected) continue;
+      entry.observer.disconnect();
+      if (entry.dragging) onDragging(false);
+      tracked.delete(node);
+    }
+    if (!element || tracked.has(element)) return;
+    const entry: Entry = {
+      dragging: false,
+      observer: new MutationObserver(() => {
+        const active = element.getAttribute("data-separator") === "active";
+        if (active === entry.dragging) return;
+        entry.dragging = active;
+        onDragging(active);
+      }),
     };
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
+    entry.observer.observe(element, {
+      attributes: true,
+      attributeFilter: ["data-separator"],
+    });
+    tracked.set(element, entry);
   };
 }

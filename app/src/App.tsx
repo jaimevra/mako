@@ -39,10 +39,7 @@ import {
   type PanelSize,
 } from "react-resizable-panels";
 import { trackEvent, trackPageView } from "./lib/analytics";
-import {
-  setIframeDragGuard,
-  trackSeparatorDrag,
-} from "./lib/iframe-drag-guard";
+import { setIframeDragGuard, separatorDragRef } from "./lib/iframe-drag-guard";
 import Sidebar from "./components/Sidebar";
 import MobileBrowse from "./components/MobileBrowse";
 import { useRecentsStore } from "./store/recentsStore";
@@ -362,6 +359,11 @@ function MainApp() {
       }, 0);
     }
   }, []);
+
+  const sideSeparatorRef = useMemo(
+    () => separatorDragRef(handleDividerDragging),
+    [handleDividerDragging],
+  );
 
   const handleLeftCollapse = useCallback(() => {
     const snapshot = dragSnapshotRef.current;
@@ -819,7 +821,7 @@ function MainApp() {
             </Panel>
 
             <SideResizeHandle
-              onPointerDown={trackSeparatorDrag(handleDividerDragging)}
+              elementRef={sideSeparatorRef}
               style={leftPaneOpen ? undefined : HIDDEN_HANDLE_STYLE}
             />
 
@@ -834,7 +836,7 @@ function MainApp() {
             </Panel>
 
             <SideResizeHandle
-              onPointerDown={trackSeparatorDrag(handleDividerDragging)}
+              elementRef={sideSeparatorRef}
               style={rightPaneOpen ? undefined : HIDDEN_HANDLE_STYLE}
             />
 
