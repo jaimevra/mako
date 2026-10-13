@@ -39,7 +39,7 @@ import {
   type PanelSize,
 } from "react-resizable-panels";
 import { trackEvent, trackPageView } from "./lib/analytics";
-import { setIframeDragGuard, separatorDragRef } from "./lib/iframe-drag-guard";
+import { separatorDragRef } from "./lib/iframe-drag-guard";
 import Sidebar from "./components/Sidebar";
 import MobileBrowse from "./components/MobileBrowse";
 import { useRecentsStore } from "./store/recentsStore";
@@ -331,50 +331,38 @@ function MainApp() {
     );
   }, [leftPaneOpen, rightPaneOpen, computeLayoutPct]);
 
-  // While dragging, make iframes (e.g. the app preview) transparent to
-  // pointer events so they don't swallow the drag mid-flight. Also snapshot
-  // the pane widths so a drag-to-collapse can restore the pre-drag width
-  // (dragging past the minimum would otherwise leave the remembered width at
-  // the minimum, and the pane would reopen tiny).
-  const dragSnapshotRef = useRef<{ left: number; right: number } | null>(null);
-  const snapshotClearTimeoutRef = useRef<number | null>(null);
-  const handleDividerDragging = useCallback((isDragging: boolean) => {
-    setIframeDragGuard(isDragging);
-    if (snapshotClearTimeoutRef.current) {
-      window.clearTimeout(snapshotClearTimeoutRef.current);
-      snapshotClearTimeoutRef.current = null;
-    }
-    if (isDragging) {
-      dragSnapshotRef.current = {
-        left: leftWidthRef.current,
-        right: rightWidthRef.current,
-      };
-    } else {
-      // Clear on the next macrotask: the panel collapse callback fires from
-      // a React effect that may commit *after* the pointerup, and it needs
-      // the snapshot to restore the pre-drag width.
-      snapshotClearTimeoutRef.current = window.setTimeout(() => {
-        dragSnapshotRef.current = null;
-        snapshotClearTimeoutRef.current = null;
-      }, 0);
-    }
+  // The side widths as of the last COMPLETED layout change (v4's
+  // onLayoutChanged fires on release, never mid-drag). Dragging a pane past
+  // its minimum collapses it, and by then the live width has already been
+  // dragged down to the minimum; reopening restores this instead, so the
+  // pane comes back at the width it had before the drag.
+  const settledWidthsRef = useRef({
+    left: leftWidthRef.current,
+    right: rightWidthRef.current,
+  });
+  const handleGroupLayoutChanged = useCallback((layout: Layout) => {
+    const width = containerWidthRef.current;
+    if (width <= 0) return;
+    const leftPct = layout["left-pane"] ?? 0;
+    const rightPct = layout["right-pane"] ?? 0;
+    if (leftPct > 0) settledWidthsRef.current.left = (leftPct * width) / 100;
+    if (rightPct > 0) settledWidthsRef.current.right = (rightPct * width) / 100;
   }, []);
 
-  const sideSeparatorRef = useMemo(
-    () => separatorDragRef(handleDividerDragging),
-    [handleDividerDragging],
-  );
+  // While dragging, make iframes (e.g. the app preview) transparent to
+  // pointer events so they don't swallow the drag mid-flight.
+  const sideSeparatorRef = useMemo(() => separatorDragRef(), []);
 
   const handleLeftCollapse = useCallback(() => {
-    const snapshot = dragSnapshotRef.current;
-    if (snapshot) leftWidthRef.current = snapshot.left;
+    leftWidthRef.current = settledWidthsRef.current.left;
+    setPaneWidths({ leftPaneWidthPx: leftWidthRef.current });
     closeLeftPane();
-  }, [closeLeftPane]);
+  }, [closeLeftPane, setPaneWidths]);
   const handleRightCollapse = useCallback(() => {
-    const snapshot = dragSnapshotRef.current;
-    if (snapshot) rightWidthRef.current = snapshot.right;
+    rightWidthRef.current = settledWidthsRef.current.right;
+    setPaneWidths({ rightPaneWidthPx: rightWidthRef.current });
     closeRightPane();
-  }, [closeRightPane]);
+  }, [closeRightPane, setPaneWidths]);
 
   // react-resizable-panels v4 reports collapse/expand only as size changes:
   // translate a side pane's transition to/from 0 into close/open.
@@ -789,6 +777,7 @@ function MainApp() {
             orientation="horizontal"
             style={{ height: "100%", width: "100%" }}
             onLayoutChange={handleGroupLayout}
+            onLayoutChanged={handleGroupLayoutChanged}
           >
             {/* Left side pane — fixed pixel width, resizable by hand */}
             <Panel
