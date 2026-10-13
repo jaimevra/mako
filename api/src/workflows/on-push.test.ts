@@ -26,7 +26,8 @@ async function main() {
   const { Workspace } = await import("../database/workspace-schema");
   const { runGit } = await import("../apps/git");
   const { initRepo, repoDirFor } = await import("../apps/repository.service");
-  const { deployWorkflowsFromRepo } = await import("./on-push");
+  const { deployWorkflowsFromRepo, hasWorkflowsToDeploy } =
+    await import("./on-push");
   try {
     const id = new Types.ObjectId();
     const ws = id.toString();
@@ -69,7 +70,8 @@ async function main() {
       return (await git("rev-parse", `refs/heads/${branch}`)).stdout.trim();
     };
 
-    // No workflows anywhere: nothing is set.
+    // No workflows anywhere: nothing is set, and a push asks for no deploy.
+    assert.equal(await hasWorkflowsToDeploy(ws), false);
     await deployWorkflowsFromRepo(ws, "owner");
     assert.equal((await slots())?.live, undefined);
 
@@ -77,6 +79,7 @@ async function main() {
     const onMain = await commit("main", "main", {
       "workflows/digest/workflow.ts": WORKFLOW,
     });
+    assert.equal(await hasWorkflowsToDeploy(ws), true);
     await deployWorkflowsFromRepo(ws, "owner");
     assert.equal((await slots())?.live?.sha, onMain);
 
@@ -86,10 +89,13 @@ async function main() {
     await deployWorkflowsFromRepo(ws);
     assert.equal((await slots())?.live?.sha, onMain);
 
-    // `workflows/` deleted on main: nothing is live.
+    // `workflows/` deleted on main: still a deploy (something is live to
+    // drop), and then nothing is live and nothing more to ask for.
     await commit("main", "main", { workflows: null });
+    assert.equal(await hasWorkflowsToDeploy(ws), true);
     await deployWorkflowsFromRepo(ws);
     assert.equal((await slots())?.live, undefined);
+    assert.equal(await hasWorkflowsToDeploy(ws), false);
 
     console.log("workflows on-push tests passed");
   } finally {

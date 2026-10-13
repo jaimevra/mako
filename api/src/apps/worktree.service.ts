@@ -349,11 +349,19 @@ export function syncRepoBackedResources(
 /**
  * Ask for the workspace's workflows to be deployed from `main`, durably
  * (inngest/functions/workflows-deploy.ts): the request that moved main
- * returns now, and the deploy runs to completion elsewhere.
+ * returns now, and the deploy runs to completion elsewhere. A workspace
+ * with no workflows asks for nothing.
  */
 function deployWorkflows(workspaceId: string, userId?: string): void {
-  void import("../inngest/functions/workflows-deploy")
-    .then(m => m.requestWorkflowsDeploy(workspaceId, userId, "push"))
+  void Promise.all([
+    import("../workflows/on-push"),
+    import("../inngest/functions/workflows-deploy"),
+  ])
+    .then(async ([onPush, deploy]) => {
+      if (await onPush.hasWorkflowsToDeploy(workspaceId)) {
+        await deploy.requestWorkflowsDeploy(workspaceId, userId, "push");
+      }
+    })
     .catch(error => {
       logger.warn("Workflows deploy request failed", {
         workspaceId,

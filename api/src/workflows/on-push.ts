@@ -168,6 +168,27 @@ async function workflowsAt(
   return { sha, tree, names };
 }
 
+/**
+ * Whether a move of main can change what is deployed: main holds
+ * `workflows/`, or something is deployed that main may have dropped. Read
+ * from this instance's repository, which the push just wrote. Most
+ * workspaces have no workflows, and their pushes ask for no deploy.
+ */
+export async function hasWorkflowsToDeploy(
+  workspaceId: string,
+): Promise<boolean> {
+  const onMain = await workflowsTree(
+    repoDirFor(workspaceId),
+    `refs/heads/${DEFAULT_BRANCH}`,
+  );
+  if (onMain) return true;
+  const deployed = await Workspace.exists({
+    _id: workspaceId,
+    "workflows.live": { $exists: true },
+  });
+  return Boolean(deployed);
+}
+
 const deploys = new Map<string, Promise<void>>();
 
 /**

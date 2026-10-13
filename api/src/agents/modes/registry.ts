@@ -383,9 +383,9 @@ export const modeRegistry: Record<ExpertiseModeId, AgentMode> = {
     systemPrompt: WORKFLOW_MODE_SYSTEM_PROMPT,
     toolNames: WORKFLOW_MODE_TOOL_NAMES,
     trajectories: [
-      "Switch to a branch and write the workflow's folder",
-      "Commit, then run the preview and read the run's steps",
-      "Fix until the preview run succeeds, then merge to main",
+      "Write the workflow's folder, then run it in the sandbox and read the steps",
+      "Fix until the sandbox run succeeds, then commit to main",
+      "Ask before switching its schedule and webhook on",
     ],
   },
   notebook: {
