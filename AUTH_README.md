@@ -9,7 +9,7 @@ The authentication system consists of:
 ### Backend (API)
 
 - **Lucia Auth**: Session management library
-- **Arctic**: OAuth provider integration (Google & GitHub)
+- **OAuth client** (`auth/oauth-client.ts`): authorization-code flow for Google (PKCE) & GitHub
 - **MongoDB**: Database for users, sessions, and OAuth accounts
 - **Mongoose**: MongoDB ORM
 - **bcrypt**: Password hashing
@@ -29,7 +29,8 @@ api/
 ├── src/
 │   ├── auth/
 │   │   ├── lucia.ts          # Lucia configuration
-│   │   ├── arctic.ts         # OAuth providers setup
+│   │   ├── oauth-client.ts   # OAuth 2.0 authorization-code client
+│   │   ├── oauth-providers.ts# OAuth providers setup
 │   │   ├── auth.service.ts   # Auth business logic
 │   │   ├── auth.controller.ts# Route handlers
 │   │   ├── auth.middleware.ts# Auth & rate limit middleware
@@ -403,7 +404,7 @@ Browser → GET /api/auth/oauth-receive (on preview)
 | File                              | Purpose                                                                                      |
 | --------------------------------- | -------------------------------------------------------------------------------------------- |
 | `api/src/auth/oauth-proxy.ts`     | Proxy helpers: origin detection, state encoding/decoding, transfer tokens, origin validation |
-| `api/src/auth/arctic.ts`          | OAuth provider setup (callback URLs always point to production)                              |
+| `api/src/auth/oauth-providers.ts` | OAuth provider setup (callback URLs always point to production)                              |
 | `api/src/auth/auth.controller.ts` | OAuth routes with proxy-aware initiation, callback, and `/oauth-receive` endpoint            |
 
 ## Desktop App Authentication (deep-link handoff)
@@ -567,16 +568,23 @@ User-facing setup docs live in the Starlight site: `docs/src/content/docs/mcp-se
 
 ### Adding New OAuth Providers
 
-1. Install the provider in Arctic:
+1. Add a provider class next to `Google`/`GitHub` in `auth/oauth-client.ts`
+   (its authorization and token endpoints), and a lazy getter in
+   `auth/oauth-providers.ts`:
 
 ```ts
-import { Facebook } from "arctic";
-
-export const facebook = new Facebook(
-  process.env.FACEBOOK_APP_ID!,
-  process.env.FACEBOOK_APP_SECRET!,
-  `${process.env.BASE_URL}/api/auth/facebook/callback`,
-);
+export class Facebook extends OAuthClient {
+  constructor(clientId: string, clientSecret: string, redirectUri: string) {
+    super({
+      authorizationEndpoint: "https://www.facebook.com/v21.0/dialog/oauth",
+      tokenEndpoint: "https://graph.facebook.com/v21.0/oauth/access_token",
+      clientId,
+      clientSecret,
+      redirectUri,
+    });
+  }
+  // createAuthorizationURL / validateAuthorizationCode, as GitHub's
+}
 ```
 
 2. Add routes in auth controller
