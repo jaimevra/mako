@@ -32,3 +32,24 @@ export function setIframeDragGuard(active: boolean): void {
     savedStyles = [];
   }
 }
+
+/**
+ * `onPointerDown` for a resize `Separator`. react-resizable-panels v4 has no
+ * drag-state callback (v3's `onDragging`), so report the drag as started on
+ * press and as ended when that pointer is released anywhere on the page —
+ * with the guard engaged the release can't be swallowed by an iframe.
+ */
+export function trackSeparatorDrag(
+  onDragging: (isDragging: boolean) => void = setIframeDragGuard,
+): () => void {
+  return () => {
+    onDragging(true);
+    const end = () => {
+      window.removeEventListener("pointerup", end, true);
+      window.removeEventListener("pointercancel", end, true);
+      onDragging(false);
+    };
+    window.addEventListener("pointerup", end, true);
+    window.addEventListener("pointercancel", end, true);
+  };
+}

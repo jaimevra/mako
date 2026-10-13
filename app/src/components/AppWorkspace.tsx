@@ -60,8 +60,13 @@ import AppPublishedChip from "./AppPublishedChip";
 import EntityLoadErrorState from "./EntityLoadErrorState";
 import { EXPLORER_ICONS } from "../lib/entity-icons";
 import { useConsoleStore } from "../store/consoleStore";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { setIframeDragGuard } from "../lib/iframe-drag-guard";
+import {
+  Group,
+  Panel,
+  Separator,
+  useDefaultLayout,
+} from "react-resizable-panels";
+import { trackSeparatorDrag } from "../lib/iframe-drag-guard";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useUIStore } from "../store/uiStore";
 import { TerminalTypeAhead } from "../lib/terminal-type-ahead";
@@ -80,19 +85,19 @@ import ShareDialog from "./ShareDialog";
  * before, and it showed.
  */
 /** Vertical divider between the terminal panes and the sessions list. */
-const SessionsResizeHandle = styled(PanelResizeHandle)(({ theme }) => ({
+const SessionsResizeHandle = styled(Separator)(({ theme }) => ({
   flex: "0 0 4px",
   width: "4px",
   alignSelf: "stretch",
   background: theme.palette.divider,
   touchAction: "none",
   transition: "background-color 0.2s ease",
-  "&[data-resize-handle-state='hover'], &[data-resize-handle-state='drag']": {
+  "&[data-separator='hover'], &[data-separator='active']": {
     backgroundColor: theme.palette.primary.main,
   },
 }));
 
-const TerminalResizeHandle = styled(PanelResizeHandle)(({ theme }) => ({
+const TerminalResizeHandle = styled(Separator)(({ theme }) => ({
   flex: "0 0 4px",
   height: "4px",
   alignSelf: "stretch",
@@ -102,7 +107,7 @@ const TerminalResizeHandle = styled(PanelResizeHandle)(({ theme }) => ({
   // The library reports hover/drag through this attribute; its hit area is
   // larger than the visible strip, so the highlight has to key off it rather
   // than off CSS :hover.
-  "&[data-resize-handle-state='hover'], &[data-resize-handle-state='drag']": {
+  "&[data-separator='hover'], &[data-separator='active']": {
     backgroundColor: theme.palette.primary.main,
   },
 }));
@@ -490,10 +495,20 @@ function TerminalPanel({
             bgcolor: theme.palette.mode === "dark" ? "#0b0b0d" : "#ffffff",
           }}
         >
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             The machine is off.
           </Typography>
-          <Typography variant="caption" color="primary.main">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "primary.main",
+            }}
+          >
             Click to start it and open this shell
           </Typography>
         </Box>
@@ -526,6 +541,10 @@ function TerminalTabs({
   // style. Only the tab LIST is persisted; which tab is active is not worth
   // remembering.
   const hiddenPaused = useHiddenPause();
+  const sessionsLayout = useDefaultLayout({
+    id: "apps-terminal-sessions",
+    storage: localStorage,
+  });
   const [shells, setShells] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(
@@ -875,16 +894,22 @@ function TerminalTabs({
     // is simply the first session in it (server-side it runs in a tmux
     // session named mako-dev-<slug>, attachable from any shell), not a
     // special surface.
-    <PanelGroup
-      direction="horizontal"
-      autoSaveId="apps-terminal-sessions"
+    <Group
+      orientation="horizontal"
+      defaultLayout={sessionsLayout.defaultLayout}
+      onLayoutChanged={sessionsLayout.onLayoutChanged}
       style={{ height: "100%" }}
     >
-      <Panel minSize={40}>
+      <Panel id="terminal-panes" minSize="40%">
         <Box sx={{ height: "100%", display: "flex" }}>{terminalPanes}</Box>
       </Panel>
       <SessionsResizeHandle />
-      <Panel defaultSize={14} minSize={7} maxSize={40}>
+      <Panel
+        id="terminal-sessions"
+        defaultSize="14%"
+        minSize="7%"
+        maxSize="40%"
+      >
         <Box
           sx={{
             height: "100%",
@@ -931,7 +956,7 @@ function TerminalTabs({
           ))}
         </Box>
       </Panel>
-    </PanelGroup>
+    </Group>
   );
 }
 
@@ -1120,13 +1145,13 @@ export default function AppWorkspace({
   const publishedSha = app?.publishedSha;
   const publishApp = useAppsStore(s => s.publishApp);
 
-  // The terminal split is a PanelGroup, like every other pane in the app.
+  // The terminal split is a panel Group, like every other pane in the app.
   //
   // It used to be a hand-rolled mousemove drag, which froze the moment the
   // cursor crossed the preview iframe: a cross-origin frame swallows
   // pointermove, so the parent window stops hearing about the drag. Drag
   // slowly and you stay on the handle and it works; drag fast and it hangs.
-  // `setIframeDragGuard` is the fix the rest of the app already uses — it
+  // The iframe drag guard is the fix the rest of the app already uses — it
   // makes every iframe transparent to pointer events for the duration — and
   // using the same library also means this handle is the same size as the
   // others rather than a hand-picked 5px.
@@ -1222,12 +1247,13 @@ export default function AppWorkspace({
     });
   }, [app, _tabId]);
 
-  const [terminalDragging, setTerminalDragging] = useState(false);
-  useEffect(() => {
-    if (!terminalDragging) return;
-    setIframeDragGuard(true);
-    return () => setIframeDragGuard(false);
-  }, [terminalDragging]);
+  // Remembers the preview/terminal split per browser, so a terminal you
+  // sized stays sized — one you have to re-drag every visit is one you stop
+  // using.
+  const workspaceLayout = useDefaultLayout({
+    id: "apps:workspace-vertical",
+    storage: localStorage,
+  });
 
   const checkDevStatus = useAppsStore(s => s.checkDevStatus);
   // The preview chip and iframe are CLIENT state; the server is the truth.
@@ -1399,13 +1425,24 @@ export default function AppWorkspace({
         <Typography variant="subtitle1" gutterBottom>
           {app?.title ?? "App"}
         </Typography>
-        <Typography variant="body2" color="text.secondary" paragraph>
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+            marginBottom: "16px",
+          }}
+        >
           Browse and edit this app&apos;s files from the Apps explorer on the
           left — every file opens in its own tab. Ask the agent in chat to build
           features (it works on your branch and commits every turn), or use the
           terminal below — it is a real machine with a real git checkout.
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           <strong>Start dev session</strong> runs the app live, so edits show up
           as you make them. <strong>Publish</strong> builds it and deploys —
           that is the version everyone else sees. A failed build publishes
@@ -1698,8 +1735,10 @@ export default function AppWorkspace({
               <Typography variant="h6">{app?.title ?? "App"}</Typography>
               <Typography
                 variant="body2"
-                color="text.secondary"
-                sx={{ maxWidth: 440 }}
+                sx={{
+                  color: "text.secondary",
+                  maxWidth: 440,
+                }}
               >
                 This app has never been built and deployed, so there is nothing
                 to view yet. Launch dev mode to work on it — a real sandbox with
@@ -1745,24 +1784,28 @@ export default function AppWorkspace({
           </Box>
         </>
       ) : (
-        <PanelGroup
-          direction="vertical"
-          // Remembers the split per browser, so a terminal you sized stays
-          // sized — one you have to re-drag every visit is one you stop
-          // using.
-          autoSaveId="apps:workspace-vertical"
+        <Group
+          orientation="vertical"
+          defaultLayout={workspaceLayout.defaultLayout}
+          onLayoutChanged={workspaceLayout.onLayoutChanged}
           style={{ flex: 1, minHeight: 0 }}
         >
-          <Panel defaultSize={70} minSize={20}>
+          <Panel id="preview" defaultSize="70%" minSize="20%">
             {previewPane}
           </Panel>
 
-          <TerminalResizeHandle onDragging={setTerminalDragging} />
+          <TerminalResizeHandle onPointerDown={trackSeparatorDrag()} />
 
-          <Panel defaultSize={30} minSize={8} collapsible collapsedSize={0}>
+          <Panel
+            id="terminal"
+            defaultSize="30%"
+            minSize="8%"
+            collapsible
+            collapsedSize="0%"
+          >
             <TerminalTabs appId={appId} workspaceId={workspaceId} />
           </Panel>
-        </PanelGroup>
+        </Group>
       )}
 
       <AppHistoryPopover
@@ -1832,7 +1875,12 @@ function AppOpeningState({ title }: { title?: string }) {
       }}
     >
       <AppIcon size={32} strokeWidth={1.5} />
-      <Typography variant="subtitle1" color="text.primary">
+      <Typography
+        variant="subtitle1"
+        sx={{
+          color: "text.primary",
+        }}
+      >
         {title ?? "App"}
       </Typography>
       <LinearProgress sx={{ width: 160, borderRadius: 1 }} />

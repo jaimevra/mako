@@ -247,7 +247,12 @@ const WidgetInspector: React.FC<WidgetInspectorProps> = ({
           </Typography>
         )}
 
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           SQL Query (runs against local DuckDB)
         </Typography>
         <Box
@@ -292,7 +297,12 @@ const WidgetInspector: React.FC<WidgetInspectorProps> = ({
               backgroundColor: "background.default",
             }}
           >
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               Preview (first {previewRows.length} rows)
             </Typography>
             <pre
@@ -310,7 +320,12 @@ const WidgetInspector: React.FC<WidgetInspectorProps> = ({
 
         {widget.type === "chart" && (
           <>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               Vega-Lite Spec (JSON)
             </Typography>
             <Box
@@ -339,12 +354,22 @@ const WidgetInspector: React.FC<WidgetInspectorProps> = ({
           </Typography>
         )}
         {widgetRuntime?.lastQueryAt && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             Last query: {new Date(widgetRuntime.lastQueryAt).toLocaleString()}
           </Typography>
         )}
         {widgetRuntime?.lastRenderAt && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             Last render: {new Date(widgetRuntime.lastRenderAt).toLocaleString()}
           </Typography>
         )}

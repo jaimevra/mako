@@ -165,17 +165,19 @@ export function VersionHistoryPanel({
         anchor="right"
         open={open && Boolean(selectedVersion)}
         hideBackdrop
-        PaperProps={{
-          sx: {
-            width: PREVIEW_WIDTH,
-            maxWidth: `calc(100vw - ${LIST_WIDTH}px)`,
-            right: LIST_WIDTH,
-            height: "100vh",
-            borderRight: 1,
-            borderColor: "divider",
-            display: "flex",
-            flexDirection: "column",
-            zIndex: theme => theme.zIndex.drawer - 1,
+        slotProps={{
+          paper: {
+            sx: {
+              width: PREVIEW_WIDTH,
+              maxWidth: `calc(100vw - ${LIST_WIDTH}px)`,
+              right: LIST_WIDTH,
+              height: "100vh",
+              borderRight: 1,
+              borderColor: "divider",
+              display: "flex",
+              flexDirection: "column",
+              zIndex: theme => theme.zIndex.drawer - 1,
+            },
           },
         }}
       >
@@ -197,8 +199,11 @@ export function VersionHistoryPanel({
               <Stack
                 direction="row"
                 spacing={1}
-                alignItems="center"
-                sx={{ minWidth: 0, flex: 1 }}
+                sx={{
+                  alignItems: "center",
+                  minWidth: 0,
+                  flex: 1,
+                }}
               >
                 <Chip
                   size="small"
@@ -211,9 +216,11 @@ export function VersionHistoryPanel({
                 </Typography>
                 <Typography
                   variant="caption"
-                  color="text.secondary"
                   noWrap
-                  sx={{ minWidth: 0 }}
+                  sx={{
+                    color: "text.secondary",
+                    minWidth: 0,
+                  }}
                 >
                   {selectedVersion.savedByName} ·{" "}
                   {formatRelativeTimeCompact(selectedVersion.createdAt, {
@@ -272,14 +279,16 @@ export function VersionHistoryPanel({
         anchor="right"
         open={open}
         hideBackdrop
-        PaperProps={{
-          sx: {
-            width: LIST_WIDTH,
-            maxWidth: "90vw",
-            display: "flex",
-            flexDirection: "column",
-            height: "100%",
-            zIndex: theme => theme.zIndex.drawer,
+        slotProps={{
+          paper: {
+            sx: {
+              width: LIST_WIDTH,
+              maxWidth: "90vw",
+              display: "flex",
+              flexDirection: "column",
+              height: "100%",
+              zIndex: theme => theme.zIndex.drawer,
+            },
           },
         }}
       >
@@ -295,7 +304,12 @@ export function VersionHistoryPanel({
             flexShrink: 0,
           }}
         >
-          <Typography variant="subtitle1" fontWeight={600}>
+          <Typography
+            variant="subtitle1"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             Version History
           </Typography>
           <IconButton size="small" onClick={onClose}>
@@ -315,7 +329,12 @@ export function VersionHistoryPanel({
           </Box>
         ) : !versions?.length ? (
           <Box sx={{ px: 2, py: 4, textAlign: "center" }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               No version history yet. Versions are created each time you save.
             </Typography>
           </Box>
@@ -373,7 +392,12 @@ export function VersionHistoryPanel({
                   >
                     {v.savedByName}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     {formatRelativeTimeCompact(v.createdAt, {
                       absoluteAfterDays: 7,
                     })}
@@ -413,10 +437,12 @@ export function VersionHistoryPanel({
                     {v.comment ? (
                       <Typography
                         variant="caption"
-                        color="text.secondary"
-                        fontStyle="italic"
                         noWrap
-                        sx={{ minWidth: 0 }}
+                        sx={{
+                          color: "text.secondary",
+                          fontStyle: "italic",
+                          minWidth: 0,
+                        }}
                       >
                         {v.comment}
                       </Typography>
@@ -450,7 +476,13 @@ export function VersionHistoryPanel({
         title={`Restore Version ${restoreTarget?.version}?`}
         body={
           <>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mb: 2,
+              }}
+            >
               This will create a new version with the content from v
               {restoreTarget?.version}. The current state is not lost.
             </Typography>

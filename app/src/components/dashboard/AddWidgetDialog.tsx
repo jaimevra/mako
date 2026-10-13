@@ -292,7 +292,12 @@ export default function AddWidgetDialog({
         {previewError && <Alert severity="error">{previewError}</Alert>}
         {previewRows.length > 0 && (
           <Box>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               Preview ({previewRows.length} rows)
             </Typography>
             <Box

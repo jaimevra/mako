@@ -148,8 +148,7 @@ function getParquetArtifactUrl(
 ): string | undefined {
   return (
     dataSource.cache as
-      | (DashboardDataSource["cache"] & { parquetUrl?: string })
-      | undefined
+      (DashboardDataSource["cache"] & { parquetUrl?: string }) | undefined
   )?.parquetUrl;
 }
 

@@ -86,8 +86,7 @@ export const WebSearchCard = React.memo(function WebSearchCard({
       : "";
 
   const out = output as
-    | { success?: boolean; results?: WebSearchResultItem[] }
-    | undefined;
+    { success?: boolean; results?: WebSearchResultItem[] } | undefined;
   const done = state === "output-available" && out?.success === true;
   const results = done
     ? (out?.results ?? []).filter(

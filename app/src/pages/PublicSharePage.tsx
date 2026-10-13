@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import {
   Box,
   Button,
@@ -154,7 +154,12 @@ export default function PublicSharePage() {
         }}
       >
         <Typography variant="h6">This link isn&apos;t available</Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {error || "The share link may have been disabled or rotated."}
         </Typography>
       </Box>
@@ -185,7 +190,12 @@ export default function PublicSharePage() {
         >
           <Lock size={28} />
           <Typography variant="h6">{meta.title}</Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             This {meta.type} is password protected.
           </Typography>
           <TextField
@@ -227,7 +237,13 @@ export default function PublicSharePage() {
           height: "100vh",
         }}
       >
-        <Typography color="text.secondary">Nothing to show.</Typography>
+        <Typography
+          sx={{
+            color: "text.secondary",
+          }}
+        >
+          Nothing to show.
+        </Typography>
       </Box>
     );
   }
@@ -248,7 +264,12 @@ export default function PublicSharePage() {
           <Typography variant="h6">
             This app has not been published yet
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             Ask the owner to publish it before sharing the link.
           </Typography>
         </Box>

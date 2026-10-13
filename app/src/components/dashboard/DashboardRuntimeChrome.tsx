@@ -283,8 +283,12 @@ const DashboardRuntimeChrome: React.FC<DashboardRuntimeChromeProps> = ({
           {loadingSummary && (
             <Typography
               variant="caption"
-              color="text.secondary"
-              sx={{ display: "block", px: 1.5, py: 0.5 }}
+              sx={{
+                color: "text.secondary",
+                display: "block",
+                px: 1.5,
+                py: 0.5,
+              }}
             >
               {loadingSummary.label}
               {loadingSummary.progress != null &&

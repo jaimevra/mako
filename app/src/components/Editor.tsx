@@ -58,7 +58,7 @@ function TabKindGlyph({ kind }: { kind: TabKind | undefined }) {
   const Icon = tabKindIcon(kind);
   return <Icon size={18} strokeWidth={1.5} />;
 }
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { Group, Panel, Separator, type Layout } from "react-resizable-panels";
 import { loader } from "@monaco-editor/react";
 import Console, { ConsoleRef } from "./Console";
 import ResultsTable from "./ResultsTable";
@@ -116,7 +116,7 @@ import { useSqlAutocomplete } from "../hooks/useSqlAutocomplete";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { trackEvent } from "../lib/analytics";
 import { getApiBasePath } from "../lib/api-base-path";
-import { setIframeDragGuard } from "../lib/iframe-drag-guard";
+import { trackSeparatorDrag } from "../lib/iframe-drag-guard";
 import { consoleLeafName } from "../lib/console-name";
 import { generateObjectId } from "../utils/objectId";
 import {
@@ -163,14 +163,14 @@ interface TabPaginationState {
   capApplied: boolean;
 }
 
-// Styled PanelResizeHandle components
-const StyledVerticalResizeHandle = styled(PanelResizeHandle)(({ theme }) => ({
+// Styled Separator components
+const StyledVerticalResizeHandle = styled(Separator)(({ theme }) => ({
   height: "4px",
   background: theme.palette.divider,
   transition: "background-color 0.2s ease",
   // The library flags hover/drag via a data attribute (its hit area extends
   // beyond the 4px strip), so key the highlight off that instead of :hover.
-  "&[data-resize-handle-state='hover'], &[data-resize-handle-state='drag']": {
+  "&[data-separator='hover'], &[data-separator='active']": {
     backgroundColor: theme.palette.primary.main,
   },
 }));
@@ -626,7 +626,7 @@ function Editor({
   const scheduleModalTab = scheduleModalTabId ? tabs[scheduleModalTabId] : null;
   const scheduleModalHasSchedule = Boolean(
     scheduleModalTab?.schedule?.cron?.trim() &&
-      scheduleModalTab?.schedule?.timezone?.trim(),
+    scheduleModalTab?.schedule?.timezone?.trim(),
   );
   const activeTab = activeConsoleId ? tabs[activeConsoleId] : undefined;
   useRenderCount("Editor", {
@@ -668,12 +668,14 @@ function Editor({
     },
     [updateResultsViewMode],
   );
-  const handlePanelLayout = useCallback((tabId: string, layout: number[]) => {
+  const handlePanelLayout = useCallback((tabId: string, layout: Layout) => {
     logRenderDebug("Editor.panel-layout", { tabId, layout });
   }, []);
 
   // Refs for each Console instance
-  const consoleRefs = useRef<Record<string, React.RefObject<ConsoleRef>>>({});
+  const consoleRefs = useRef<
+    Record<string, React.RefObject<ConsoleRef | null>>
+  >({});
 
   // Ensure refs exist for every tab
   useEffect(() => {
@@ -1499,9 +1501,8 @@ function Editor({
 
         // Add the console to the tree
         if (!currentTab?.filePath) {
-          const { useConsoleTreeStore } = await import(
-            "../store/consoleTreeStore"
-          );
+          const { useConsoleTreeStore } =
+            await import("../store/consoleTreeStore");
           useConsoleTreeStore
             .getState()
             .addConsole(currentWorkspace.id, savePath ?? "", tabId);
@@ -1854,9 +1855,8 @@ function Editor({
         updateSavedState(tabId, true, newHash);
 
         // Update console tree
-        const { useConsoleTreeStore } = await import(
-          "../store/consoleTreeStore"
-        );
+        const { useConsoleTreeStore } =
+          await import("../store/consoleTreeStore");
         useConsoleTreeStore
           .getState()
           .addConsole(currentWorkspace.id, pendingSaveData.path, tabId);
@@ -1962,9 +1962,8 @@ function Editor({
           setSnackbarMessage(`Renamed to '${savePath}.js'`);
           setSnackbarOpen(true);
 
-          const { useConsoleTreeStore } = await import(
-            "../store/consoleTreeStore"
-          );
+          const { useConsoleTreeStore } =
+            await import("../store/consoleTreeStore");
           useConsoleTreeStore.getState().refresh(currentWorkspace.id);
         } else {
           setErrorMessage(JSON.stringify(result.error, null, 2));
@@ -2054,9 +2053,8 @@ function Editor({
           setSnackbarOpen(true);
         }
 
-        const { useConsoleTreeStore } = await import(
-          "../store/consoleTreeStore"
-        );
+        const { useConsoleTreeStore } =
+          await import("../store/consoleTreeStore");
         useConsoleTreeStore.getState().refresh(currentWorkspace.id);
       } else {
         setErrorMessage(JSON.stringify(result.error, null, 2));
@@ -2494,9 +2492,11 @@ function Editor({
                 </ListItemIcon>
                 <ListItemText
                   primary={tab.title}
-                  primaryTypographyProps={{
-                    noWrap: true,
-                    sx: { maxWidth: 180 },
+                  slotProps={{
+                    primary: {
+                      noWrap: true,
+                      sx: { maxWidth: 180 },
+                    },
                   }}
                 />
                 <IconButton
@@ -2776,8 +2776,12 @@ function Editor({
                           >
                             <Typography
                               variant="caption"
-                              color="text.secondary"
-                              sx={{ px: 1.5, py: 0.75, fontWeight: 600 }}
+                              sx={{
+                                color: "text.secondary",
+                                px: 1.5,
+                                py: 0.75,
+                                fontWeight: 600,
+                              }}
                             >
                               Scheduled runs
                             </Typography>
@@ -2966,9 +2970,7 @@ function Editor({
                       path={tab.metadata?.path as string}
                       mode={
                         (tab.metadata?.mode as
-                          | "working"
-                          | "index"
-                          | "commit") ?? "working"
+                          "working" | "index" | "commit") ?? "working"
                       }
                       sha={tab.metadata?.sha as string | undefined}
                     />
@@ -2978,9 +2980,7 @@ function Editor({
                       path={tab.metadata?.path as string}
                       mode={
                         (tab.metadata?.mode as
-                          | "working"
-                          | "index"
-                          | "commit") ?? "working"
+                          "working" | "index" | "commit") ?? "working"
                       }
                       sha={tab.metadata?.sha as string | undefined}
                     />
@@ -3036,27 +3036,27 @@ function Editor({
                           {mobileResultsView ? resultsPane : consolePane}
                         </Box>
                       ) : (
-                        <PanelGroup
-                          direction="vertical"
+                        <Group
+                          orientation="vertical"
                           style={{ height: "100%", width: "100%" }}
-                          onLayout={
+                          onLayoutChange={
                             renderDebugEnabled
                               ? layout => handlePanelLayout(tab.id, layout)
                               : undefined
                           }
                         >
-                          <Panel defaultSize={60} minSize={1}>
+                          <Panel defaultSize="60%" minSize="1%">
                             {consolePane}
                           </Panel>
 
                           <StyledVerticalResizeHandle
-                            onDragging={setIframeDragGuard}
+                            onPointerDown={trackSeparatorDrag()}
                           />
 
-                          <Panel defaultSize={40} minSize={1}>
+                          <Panel defaultSize="40%" minSize="1%">
                             {resultsPane}
                           </Panel>
-                        </PanelGroup>
+                        </Group>
                       )}
                     </React.Profiler>
                   )}
@@ -3107,7 +3107,9 @@ function Editor({
         onClose={handleCloseErrorModal}
         maxWidth="md"
         fullWidth
-        PaperProps={{ sx: { maxHeight: "80vh" } }}
+        slotProps={{
+          paper: { sx: { maxHeight: "80vh" } },
+        }}
       >
         <DialogTitle
           sx={{

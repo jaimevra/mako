@@ -66,12 +66,59 @@ export interface MosaicQueryResult {
   fields: Array<{ name: string; type: string }>;
 }
 
+// Arrow type ids (Schema.fbs `Type` union), as flechette reports them.
+const ARROW_TYPE_NAMES: Record<number, string> = {
+  [-1]: "Dictionary",
+  1: "Null",
+  2: "Int",
+  3: "Float",
+  4: "Binary",
+  5: "Utf8",
+  6: "Bool",
+  7: "Decimal",
+  8: "Date",
+  9: "Time",
+  10: "Timestamp",
+  11: "Interval",
+  12: "List",
+  13: "Struct",
+  14: "Union",
+  15: "FixedSizeBinary",
+  16: "FixedSizeList",
+  17: "Map",
+  18: "Duration",
+  19: "LargeBinary",
+  20: "LargeUtf8",
+  21: "LargeList",
+  22: "RunEndEncoded",
+  23: "BinaryView",
+  24: "Utf8View",
+  25: "ListView",
+  26: "LargeListView",
+};
+
+/**
+ * A readable Arrow type name ("Int64", "Float64", "Utf8", ...). Mosaic decodes
+ * results with flechette, whose types are plain `{ typeId, ... }` objects.
+ */
+export function arrowTypeName(type: any): string {
+  if (typeof type?.typeId !== "number") return String(type);
+  const name = ARROW_TYPE_NAMES[type.typeId] ?? `Type${type.typeId}`;
+  if (name === "Int" && typeof type.bitWidth === "number") {
+    return `${type.signed === false ? "Uint" : "Int"}${type.bitWidth}`;
+  }
+  if (name === "Float" && typeof type.precision === "number") {
+    return `Float${[16, 32, 64][type.precision] ?? ""}`;
+  }
+  return name;
+}
+
 export function convertMosaicQueryResult(data: any): MosaicQueryResult {
   const rows: Record<string, unknown>[] = [];
   const fields = Array.isArray(data?.schema?.fields)
     ? data.schema.fields.map((field: any) => ({
         name: String(field.name),
-        type: String(field.type),
+        type: arrowTypeName(field.type),
       }))
     : [];
 
@@ -131,16 +178,16 @@ export async function createMosaicInstance(
   db: AsyncDuckDB,
 ): Promise<MosaicInstance> {
   const mosaic = await loadMosaicCore();
-  const coordinator = new mosaic.Coordinator();
   const conn = await db.connect();
-  const connector = {
-    query: async (query: { sql: string } | string) => {
-      const sql = typeof query === "string" ? query : query.sql;
-      const result = await conn.query(sql);
-      return result as any;
+  const coordinator = new mosaic.Coordinator(
+    new mosaic.DuckDBWASMConnector({ duckdb: db, connection: conn }),
+    {
+      // Decode the way apache-arrow did, which the dashboards were built on:
+      // timestamps as epoch-ms numbers and 64-bit ints as BigInt (narrowed to
+      // numbers by normalizeDuckDBValue when they are safe).
+      ipc: { useDate: false, useBigInt: true },
     },
-  };
-  coordinator.databaseConnector(connector as any);
+  );
   const selections = new Map<
     string,
     { resolution: DashboardCrossFilterResolution; selection: MosaicSelection }

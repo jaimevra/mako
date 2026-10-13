@@ -52,7 +52,13 @@ const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          mr: 0.5,
+        }}
+      >
         {filter.label}
       </Typography>
       <FormControl size="small" sx={{ minWidth: 140 }}>
@@ -73,7 +79,9 @@ const MultiSelectFilter: React.FC<MultiSelectFilterProps> = ({
               <Checkbox checked={selected.includes(opt)} size="small" />
               <ListItemText
                 primary={opt}
-                primaryTypographyProps={{ fontSize: "0.8rem" }}
+                slotProps={{
+                  primary: { sx: { fontSize: "0.8rem" } },
+                }}
               />
             </MenuItem>
           ))}

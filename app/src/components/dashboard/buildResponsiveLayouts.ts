@@ -48,8 +48,7 @@ function resolveVegaMark(widget: ReflowableWidget): string | undefined {
   const mark = widget.vegaLiteSpec?.mark;
   if (typeof mark === "string") return mark;
   return (mark as Record<string, unknown> | undefined)?.type as
-    | string
-    | undefined;
+    string | undefined;
 }
 
 /**

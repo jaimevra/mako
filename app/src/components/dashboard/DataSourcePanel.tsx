@@ -537,13 +537,15 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
       anchor="right"
       open={open}
       onClose={onClose}
-      PaperProps={{
-        sx: {
-          width: { xs: "100vw", sm: 420 },
-          maxWidth: "100vw",
-          p: 0,
-          display: "flex",
-          flexDirection: "column",
+      slotProps={{
+        paper: {
+          sx: {
+            width: { xs: "100vw", sm: 420 },
+            maxWidth: "100vw",
+            p: 0,
+            display: "flex",
+            flexDirection: "column",
+          },
         },
       }}
     >
@@ -560,7 +562,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Database size={18} />
-          <Typography variant="subtitle1" fontWeight={600}>
+          <Typography
+            variant="subtitle1"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             Data Sources
           </Typography>
           <Chip
@@ -628,8 +635,10 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
               >
                 <Typography
                   variant="caption"
-                  fontWeight={600}
-                  color="text.secondary"
+                  sx={{
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
                 >
                   {editingDataSourceId ? "Edit Data Source" : "New Data Source"}
                 </Typography>
@@ -738,8 +747,10 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
               >
                 <Typography
                   variant="caption"
-                  fontWeight={600}
-                  color="text.secondary"
+                  sx={{
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
                 >
                   Import Saved Console
                 </Typography>
@@ -798,11 +809,14 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                             .filter(Boolean)
                             .join(" · ") || undefined
                         }
-                        primaryTypographyProps={{
-                          variant: "body2",
-                          noWrap: true,
+                        slotProps={{
+                          primary: {
+                            variant: "body2",
+                            noWrap: true,
+                          },
+
+                          secondary: { variant: "caption" },
                         }}
-                        secondaryTypographyProps={{ variant: "caption" }}
                       />
                       <ListItemSecondaryAction>
                         {addingId === c.id ? (
@@ -826,8 +840,11 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                 searchResults.length === 0 && (
                   <Typography
                     variant="caption"
-                    color="text.secondary"
-                    sx={{ mt: 1, display: "block" }}
+                    sx={{
+                      color: "text.secondary",
+                      mt: 1,
+                      display: "block",
+                    }}
                   >
                     No consoles found. Try a different search.
                   </Typography>
@@ -853,7 +870,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
             }}
           >
             <Database size={32} style={{ opacity: 0.25 }} />
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               No data sources yet
             </Typography>
             <Button
@@ -989,10 +1011,13 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                   >
                     <Typography
                       variant="body2"
-                      fontFamily="monospace"
-                      fontWeight={600}
                       noWrap
-                      sx={{ flex: 1, minWidth: 0 }}
+                      sx={{
+                        fontFamily: "monospace",
+                        fontWeight: 600,
+                        flex: 1,
+                        minWidth: 0,
+                      }}
                     >
                       {ds.name}
                     </Typography>
@@ -1107,8 +1132,8 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                   {diagnostics.length > 0 && (
                     <Typography
                       variant="caption"
-                      color="text.disabled"
                       sx={{
+                        color: "text.disabled",
                         display: "block",
                         mt: 0.25,
                         fontFamily: "monospace",
@@ -1230,7 +1255,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                   <CircularProgress size={24} />
                 </Box>
               ) : historyRuns.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   No materialization runs yet.
                 </Typography>
               ) : (
@@ -1257,7 +1287,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                         sx={{ justifyContent: "flex-start" }}
                       >
                         <Box sx={{ textAlign: "left" }}>
-                          <Typography variant="caption" display="block">
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              display: "block",
+                            }}
+                          >
                             {run.triggerType}
                           </Typography>
                           <Typography variant="body2">
@@ -1273,7 +1308,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
 
             <Box sx={{ flex: 1, minWidth: 0 }}>
               {!selectedRunDetail ? (
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   Select a run to inspect details.
                 </Typography>
               ) : (
@@ -1335,7 +1375,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                       : "unknown"}
                   </Typography>
                   {selectedRunDetail.error && (
-                    <Typography variant="body2" color="error.main">
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: "error.main",
+                      }}
+                    >
                       Error: {selectedRunDetail.error}
                     </Typography>
                   )}
@@ -1351,10 +1396,14 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                       >
                         <ListItemText
                           primary={event.message}
-                          primaryTypographyProps={{ variant: "body2" }}
                           secondary={
                             <>
-                              <Typography variant="caption" display="block">
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  display: "block",
+                                }}
+                              >
                                 {event.type} ·{" "}
                                 {formatAbsoluteTime(event.timestamp) || "N/A"}
                               </Typography>
@@ -1374,7 +1423,10 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                               )}
                             </>
                           }
-                          secondaryTypographyProps={{ component: "div" }}
+                          slotProps={{
+                            primary: { variant: "body2" },
+                            secondary: { component: "div" },
+                          }}
                         />
                       </ListItem>
                     ))}
@@ -1392,7 +1444,9 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
         onClose={closePreview}
         fullWidth
         maxWidth="lg"
-        PaperProps={{ sx: { height: "80vh" } }}
+        slotProps={{
+          paper: { sx: { height: "80vh" } },
+        }}
       >
         <DialogTitle
           sx={{
@@ -1404,12 +1458,20 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Eye size={18} />
-            <Typography variant="subtitle1" fontWeight={600} component="span">
+            <Typography
+              variant="subtitle1"
+              component="span"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               Preview:{" "}
               <Typography
                 component="span"
-                fontFamily="monospace"
-                fontWeight={600}
+                sx={{
+                  fontFamily: "monospace",
+                  fontWeight: 600,
+                }}
               >
                 {previewDataSourceName}
               </Typography>
@@ -1452,7 +1514,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
               }}
             >
               <XCircle size={32} style={{ opacity: 0.4 }} />
-              <Typography variant="body2" color="error.main">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "error.main",
+                }}
+              >
                 {previewError}
               </Typography>
             </Box>
@@ -1468,7 +1535,12 @@ const DataSourcePanel: React.FC<DataSourcePanelProps> = ({
                     justifyContent: "center",
                   }}
                 >
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
                     No rows returned
                   </Typography>
                 </Box>

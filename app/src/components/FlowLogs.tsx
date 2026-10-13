@@ -12,7 +12,7 @@ import {
   Button,
   IconButton,
 } from "@mui/material";
-import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   PlayArrow as PlayArrowIcon,
   EditOutlined as EditIcon,
@@ -48,8 +48,8 @@ interface FlowLogsProps {
   onEdit?: () => void;
 }
 
-// Styled PanelResizeHandle components
-const StyledHorizontalResizeHandle = styled(PanelResizeHandle)(({ theme }) => ({
+// Styled Separator components
+const StyledHorizontalResizeHandle = styled(Separator)(({ theme }) => ({
   width: "1px",
   background: theme.palette.divider,
   cursor: "col-resize",
@@ -381,11 +381,11 @@ export function FlowLogs({ flowId, onRunNow, onEdit }: FlowLogsProps) {
             {error}
           </Alert>
         )}
-        <PanelGroup direction="horizontal" style={{ height: "100%" }}>
+        <Group orientation="horizontal" style={{ height: "100%" }}>
           <Panel
-            defaultSize={25}
-            minSize={10}
-            maxSize={50}
+            defaultSize="25%"
+            minSize="10%"
+            maxSize="50%"
             style={{ overflow: "auto" }}
           >
             <Box
@@ -487,7 +487,12 @@ export function FlowLogs({ flowId, onRunNow, onEdit }: FlowLogsProps) {
                 const details = fullExecutionDetails || selectedHistory;
                 return (
                   <Stack spacing={2}>
-                    <Typography variant="subtitle2" color="text.secondary">
+                    <Typography
+                      variant="subtitle2"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       <strong>Run ID:</strong> {selectedHistory.executionId}
                     </Typography>
 
@@ -644,7 +649,7 @@ export function FlowLogs({ flowId, onRunNow, onEdit }: FlowLogsProps) {
               </Typography>
             )}
           </Panel>
-        </PanelGroup>
+        </Group>
       </Box>
     </Box>
   );

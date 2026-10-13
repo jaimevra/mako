@@ -245,7 +245,12 @@ export default function DashboardSettingsDialog({
           >
             <Box>
               <Typography variant="body2">Responsive layout</Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 Smaller screens are arranged automatically from your
                 large-screen layout. Resetting clears any manual tablet/mobile
                 tweaks.
@@ -324,7 +329,12 @@ export default function DashboardSettingsDialog({
         <Divider sx={{ mt: 1 }} />
 
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-          <Typography variant="subtitle2" color="text.secondary">
+          <Typography
+            variant="subtitle2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             Actions
           </Typography>
           <Box sx={{ display: "flex", gap: 1 }}>

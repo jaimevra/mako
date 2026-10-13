@@ -29,15 +29,20 @@ import {
   Navigate,
   useNavigate,
   useLocation,
-} from "react-router-dom";
+} from "react-router";
 import {
+  Group,
   Panel,
-  PanelGroup,
-  PanelResizeHandle,
-  type ImperativePanelGroupHandle,
+  Separator,
+  type GroupImperativeHandle,
+  type Layout,
+  type PanelSize,
 } from "react-resizable-panels";
 import { trackEvent, trackPageView } from "./lib/analytics";
-import { setIframeDragGuard } from "./lib/iframe-drag-guard";
+import {
+  setIframeDragGuard,
+  trackSeparatorDrag,
+} from "./lib/iframe-drag-guard";
 import Sidebar from "./components/Sidebar";
 import MobileBrowse from "./components/MobileBrowse";
 import { useRecentsStore } from "./store/recentsStore";
@@ -99,23 +104,25 @@ import { UpdateNotification } from "./components/UpdateNotification";
 // handle registry: where it crosses a perpendicular handle (the editor/results
 // split), hovering shows the four-arrow "move" cursor and dragging resizes
 // both panes at once.
-const SideResizeHandle = styled(PanelResizeHandle)(({ theme }) => ({
+const SideResizeHandle = styled(Separator)(({ theme }) => ({
   flex: "0 0 4px",
   width: "4px",
   alignSelf: "stretch",
   background: theme.palette.divider,
   touchAction: "none",
   transition: "background-color 0.2s ease",
-  // The library flags hover/drag via a data attribute (it extends beyond the
-  // 4px strip through hit-area margins), so key the highlight off that.
-  "&[data-resize-handle-state='hover'], &[data-resize-handle-state='drag']": {
+  // The library flags hover/drag via a data attribute (its hit area extends
+  // beyond the 4px strip), so key the highlight off that.
+  "&[data-separator='hover'], &[data-separator='active']": {
     backgroundColor: theme.palette.primary.main,
   },
 }));
 
+const isCollapsedSize = (size: PanelSize) => size.inPixels < 1;
+
 // Collapse a divider entirely while its side pane is closed.
 const HIDDEN_HANDLE_STYLE: CSSProperties = {
-  flex: "0 0 0px",
+  flexBasis: 0,
   width: 0,
   minWidth: 0,
   opacity: 0,
@@ -210,14 +217,14 @@ function MainApp() {
   }, [activeTabId]);
 
   const panelContainerRef = useRef<HTMLDivElement | null>(null);
-  const groupRef = useRef<ImperativePanelGroupHandle | null>(null);
+  const groupRef = useRef<GroupImperativeHandle | null>(null);
 
   // Side panes have a FIXED pixel width. Only the center pane flexes to fill
   // the remaining space, so resizing the window never changes the side panes —
   // it only grows/shrinks the center (Slack/Cursor behavior). react-resizable-
   // panels is percentage-based, so we keep the source of truth in px (refs +
   // the UI store) and translate: px → % when (re)applying layout, % → px when
-  // the user drags a handle.
+  // the user drags a handle. (Size constraints are given in px directly.)
   const leftWidthRef = useRef(
     leftPaneWidthPx && leftPaneWidthPx > 0
       ? clamp(leftPaneWidthPx, SIDE_PANEL_MIN_WIDTH_PX, SIDE_PANEL_MAX_WIDTH_PX)
@@ -244,13 +251,17 @@ function MainApp() {
   const openFlagsRef = useRef({ left: leftPaneOpen, right: rightPaneOpen });
   openFlagsRef.current = { left: leftPaneOpen, right: rightPaneOpen };
 
-  // Compute the full [left, center, right] percentage layout from the px
+  // Compute the full left/center/right percentage layout from the px
   // widths, honoring closed (collapsed to 0) panes.
-  const computeLayoutPct = useCallback((width: number): number[] => {
+  const computeLayoutPct = useCallback((width: number): Layout => {
     const { left, right } = openFlagsRef.current;
     const leftPct = left ? (leftWidthRef.current / width) * 100 : 0;
     const rightPct = right ? (rightWidthRef.current / width) * 100 : 0;
-    return [leftPct, Math.max(100 - leftPct - rightPct, 0), rightPct];
+    return {
+      "left-pane": leftPct,
+      "center-pane": Math.max(100 - leftPct - rightPct, 0),
+      "right-pane": rightPct,
+    };
   }, []);
 
   // Keep side panes at their fixed px width when the container resizes: the
@@ -270,8 +281,7 @@ function MainApp() {
     observer.observe(el);
     containerObserverRef.current = observer;
   }, []);
-  // Re-apply the px-derived layout after the width state commits, so the
-  // min/max percentage constraints derived from it are already up to date.
+  // Re-apply the px-derived layout after the width state commits.
   useLayoutEffect(() => {
     if (containerWidth <= 0) return;
     groupRef.current?.setLayout(computeLayoutPct(containerWidth));
@@ -287,10 +297,11 @@ function MainApp() {
     };
   }, []);
   const handleGroupLayout = useCallback(
-    (sizes: number[]) => {
+    (layout: Layout) => {
       const width = containerWidthRef.current;
-      if (width <= 0 || sizes.length !== 3) return;
-      const [leftPct, , rightPct] = sizes;
+      if (width <= 0) return;
+      const leftPct = layout["left-pane"] ?? 0;
+      const rightPct = layout["right-pane"] ?? 0;
       if (leftPct > 0) leftWidthRef.current = (leftPct * width) / 100;
       if (rightPct > 0) rightWidthRef.current = (rightPct * width) / 100;
 
@@ -316,7 +327,7 @@ function MainApp() {
   // toggles, chat close button, ...): computeLayoutPct collapses closed panes
   // to 0 and restores open ones to their remembered px width. Dragging a pane
   // below the collapse threshold collapses it via the library, which flips
-  // the flag through onCollapse and keeps both in sync.
+  // the flag through the panel's onResize and keeps both in sync.
   useEffect(() => {
     groupRef.current?.setLayout(
       computeLayoutPct(Math.max(containerWidthRef.current, 1)),
@@ -342,7 +353,7 @@ function MainApp() {
         right: rightWidthRef.current,
       };
     } else {
-      // Clear on the next macrotask: the panel onCollapse callback fires from
+      // Clear on the next macrotask: the panel collapse callback fires from
       // a React effect that may commit *after* the pointerup, and it needs
       // the snapshot to restore the pre-drag width.
       snapshotClearTimeoutRef.current = window.setTimeout(() => {
@@ -363,10 +374,25 @@ function MainApp() {
     closeRightPane();
   }, [closeRightPane]);
 
-  // px-based panel constraints expressed as percentages of the container.
-  const sideMinPct = (SIDE_PANEL_MIN_WIDTH_PX / containerWidth) * 100;
-  const sideMaxPct = (SIDE_PANEL_MAX_WIDTH_PX / containerWidth) * 100;
-  const centerMinPct = (CENTER_PANE_MIN_WIDTH_PX / containerWidth) * 100;
+  // react-resizable-panels v4 reports collapse/expand only as size changes:
+  // translate a side pane's transition to/from 0 into close/open.
+  const handleLeftResize = useCallback(
+    (next: PanelSize, _id: unknown, prev: PanelSize | undefined) => {
+      if (!prev || isCollapsedSize(next) === isCollapsedSize(prev)) return;
+      if (isCollapsedSize(next)) handleLeftCollapse();
+      else openLeftPane();
+    },
+    [handleLeftCollapse, openLeftPane],
+  );
+  const handleRightResize = useCallback(
+    (next: PanelSize, _id: unknown, prev: PanelSize | undefined) => {
+      if (!prev || isCollapsedSize(next) === isCollapsedSize(prev)) return;
+      if (isCollapsedSize(next)) handleRightCollapse();
+      else openRightPane();
+    },
+    [handleRightCollapse, openRightPane],
+  );
+
   const defaultLayout = computeLayoutPct(containerWidth);
 
   // Ref for DbFlowForm - allows AI agent to manipulate form state
@@ -756,23 +782,21 @@ function MainApp() {
           ref={attachPanelContainer}
           sx={{ height: "100%", flex: 1, minWidth: 0 }}
         >
-          <PanelGroup
-            ref={groupRef}
-            direction="horizontal"
+          <Group
+            groupRef={groupRef}
+            orientation="horizontal"
             style={{ height: "100%", width: "100%" }}
-            onLayout={handleGroupLayout}
+            onLayoutChange={handleGroupLayout}
           >
             {/* Left side pane — fixed pixel width, resizable by hand */}
             <Panel
               id="left-pane"
-              order={1}
               collapsible
-              collapsedSize={0}
-              defaultSize={leftPaneOpen ? defaultLayout[0] : 0}
-              minSize={sideMinPct}
-              maxSize={sideMaxPct}
-              onCollapse={handleLeftCollapse}
-              onExpand={openLeftPane}
+              collapsedSize="0%"
+              defaultSize={`${leftPaneOpen ? defaultLayout["left-pane"] : 0}%`}
+              minSize={SIDE_PANEL_MIN_WIDTH_PX}
+              maxSize={SIDE_PANEL_MAX_WIDTH_PX}
+              onResize={handleLeftResize}
             >
               <Box sx={{ height: "100%", overflow: "hidden" }}>
                 <Suspense
@@ -795,12 +819,12 @@ function MainApp() {
             </Panel>
 
             <SideResizeHandle
-              onDragging={handleDividerDragging}
+              onPointerDown={trackSeparatorDrag(handleDividerDragging)}
               style={leftPaneOpen ? undefined : HIDDEN_HANDLE_STYLE}
             />
 
             {/* Center (main content) — flexes to fill remaining space */}
-            <Panel id="center-pane" order={2} minSize={centerMinPct}>
+            <Panel id="center-pane" minSize={CENTER_PANE_MIN_WIDTH_PX}>
               <Box
                 data-mako-main-content="true"
                 sx={{ height: "100%", minWidth: 0 }}
@@ -810,21 +834,19 @@ function MainApp() {
             </Panel>
 
             <SideResizeHandle
-              onDragging={handleDividerDragging}
+              onPointerDown={trackSeparatorDrag(handleDividerDragging)}
               style={rightPaneOpen ? undefined : HIDDEN_HANDLE_STYLE}
             />
 
             {/* Right side pane (chat) — fixed pixel width, resizable by hand */}
             <Panel
               id="right-pane"
-              order={3}
               collapsible
-              collapsedSize={0}
-              defaultSize={rightPaneOpen ? defaultLayout[2] : 0}
-              minSize={sideMinPct}
-              maxSize={sideMaxPct}
-              onCollapse={handleRightCollapse}
-              onExpand={openRightPane}
+              collapsedSize="0%"
+              defaultSize={`${rightPaneOpen ? defaultLayout["right-pane"] : 0}%`}
+              minSize={SIDE_PANEL_MIN_WIDTH_PX}
+              maxSize={SIDE_PANEL_MAX_WIDTH_PX}
+              onResize={handleRightResize}
             >
               <Box
                 sx={{
@@ -837,7 +859,7 @@ function MainApp() {
                 {chatElement}
               </Box>
             </Panel>
-          </PanelGroup>
+          </Group>
         </Box>
       </Box>
       <DbtProjectDrawersHost />
@@ -849,10 +871,12 @@ function MainApp() {
 function LoadingScreen() {
   return (
     <Box
-      display="flex"
-      justifyContent="center"
-      alignItems="center"
-      minHeight="100vh"
+      sx={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "100vh",
+      }}
     >
       <CircularProgress size={60} />
     </Box>

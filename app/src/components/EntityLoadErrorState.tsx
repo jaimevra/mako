@@ -61,7 +61,12 @@ export default function EntityLoadErrorState({
       }}
     >
       <Icon size={28} strokeWidth={1.5} />
-      <Typography variant="subtitle1" color="text.primary">
+      <Typography
+        variant="subtitle1"
+        sx={{
+          color: "text.primary",
+        }}
+      >
         {title}
       </Typography>
       <Typography variant="body2" sx={{ maxWidth: 420 }}>

@@ -641,14 +641,26 @@ function DashboardInfoDialog({
       <DialogContent sx={{ pt: 1 }}>
         <Stack spacing={2}>
           <Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mb: 0.5,
+              }}
+            >
               Name
             </Typography>
             <Typography variant="body2">{item?.name ?? "—"}</Typography>
           </Box>
 
           <Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+                mb: 0.5,
+              }}
+            >
               Created by
             </Typography>
             <Typography variant="body2">{ownerEmail}</Typography>
@@ -658,8 +670,10 @@ function DashboardInfoDialog({
             <Box>
               <Typography
                 variant="body2"
-                color="text.secondary"
-                sx={{ mb: 0.5 }}
+                sx={{
+                  color: "text.secondary",
+                  mb: 0.5,
+                }}
               >
                 Created at
               </Typography>
@@ -673,8 +687,10 @@ function DashboardInfoDialog({
             <Box>
               <Typography
                 variant="body2"
-                color="text.secondary"
-                sx={{ mb: 0.5 }}
+                sx={{
+                  color: "text.secondary",
+                  mb: 0.5,
+                }}
               >
                 Last modified
               </Typography>
@@ -688,8 +704,10 @@ function DashboardInfoDialog({
             <Box>
               <Typography
                 variant="body2"
-                color="text.secondary"
-                sx={{ mb: 0.5 }}
+                sx={{
+                  color: "text.secondary",
+                  mb: 0.5,
+                }}
               >
                 Access
               </Typography>

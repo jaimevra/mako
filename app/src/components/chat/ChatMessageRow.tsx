@@ -273,8 +273,7 @@ export const ChatMessageRow = React.memo(function ChatMessageRow({
               rawState === "output-denied"
             ) {
               const approval = part.approval as
-                | { id?: string; approved?: boolean }
-                | undefined;
+                { id?: string; approved?: boolean } | undefined;
               const resolution =
                 rawState === "approval-requested"
                   ? "pending"
@@ -359,8 +358,7 @@ export const ChatMessageRow = React.memo(function ChatMessageRow({
             ) {
               const dbtOutput = cardOutput as { runId?: string } | undefined;
               const dbtInput = part.input as
-                | { projectId?: string; model?: string }
-                | undefined;
+                { projectId?: string; model?: string } | undefined;
               if (dbtOutput?.runId && dbtInput?.projectId) {
                 return (
                   <DbtRunCard

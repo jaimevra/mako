@@ -6,7 +6,7 @@ import {
   ToggleButton,
   Tooltip,
 } from "@mui/material";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { useWorkspace } from "../contexts/workspace-context";
 import {
   useDashboardStore,
@@ -274,11 +274,22 @@ export default function DashboardDataSourceEditor({
     <Tooltip
       title={
         <Box sx={{ p: 0.5 }}>
-          <Typography variant="caption" display="block" sx={{ mb: 0.5 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              mb: 0.5,
+            }}
+          >
             <b>Live</b> — the query streams from the connection each time the
             dashboard loads. Always fresh; not shown in public shares.
           </Typography>
-          <Typography variant="caption" display="block">
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+            }}
+          >
             <b>Materialized</b> — the query is snapshotted to a Parquet file and
             loaded into DuckDB, so widgets render fast and public viewers get a
             cached snapshot. Click <b>Refresh</b> to rebuild from source.
@@ -337,8 +348,8 @@ export default function DashboardDataSourceEditor({
       <EntityBreadcrumbs tabId={tabId} />
 
       <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-        <PanelGroup direction="vertical" style={{ height: "100%" }}>
-          <Panel defaultSize={55} minSize={20}>
+        <Group orientation="vertical" style={{ height: "100%" }}>
+          <Panel defaultSize="55%" minSize="20%">
             <Console
               variant="data-source"
               consoleId={tabId}
@@ -369,20 +380,20 @@ export default function DashboardDataSourceEditor({
               headerExtras={headerExtras}
             />
           </Panel>
-          <PanelResizeHandle
+          <Separator
             style={{
               height: 4,
               background: "var(--mui-palette-divider, #ddd)",
             }}
           />
-          <Panel defaultSize={45} minSize={10}>
+          <Panel defaultSize="45%" minSize="10%">
             <ResultsTable
               results={preview}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
             />
           </Panel>
-        </PanelGroup>
+        </Group>
       </Box>
     </Box>
   );

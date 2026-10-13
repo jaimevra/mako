@@ -225,10 +225,12 @@ export default function CommandPalette() {
       // Without this, MUI restores focus to the previously focused element
       // (e.g. Monaco) when the dialog opens, defeating the input autofocus.
       disableRestoreFocus
-      TransitionProps={{ onEntered: () => inputRef.current?.focus() }}
       onKeyDown={onDialogKeyDown}
       sx={{ "& .MuiDialog-container": { alignItems: "flex-start" } }}
-      PaperProps={{ sx: { mt: "12vh", overflow: "hidden" } }}
+      slotProps={{
+        transition: { onEntered: () => inputRef.current?.focus() },
+        paper: { sx: { mt: "12vh", overflow: "hidden" } },
+      }}
     >
       <Box
         sx={{
@@ -261,8 +263,12 @@ export default function CommandPalette() {
         {rows.length === 0 && (
           <Typography
             variant="body2"
-            color="text.secondary"
-            sx={{ px: 2, py: 2, textAlign: "center" }}
+            sx={{
+              color: "text.secondary",
+              px: 2,
+              py: 2,
+              textAlign: "center",
+            }}
           >
             {effectiveQuery ? "No results" : "Start typing to search"}
           </Typography>
@@ -272,8 +278,8 @@ export default function CommandPalette() {
             <Typography
               key={`header-${row.label}`}
               variant="caption"
-              color="text.secondary"
               sx={{
+                color: "text.secondary",
                 display: "block",
                 px: 2,
                 pt: 1,
@@ -321,7 +327,13 @@ export default function CommandPalette() {
                 {row.item.title}
               </Typography>
               {"subtitle" in row.item && row.item.subtitle && (
-                <Typography variant="caption" color="text.secondary" noWrap>
+                <Typography
+                  variant="caption"
+                  noWrap
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   {row.item.subtitle}
                 </Typography>
               )}

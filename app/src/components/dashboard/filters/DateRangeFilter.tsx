@@ -17,8 +17,7 @@ const DateRangeFilter: React.FC<DateRangeFilterProps> = ({
   onRemove,
 }) => {
   const defaultRange = filter.config?.defaultRange as
-    | { start?: string; end?: string }
-    | undefined;
+    { start?: string; end?: string } | undefined;
   const [start, setStart] = useState(defaultRange?.start || "");
   const [end, setEnd] = useState(defaultRange?.end || "");
 
@@ -30,7 +29,13 @@ const DateRangeFilter: React.FC<DateRangeFilterProps> = ({
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          mr: 0.5,
+        }}
+      >
         {filter.label}
       </Typography>
       <TextField
@@ -41,7 +46,12 @@ const DateRangeFilter: React.FC<DateRangeFilterProps> = ({
         sx={{ width: 140 }}
         slotProps={{ inputLabel: { shrink: true } }}
       />
-      <Typography variant="caption" color="text.secondary">
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
         to
       </Typography>
       <TextField

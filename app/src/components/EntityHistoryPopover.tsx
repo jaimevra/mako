@@ -181,10 +181,13 @@ export default function EntityHistoryPopover({
           {repoPath && (
             <Typography
               variant="caption"
-              color="text.secondary"
               noWrap
-              sx={{ fontFamily: "monospace", minWidth: 0 }}
               title={repoPath}
+              sx={{
+                color: "text.secondary",
+                fontFamily: "monospace",
+                minWidth: 0,
+              }}
             >
               {repoPath}
             </Typography>
@@ -208,8 +211,11 @@ export default function EntityHistoryPopover({
           {history !== undefined && commits.length === 0 && (
             <Typography
               variant="body2"
-              color="text.secondary"
-              sx={{ px: 2, py: 2 }}
+              sx={{
+                color: "text.secondary",
+                px: 2,
+                py: 2,
+              }}
             >
               {repoPath
                 ? "No commits yet."
