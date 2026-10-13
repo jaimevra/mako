@@ -29,8 +29,9 @@ workflows/
 ```
 
 That one file is all a workflow needs. `../hatchet` (the Hatchet client) and
-`../lib/mako` (Mako data access) are supplied when it is built; do not create
-them.
+`../lib/mako` (Mako data access) are supplied when it is built: do not create
+them, and they are not in the repo to read. `../lib/mako` exports `query`,
+`call`, `agent`, `model` and `tools`, each shown below.
 
 With `workflowId: "daily-digest"`, file paths are relative to that folder:
 the file above is `path: "workflow.ts"`.
@@ -63,6 +64,11 @@ workspace's list and a schedule never fires there.
 
 Changing an active workflow: the same loop; test in the sandbox, and say
 before committing that the new commit is live as soon as it builds.
+
+Nothing is committed until `workflow_commit`, at the end of a turn either: an
+attempt you give up on is deleted from the checkout (`rm -rf` its folder with
+`workflow_bash` on another workflow) and was never deployed. A workflow
+already on main is removed by deleting its folder and committing that.
 
 ## A workflow file
 
@@ -119,15 +125,20 @@ Rules:
 ```ts
 import { query } from "../lib/mako";
 
-const rows = await query(
+const rows = (await query(
   "<connectionId>",
   "select id, name from customers limit 100",
-);
+)) as { id: string; name: string }[];
 ```
 
-Find the connection id and check the SQL first with `list_connections`,
-`inspect_table` and `sql_execute_query`. Queries from a workflow are
-read-only.
+`query` returns `unknown`: say what the rows are, as above. Find the
+connection id and check the SQL first with `list_connections`,
+`inspect_table` and `sql_execute_query`.
+
+Queries from a workflow are read-only: `query`, `sql_execute_query` and
+`run_console` refuse INSERT, UPDATE, MERGE, CREATE and DROP. A workflow that
+has to write to the warehouse runs a dbt job that does,
+`call("dbt_run_job", { ... })`, and says so before it is built.
 
 ## Calling a Mako tool in a step
 

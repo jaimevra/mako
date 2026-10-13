@@ -38,9 +38,16 @@ type Tools = Record<
   { execute: (input: object, options: object) => Promise<Result> }
 >;
 
-async function toolsFor(userId: string): Promise<Tools> {
+async function toolsFor(
+  userId: string,
+  touchedPaths?: Set<string>,
+): Promise<Tools> {
   const { createAppsTools } = await import("./apps-tools");
-  return createAppsTools({ workspaceId: WS, userId }) as unknown as Tools;
+  return createAppsTools({
+    workspaceId: WS,
+    userId,
+    touchedPaths,
+  }) as unknown as Tools;
 }
 const call = (tools: Tools, name: string, input: object) =>
   tools[name].execute(input, { toolCallId: "t", messages: [] });
@@ -119,6 +126,27 @@ describe("workflowId as the tools' target", () => {
     });
     expect(write.success).toBe(false);
     expect(write.error).toMatch(/Viewers cannot change workflows/);
+  });
+
+  it("leaves a workflow out of the turn's own commit", async () => {
+    // What a turn touched is committed and pushed when it ends
+    // (commitAgentTurn). On main that would deploy a workflow nobody
+    // committed, so writing one records nothing to commit.
+    const touched = new Set<string>();
+    const tools = await toolsFor(ADMIN, touched);
+    const target = { workflowId: "not-yet" };
+    const write = await call(tools, "workflow_write_file", {
+      ...target,
+      path: "workflow.ts",
+      contents: WORKFLOW,
+    });
+    expect(write.success, write.error).toBe(true);
+    await call(tools, "workflow_bash", { ...target, command: "ls" });
+    expect([...touched]).toEqual([]);
+    await call(tools, "workflow_bash", {
+      ...target,
+      command: "cd .. && rm -rf not-yet",
+    });
   });
 
   it("writes, reads, edits, commits and merges a workflow folder", async () => {
