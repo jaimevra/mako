@@ -1230,13 +1230,15 @@ function ResourceTreeInner(
               primary={
                 isRenaming ? renderInlineRenameInput(node.id) : node.name
               }
-              primaryTypographyProps={{
-                variant: "body2",
-                sx: {
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  fontWeight: 500,
+              slotProps={{
+                primary: {
+                  variant: "body2",
+                  sx: {
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    fontWeight: 500,
+                  },
                 },
               }}
             />
@@ -1290,8 +1292,8 @@ function ResourceTreeInner(
                   ) : childItems.length === 0 ? (
                     <Typography
                       variant="caption"
-                      color="text.disabled"
                       sx={{
+                        color: "text.disabled",
                         pl: 1.5 + (depth + 1) * 1.5 + 2.75,
                         py: 0,
                         minHeight: rowHeight,
@@ -1384,12 +1386,14 @@ function ResourceTreeInner(
           </ListItemIcon>
           <MuiListItemText
             primary={isRenaming ? renderInlineRenameInput(node.id) : node.name}
-            primaryTypographyProps={{
-              variant: "body2",
-              sx: {
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+            slotProps={{
+              primary: {
+                variant: "body2",
+                sx: {
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                },
               },
             }}
           />
@@ -1510,13 +1514,15 @@ function ResourceTreeInner(
         ) : null}
         <MuiListItemText
           primary={section.label}
-          primaryTypographyProps={{
-            variant: "body2",
-            sx: {
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+          slotProps={{
+            primary: {
+              variant: "body2",
+              sx: {
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              },
             },
           }}
         />

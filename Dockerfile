@@ -12,7 +12,7 @@ ARG USE_PREBUILT=0
 # =============================================================================
 # Builder: compile from source (local / docs path)
 # =============================================================================
-FROM node:20 AS builder-source
+FROM node:24-bookworm AS builder-source
 WORKDIR /app
 
 RUN npm install -g pnpm
@@ -43,7 +43,7 @@ RUN pnpm --filter @mako/schemas run build \
 # =============================================================================
 # Builder: stage host-built artifacts (CI path)
 # =============================================================================
-FROM node:20 AS builder-prebuilt
+FROM node:24-bookworm AS builder-prebuilt
 WORKDIR /app
 
 # Same paths the production stage expects from the source builder
@@ -66,14 +66,14 @@ FROM builder-${USE_PREBUILT} AS builder
 # =============================================================================
 # Production runtime
 # =============================================================================
-FROM node:20-slim
+FROM node:24-bookworm-slim
 WORKDIR /app
 
 # Install build tools needed for native modules (+ venv for the dbt runner).
 # This layer is stable and should stay cached across app deploys.
 # `git` is required by Apps: the API keeps a local clone of each linked
 # GitHub repo as an ephemeral read cache for the file explorer (the sandbox
-# does its own in-VM git for pushing). node:20-slim ships without git, so the
+# does its own in-VM git for pushing). node:*-slim ships without git, so the
 # missing binary surfaced as `spawn git ENOENT` on app creation.
 RUN apt-get update && apt-get install -y \
     python3 \

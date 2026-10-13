@@ -49,12 +49,15 @@ export const generateChatTitle = async (
         traceName: "title-generation",
         userId: ctx?.userEmail ?? ctx?.userId,
         tags: ["type:title_generation"],
-        metadata: ctx ? { workspaceId: ctx.workspaceId } : undefined,
+        metadata: {
+          workspaceId: ctx?.workspaceId ?? "unknown",
+          invocationType: "title_generation",
+        },
       },
       () =>
         generateText({
           model: getModel(modelId),
-          system: TITLE_SYSTEM_PROMPT,
+          instructions: TITLE_SYSTEM_PROMPT,
           prompt: userMessageContent.substring(0, 2000),
           providerOptions: {
             ...buildProviderOptions({
@@ -63,14 +66,7 @@ export const generateChatTitle = async (
               invocationType: "title_generation",
             }),
           },
-          experimental_telemetry: {
-            isEnabled: true,
-            functionId: "title-generation",
-            metadata: {
-              workspaceId: ctx?.workspaceId ?? "unknown",
-              invocationType: "title_generation",
-            },
-          },
+          telemetry: { functionId: "title-generation" },
         }),
     );
 

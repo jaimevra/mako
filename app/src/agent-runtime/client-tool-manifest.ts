@@ -35,13 +35,7 @@ export type AgentToolDomain =
   | "plan";
 
 export type ClientToolExecutor =
-  | "console"
-  | "dashboard"
-  | "flow"
-  | "app"
-  | "dbt"
-  | "data"
-  | "notebook";
+  "console" | "dashboard" | "flow" | "app" | "dbt" | "data" | "notebook";
 
 export interface ToolUiConfig {
   getLabel: (input?: unknown) => string;

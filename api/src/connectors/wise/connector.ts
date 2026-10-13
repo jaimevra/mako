@@ -418,7 +418,6 @@ export class WiseConnector extends BaseConnector {
     maxRetries = 5,
   ): Promise<T> {
     let attempt = 0;
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         return await fn();
@@ -1066,14 +1065,14 @@ export class WiseConnector extends BaseConnector {
           : undefined;
       if (!approval) {
         if (response?.status === 403) {
-          throw new Error(messages.noChallenge);
+          throw new Error(messages.noChallenge, { cause: error });
         }
         throw error;
       }
 
       const privateKey = this.dataSource.config.sca_private_key;
       if (typeof privateKey !== "string" || privateKey.trim().length === 0) {
-        throw new Error(messages.noKey);
+        throw new Error(messages.noKey, { cause: error });
       }
       const pem = normalizePemKey(privateKey);
       const signature = crypto
@@ -1104,6 +1103,7 @@ export class WiseConnector extends BaseConnector {
             `, x-2fa-approval-result: ${result ?? "none"}` +
             `, signed with key ${publicKeyFingerprint(pem)}` +
             (body && body !== '""' ? `, body: ${body.slice(0, 300)}` : ""),
+          { cause: signedError },
         );
       }
     }

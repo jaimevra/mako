@@ -97,7 +97,7 @@ export const useCommandPaletteStore = create<CommandPaletteStore>()(
           state.consoleResults = res.results ?? [];
           state.searching = false;
         });
-      } catch (err) {
+      } catch {
         if (controller.signal.aborted) return;
         // Search is best-effort UI sugar; swallow errors and show nothing.
         set(state => {

@@ -56,7 +56,7 @@ export function SectionScope({ droppableId, children }: SectionScopeProps) {
 interface DraggableFolderScopeProps {
   id: string;
   disabled?: boolean;
-  header: ReactElement;
+  header: ReactElement<any>;
   children?: ReactNode;
 }
 
@@ -122,7 +122,7 @@ interface DraggableTreeItemProps {
   id: string;
   disabled?: boolean;
   isFolder?: boolean;
-  children: ReactElement;
+  children: ReactElement<any>;
 }
 
 export function DraggableTreeItem({

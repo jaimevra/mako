@@ -20,8 +20,10 @@ import type {
   DashboardDefinition,
 } from "@mako/schemas";
 
-export interface DashboardDataSource
-  extends Omit<SchemaDashboardDataSource, "cache"> {
+export interface DashboardDataSource extends Omit<
+  SchemaDashboardDataSource,
+  "cache"
+> {
   cache?:
     | (SchemaDashboardDataSource["cache"] & {
         parquetArtifactKey?: string;
@@ -30,11 +32,7 @@ export interface DashboardDataSource
         parquetVersion?: string;
         parquetBuiltAt?: string;
         parquetBuildStatus?:
-          | "missing"
-          | "queued"
-          | "building"
-          | "ready"
-          | "error";
+          "missing" | "queued" | "building" | "ready" | "error";
         parquetLastError?: string;
         parquetUrl?: string;
       })
@@ -48,8 +46,10 @@ export interface DashboardEditLock {
   expiresAt: string;
 }
 
-export interface Dashboard
-  extends Omit<DashboardDefinition, "crossFilter" | "dataSources"> {
+export interface Dashboard extends Omit<
+  DashboardDefinition,
+  "crossFilter" | "dataSources"
+> {
   _id: string;
   workspaceId: string;
   dataSources: DashboardDataSource[];
@@ -110,9 +110,7 @@ export interface DashboardRuntimeColumn {
 }
 
 export type DashboardDataSourceActiveSource =
-  | "draft_stream"
-  | "published_artifact"
-  | "live_stream";
+  "draft_stream" | "published_artifact" | "live_stream";
 
 export interface DashboardDataSourceRuntimeState {
   dataSourceId: string;

@@ -162,8 +162,7 @@ export function buildDashboardRequestContext({
                 ? undefined
                 : (
                     connectionById.get(dataSource.query?.connectionId) as
-                      | { sqlDialect?: string }
-                      | undefined
+                      { sqlDialect?: string } | undefined
                   )?.sqlDialect ||
                   (dataSource.query?.language === "sql" ? "duckdb" : undefined),
           };

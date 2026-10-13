@@ -23,8 +23,10 @@ import { loggers } from "../../logging";
 const logger = loggers.connector("stripe");
 
 // Single source of truth for the Stripe API version so the SDK client and
-// webhook provisioning stay in sync.
-const STRIPE_API_VERSION: Stripe.LatestApiVersion = "2023-10-16";
+// webhook provisioning stay in sync. It decides the shape of every synced
+// record, so it stays pinned when the SDK's own default moves (the SDK types
+// only know its newest version, hence the cast).
+const STRIPE_API_VERSION = "2023-10-16" as Stripe.LatestApiVersion;
 
 const STRIPE_DEFAULT_HOST = "api.stripe.com";
 
@@ -219,7 +221,7 @@ export class StripeConnector extends BaseConnector {
       const stripe = this.getStripeClient();
 
       // Test connection by fetching account info
-      await stripe.accounts.retrieve();
+      await stripe.accounts.retrieve(null);
 
       return {
         success: true,
@@ -1404,6 +1406,7 @@ export class StripeConnector extends BaseConnector {
             : String(error);
       throw new Error(
         `Failed to create Stripe webhook subscription: ${message}`,
+        { cause: error },
       );
     }
   }
@@ -1502,6 +1505,7 @@ export class StripeConnector extends BaseConnector {
             : String(error);
       throw new Error(
         `Failed to update Stripe webhook subscription: ${message}`,
+        { cause: error },
       );
     }
   }

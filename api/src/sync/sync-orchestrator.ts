@@ -333,7 +333,7 @@ export async function performSyncChunk(
   } = options;
 
   const syncMode = isIncremental ? "incremental" : "full";
-  let db: Db | null = null;
+  let db: Db | null;
 
   try {
     // Get the data source
@@ -662,12 +662,10 @@ async function performSyncChunkSql(
   let lastSyncDate: Date | undefined;
   if (anchorIncremental) {
     try {
-      const { getMaxTrackingValue } = await import(
-        "../services/destination-writer.service"
-      );
-      const { DatabaseConnection } = await import(
-        "../database/workspace-schema"
-      );
+      const { getMaxTrackingValue } =
+        await import("../services/destination-writer.service");
+      const { DatabaseConnection } =
+        await import("../database/workspace-schema");
       const destConn = await DatabaseConnection.findById(
         tableDestination.connectionId,
       );
@@ -1588,7 +1586,7 @@ export async function performSync(
   );
   const syncMode = isIncremental ? "incremental" : "full";
   logger?.log("debug", `Sync mode determined as: ${syncMode}`);
-  let db: Db | null = null;
+  let db: Db | null;
 
   try {
     // Validate configuration

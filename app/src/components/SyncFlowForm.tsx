@@ -40,7 +40,7 @@ import {
   ContentCopy as CopyIcon,
   DataObject as DataIcon,
   Delete as DeleteIcon,
-  ErrorOutline as ErrorOutlineIcon,
+  ErrorOutlined as ErrorOutlineIcon,
   ExpandMore as ExpandMoreIcon,
   NavigateNext as NextIcon,
   Save as SaveIcon,
@@ -1247,7 +1247,12 @@ export function SyncFlowForm({
       )}
       <Box>
         <Typography variant="subtitle2">{STEPS[stepIndex].label}</Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {STEPS[stepIndex].description}
         </Typography>
       </Box>
@@ -1434,7 +1439,12 @@ export function SyncFlowForm({
                   />
 
                   {isNewMode && onSwitchToDbSync && (
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                      }}
+                    >
                       Syncing from a database query instead?{" "}
                       <Button size="small" onClick={onSwitchToDbSync}>
                         Use a database connection
@@ -1964,34 +1974,74 @@ export function SyncFlowForm({
                                 );
                               }}
                             />
-                            <Typography variant="caption" fontWeight="bold">
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                fontWeight: "bold",
+                              }}
+                            >
                               Entity{layoutMode !== "none" ? " Table" : ""}
                             </Typography>
-                            <Typography variant="caption" fontWeight="bold">
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                fontWeight: "bold",
+                              }}
+                            >
                               Primary Key
                             </Typography>
-                            <Typography variant="caption" fontWeight="bold">
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                fontWeight: "bold",
+                              }}
+                            >
                               Sync
                             </Typography>
                             {layoutMode === "partition" && (
                               <>
-                                <Typography variant="caption" fontWeight="bold">
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontWeight: "bold",
+                                  }}
+                                >
                                   Partition Field
                                 </Typography>
-                                <Typography variant="caption" fontWeight="bold">
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontWeight: "bold",
+                                  }}
+                                >
                                   Granularity
                                 </Typography>
-                                <Typography variant="caption" fontWeight="bold">
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontWeight: "bold",
+                                  }}
+                                >
                                   Cluster Fields
                                 </Typography>
                               </>
                             )}
                             {layoutMode === "index" && (
                               <>
-                                <Typography variant="caption" fontWeight="bold">
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontWeight: "bold",
+                                  }}
+                                >
                                   Time Field (indexed)
                                 </Typography>
-                                <Typography variant="caption" fontWeight="bold">
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontWeight: "bold",
+                                  }}
+                                >
                                   Indexed Fields
                                 </Typography>
                               </>
@@ -2063,8 +2113,10 @@ export function SyncFlowForm({
                                 >
                                   <Typography
                                     variant="caption"
-                                    color="text.secondary"
-                                    sx={{ fontFamily: "monospace" }}
+                                    sx={{
+                                      color: "text.secondary",
+                                      fontFamily: "monospace",
+                                    }}
                                   >
                                     {keyColumns.join(", ")}
                                   </Typography>
@@ -2089,7 +2141,9 @@ export function SyncFlowForm({
                                 ) : (
                                   <Typography
                                     variant="caption"
-                                    color="text.secondary"
+                                    sx={{
+                                      color: "text.secondary",
+                                    }}
                                   >
                                     —
                                   </Typography>
@@ -2278,7 +2332,9 @@ export function SyncFlowForm({
                                 </Typography>
                                 <Typography
                                   variant="caption"
-                                  color="text.secondary"
+                                  sx={{
+                                    color: "text.secondary",
+                                  }}
                                 >
                                   Poll the source on a cron cadence.
                                 </Typography>
@@ -2397,7 +2453,9 @@ export function SyncFlowForm({
                                 </Typography>
                                 <Typography
                                   variant="caption"
-                                  color="text.secondary"
+                                  sx={{
+                                    color: "text.secondary",
+                                  }}
                                 >
                                   Receive pushed changes in real time
                                   {connectorSupportsWebhook
@@ -2452,20 +2510,22 @@ export function SyncFlowForm({
                                   label="Webhook URL"
                                   fullWidth
                                   size="small"
-                                  InputProps={{
-                                    readOnly: true,
-                                    endAdornment: (
-                                      <Button
-                                        size="small"
-                                        onClick={() =>
-                                          navigator.clipboard.writeText(
-                                            webhookUrl,
-                                          )
-                                        }
-                                      >
-                                        <CopyIcon fontSize="small" />
-                                      </Button>
-                                    ),
+                                  slotProps={{
+                                    input: {
+                                      readOnly: true,
+                                      endAdornment: (
+                                        <Button
+                                          size="small"
+                                          onClick={() =>
+                                            navigator.clipboard.writeText(
+                                              webhookUrl,
+                                            )
+                                          }
+                                        >
+                                          <CopyIcon fontSize="small" />
+                                        </Button>
+                                      ),
+                                    },
                                   }}
                                 />
                               )}
@@ -2548,7 +2608,9 @@ export function SyncFlowForm({
                                 </Typography>
                                 <Typography
                                   variant="caption"
-                                  color="text.secondary"
+                                  sx={{
+                                    color: "text.secondary",
+                                  }}
                                 >
                                   {reconcileDescription}
                                   {showScheduleTrigger &&

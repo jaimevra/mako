@@ -134,7 +134,9 @@ export const appsBindingSchedulerFunction = inngest.createFunction(
         .lean();
       const withRow = new Set(rows.map(r => r._id.toString()));
       return entries.filter(e => withRow.has(e.appId));
-    })) as Array<Pick<IAppIndexEntry, "workspaceId" | "appId" | "schedules">>;
+    })) as unknown as Array<
+      Pick<IAppIndexEntry, "workspaceId" | "appId" | "schedules">
+    >;
 
     const due = await step.run("find-due-bindings", async () => {
       const out: MaterializeEventData[] = [];

@@ -388,9 +388,9 @@ export const StreamingToolCard = React.memo(
     // for collapsed cards without building the (potentially huge) body strings.
     const hasCode = Boolean(
       bodyPreview?.content ||
-        (typeof rawContent === "string"
-          ? rawContent.length > 0
-          : rawContent != null),
+      (typeof rawContent === "string"
+        ? rawContent.length > 0
+        : rawContent != null),
     );
     const hasOutput = (isDone || isError) && hasDisplayableOutput(output);
 

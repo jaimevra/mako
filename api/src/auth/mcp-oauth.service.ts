@@ -248,7 +248,7 @@ export async function exchangeAuthorizationCode(input: {
       expiresAt: { $gt: new Date() },
     },
     { $set: { usedAt: new Date() } },
-    { new: true },
+    { returnDocument: "after" },
   );
   if (!record) throw new Error("invalid_grant: unknown or expired code");
   if (record.clientId !== input.clientId) {
@@ -296,7 +296,7 @@ export async function refreshAccessToken(input: {
       },
       $unset: { refreshExpiresAt: "" },
     },
-    { new: true },
+    { returnDocument: "after" },
   );
   if (!record) throw new Error("invalid_grant: unknown or expired token");
   return {

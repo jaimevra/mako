@@ -37,11 +37,7 @@ import { formatRelativeTimeCompact } from "../utils/relative-time";
  */
 
 export type MaterializationBuildStatus =
-  | "missing"
-  | "queued"
-  | "building"
-  | "ready"
-  | "error";
+  "missing" | "queued" | "building" | "ready" | "error";
 
 /** Normalized history entry rendered in the history popover. */
 export interface MaterializationHistoryItem {
@@ -293,7 +289,12 @@ export default function DataSourceMaterializationControls({
             Materialization history
           </Typography>
           {history.length === 0 ? (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               No runs yet.
             </Typography>
           ) : (
@@ -324,12 +325,22 @@ export default function DataSourceMaterializationControls({
                       {new Date(run.at).toLocaleString()}
                     </Typography>
                     {run.status === "ready" && run.rowCount != null && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         {run.rowCount.toLocaleString()} rows
                       </Typography>
                     )}
                     {durationMs != null && durationMs >= 0 && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: "text.secondary",
+                        }}
+                      >
                         {(durationMs / 1000).toFixed(1)}s
                       </Typography>
                     )}

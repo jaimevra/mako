@@ -14,7 +14,9 @@ import { ObjectId } from "mongodb";
 import {
   streamText,
   convertToModelMessages,
-  stepCountIs,
+  createUIMessageStreamResponse,
+  isStepCount,
+  toUIMessageStream,
   type UIMessage,
 } from "ai";
 import {
@@ -27,10 +29,8 @@ import {
   describeStreamError,
 } from "../agent-lib/stream-error";
 import { repairStringifiedToolInputs } from "../agent-lib/tool-input-repair";
-import {
-  propagateAttributes,
-  updateActiveObservation,
-} from "@langfuse/tracing";
+import { withToolFailureObservation } from "../agent-lib/tool-failure-observation";
+import { propagateAttributes } from "@langfuse/tracing";
 import {
   sanitizeToolFailureMessage,
   toolFailureFromOutput,
@@ -371,7 +371,7 @@ agentRoutes.openapi(
     // actorId for API-key access where no user email is available.
     const actorEmail = user?.email;
 
-    let body: Record<string, unknown> = {};
+    let body: Record<string, unknown>;
     try {
       body = await c.req.json();
     } catch (e) {
@@ -454,12 +454,7 @@ agentRoutes.openapi(
       agentId?: string;
       activeView?: "console" | "dashboard" | "flow-editor" | "empty";
       activeExplorer?:
-        | "databases"
-        | "consoles"
-        | "connectors"
-        | "flows"
-        | "dashboards"
-        | null;
+        "databases" | "consoles" | "connectors" | "flows" | "dashboards" | null;
       tabKind?: string;
       flowType?: string;
       flowFormState?: Record<string, unknown>;
@@ -915,7 +910,7 @@ agentRoutes.openapi(
     // replayed on every later step and turn, so one oversized output is
     // re-billed many times. Per-tool caps sit below this; it catches the
     // tool nobody capped yet.
-    tools = withToolOutputBackstop(tools);
+    tools = withToolOutputBackstop(withToolFailureObservation(tools));
 
     const modelDef = await getModelById(resolvedModelId);
     // Self-heal wrapper: if the catalog still classifies this model as manual
@@ -1125,6 +1120,13 @@ agentRoutes.openapi(
           `model:${resolvedModelId}`,
           `view:${activeView ?? "unknown"}`,
         ],
+        metadata: {
+          workspaceId,
+          chatId,
+          agentId: resolvedAgentId,
+          modelId: resolvedModelId,
+          invocationType: "chat",
+        },
       },
       async () => {
         /**
@@ -1163,7 +1165,7 @@ agentRoutes.openapi(
 
           const result = streamText({
             model,
-            system: systemPrompt,
+            instructions: systemPrompt,
             messages: modelMessages,
             tools,
             ...(prepareStep
@@ -1173,25 +1175,20 @@ agentRoutes.openapi(
                   >[0]["prepareStep"],
                 }
               : {}),
-            stopWhen: stepCountIs(MAX_STEPS),
+            stopWhen: isStepCount(MAX_STEPS),
             // Deterministic fix-up for models that emit tool args with nested
             // values JSON-stringified (e.g. an array param as "[\"...\"]"),
             // which otherwise fail schema validation and dead-end the tool
             // call. See agent-lib/tool-input-repair.ts.
-            experimental_repairToolCall: repairStringifiedToolInputs,
-            experimental_onToolCallFinish(event) {
-              const failure = event.success
-                ? toolFailureFromOutput(event.output)
-                : toolFailureFromThrown(event.error);
+            repairToolCall: repairStringifiedToolInputs,
+            // The Langfuse span is marked by withToolFailureObservation; this
+            // callback runs after the tool span's context has exited.
+            onToolExecutionEnd(event) {
+              const failure =
+                event.toolOutput.type === "tool-error"
+                  ? toolFailureFromThrown(event.toolOutput.error)
+                  : toolFailureFromOutput(event.toolOutput.output);
               if (!failure) return;
-
-              // A resolved `{ success: false }` is successful JavaScript to
-              // the AI SDK. Correct the active tool span so Langfuse filters
-              // reflect the domain result too.
-              updateActiveObservation(
-                { level: "ERROR", statusMessage: failure.message },
-                { asType: "tool" },
-              );
               logger.error("Agent tool call failed", {
                 workspaceId,
                 chatId,
@@ -1201,7 +1198,7 @@ agentRoutes.openapi(
                 toolCallId: event.toolCall.toolCallId,
                 toolErrorMessage: failure.message,
                 toolErrorCode: failure.code,
-                durationMs: event.durationMs,
+                durationMs: event.toolExecutionMs,
                 toolExecution: "server",
                 error: {
                   name: "ToolExecutionError",
@@ -1213,17 +1210,7 @@ agentRoutes.openapi(
             providerOptions,
             headers: buildPromptCacheHeaders(chatId),
             abortSignal: turnSignal,
-            experimental_telemetry: {
-              isEnabled: true,
-              functionId: `agent-chat:${resolvedAgentId}`,
-              metadata: {
-                workspaceId,
-                chatId,
-                agentId: resolvedAgentId,
-                modelId: resolvedModelId,
-                invocationType: "chat",
-              },
-            },
+            telemetry: { functionId: `agent-chat:${resolvedAgentId}` },
             // The AI SDK's default onError is a bare console.error(error) —
             // unstructured and without any request context, which made
             // provider-scoped gateway failures (e.g. a 401 for one provider
@@ -1241,7 +1228,7 @@ agentRoutes.openapi(
                 error,
               });
             },
-            onStepFinish({ toolCalls }: { toolCalls?: Array<unknown> }) {
+            onStepEnd({ toolCalls }: { toolCalls?: Array<unknown> }) {
               stepsCompleted += 1;
 
               logger.debug("Step finished", {
@@ -1259,9 +1246,9 @@ agentRoutes.openapi(
           });
 
           // Drain the stream server-side so generation runs to completion and the
-          // onFinish handler below always fires — even when the client disconnects
+          // onEnd handler below always fires — even when the client disconnects
           // (network drop, tab close) or aborts via the Stop button. Without this the
-          // HTTP response stops being pulled on disconnect, onFinish never runs, and
+          // HTTP response stops being pulled on disconnect, onEnd never runs, and
           // the entire assistant turn (and any tool work) is lost. Disconnects no
           // longer abort the turn (turnSignal only fires via the explicit stop
           // endpoint); the resumable stream below lets clients reattach mid-turn.
@@ -1272,61 +1259,343 @@ agentRoutes.openapi(
 
           // Return native AI SDK UI message stream response (for useChat compatibility)
           // Using AI SDK best practice: save once at the end with all messages
-          const streamResponse = result.toUIMessageStreamResponse({
-            originalMessages: segmentUiMessages,
-            generateMessageId: () => new ObjectId().toString(),
-            // Per-response cost for the chat UI: on the finish part, price the
-            // segment's total usage with the prefetched gateway pricing. This
-            // lands in `message.metadata` client-side and survives resumable-
-            // stream replay. (Authoritative billing still happens in onFinish
-            // via computeInvocationCost, which prices per-step models; this
-            // display value prices totals at the resolved model — the two only
-            // diverge on multi-model turns.)
-            messageMetadata: ({ part }) => {
-              if (part.type !== "finish") return undefined;
-              const usage = part.totalUsage;
-              const tokens = {
-                inputTokens: toNum(usage?.inputTokens),
-                outputTokens: toNum(usage?.outputTokens),
-                cacheReadTokens: toNum(
-                  usage?.inputTokenDetails?.cacheReadTokens,
-                ),
-                cacheWriteTokens: toNum(
-                  usage?.inputTokenDetails?.cacheWriteTokens,
-                ),
-                reasoningTokens: toNum(
-                  usage?.outputTokenDetails?.reasoningTokens,
-                ),
-              };
-              const costUsd =
-                metadataPricingRows.length > 0
-                  ? computeCostFromTokens(tokens, metadataPricingRows)
-                  : undefined;
-              // Cache and reasoning counts ride along so the client's session
-              // total can break them out live. They are SUBSETS (cache of
-              // input, reasoning of output) — the client must not add them on
-              // top, and `totalTokens` deliberately excludes them.
-              return {
-                costUsd,
-                modelId: resolvedModelId,
-                inputTokens: tokens.inputTokens,
-                outputTokens: tokens.outputTokens,
-                cacheReadTokens: tokens.cacheReadTokens,
-                cacheWriteTokens: tokens.cacheWriteTokens,
-                reasoningTokens: tokens.reasoningTokens,
-              };
-            },
-            // Replace the SDK's raw error text (for gateway auth failures a
-            // misleading "configure AI_GATEWAY_API_KEY" message) with the
-            // structured `{ code, message, ... }` JSON envelope. The client
-            // treats JSON errors with a `code` as terminal server errors:
-            // it renders `message` immediately instead of burning resume
-            // retries on a turn that is already dead.
-            onError: (error: unknown) =>
-              buildClientStreamErrorPayload(error, resolvedModelId),
-            // Forward reasoning tokens from models that support extended thinking
-            // (e.g., Claude claude-3-7-sonnet-20250219, DeepSeek deepseek-r1)
-            sendReasoning: true,
+          const streamResponse = createUIMessageStreamResponse({
+            stream: toUIMessageStream({
+              stream: result.stream,
+              tools,
+              originalMessages: segmentUiMessages,
+              generateMessageId: () => new ObjectId().toString(),
+              // Per-response cost for the chat UI: on the finish part, price the
+              // segment's total usage with the prefetched gateway pricing. This
+              // lands in `message.metadata` client-side and survives resumable-
+              // stream replay. (Authoritative billing still happens in onEnd
+              // via computeInvocationCost, which prices per-step models; this
+              // display value prices totals at the resolved model — the two only
+              // diverge on multi-model turns.)
+              messageMetadata: ({ part }) => {
+                if (part.type !== "finish") return undefined;
+                const usage = part.totalUsage;
+                const tokens = {
+                  inputTokens: toNum(usage?.inputTokens),
+                  outputTokens: toNum(usage?.outputTokens),
+                  cacheReadTokens: toNum(
+                    usage?.inputTokenDetails?.cacheReadTokens,
+                  ),
+                  cacheWriteTokens: toNum(
+                    usage?.inputTokenDetails?.cacheWriteTokens,
+                  ),
+                  reasoningTokens: toNum(
+                    usage?.outputTokenDetails?.reasoningTokens,
+                  ),
+                };
+                const costUsd =
+                  metadataPricingRows.length > 0
+                    ? computeCostFromTokens(tokens, metadataPricingRows)
+                    : undefined;
+                // Cache and reasoning counts ride along so the client's session
+                // total can break them out live. They are SUBSETS (cache of
+                // input, reasoning of output) — the client must not add them on
+                // top, and `totalTokens` deliberately excludes them.
+                return {
+                  costUsd,
+                  modelId: resolvedModelId,
+                  inputTokens: tokens.inputTokens,
+                  outputTokens: tokens.outputTokens,
+                  cacheReadTokens: tokens.cacheReadTokens,
+                  cacheWriteTokens: tokens.cacheWriteTokens,
+                  reasoningTokens: tokens.reasoningTokens,
+                };
+              },
+              // Replace the SDK's raw error text (for gateway auth failures a
+              // misleading "configure AI_GATEWAY_API_KEY" message) with the
+              // structured `{ code, message, ... }` JSON envelope. The client
+              // treats JSON errors with a `code` as terminal server errors:
+              // it renders `message` immediately instead of burning resume
+              // retries on a turn that is already dead.
+              onError: (error: unknown) =>
+                buildClientStreamErrorPayload(error, resolvedModelId),
+              // Forward reasoning tokens from models that support extended thinking
+              // (e.g., Claude claude-3-7-sonnet-20250219, DeepSeek deepseek-r1)
+              sendReasoning: true,
+              onEnd: ({ messages: allMessages, isAborted }) => {
+                // Run finalization in the background so it does not block the UI
+                // message stream from closing. The AI SDK awaits onEnd inside the
+                // stream's flush(), and useChat only fires the tool-result auto-resume
+                // once the stream closes — so any slow work here (cost computation,
+                // saveChat, etc.) is serialized into the user-perceived latency of
+                // every client-side tool round-trip, making fast tools (e.g. an
+                // instant modify_console patch) appear frozen. See
+                // scheduleChatFinalization above.
+                scheduleChatFinalization(chatId, async () => {
+                  if (requestExecutionIds.size > 0) {
+                    await cancelRegisteredExecutions();
+                    requestExecutionIds.clear();
+                  }
+                  const durationMs = Date.now() - startTime;
+
+                  // Apps (Cursor-cloud model): turn the WIP this turn's apps
+                  // tools produced into one commit per turn, scoped to the app
+                  // folders THIS chat actually wrote to — the sandbox is shared
+                  // across the user's chats, so an unscoped commit would sweep
+                  // a concurrent chat's in-flight work on another app. No-op
+                  // when the turn touched no app; never throws.
+                  if (!isAborted && appsTouchedPaths.size > 0) {
+                    try {
+                      const lastUserText = [...allMessages]
+                        .reverse()
+                        .find(m => m.role === "user")
+                        ?.parts?.filter(
+                          (p): p is { type: "text"; text: string } =>
+                            (p as { type?: string }).type === "text",
+                        )
+                        .map(p => p.text)
+                        .join(" ");
+                      await commitAgentTurn(
+                        workspaceId,
+                        actorId,
+                        lastUserText,
+                        [...appsTouchedPaths],
+                      );
+                    } catch (err) {
+                      logger.warn("Apps turn commit failed", { error: err });
+                    }
+                  }
+
+                  // Extract detailed per-step usage from result.steps
+                  let steps: Array<Record<string, unknown>> = [];
+                  try {
+                    steps = (await result.steps) as unknown as Array<
+                      Record<string, unknown>
+                    >;
+                  } catch (err) {
+                    logger.warn("Failed to get steps from result", {
+                      error: err,
+                    });
+                  }
+
+                  // Aggregate detailed token usage across all steps
+                  let inputTokens = 0;
+                  let outputTokens = 0;
+                  let cacheReadTokens = 0;
+                  let cacheWriteTokens = 0;
+                  let reasoningTokens = 0;
+
+                  let stepDetails: Array<{
+                    modelId: string;
+                    inputTokens: number;
+                    outputTokens: number;
+                    cacheReadTokens: number;
+                    cacheWriteTokens: number;
+                    reasoningTokens: number;
+                    costUsd: number;
+                  }> = [];
+
+                  for (const step of steps) {
+                    const usage = step.usage as
+                      Record<string, unknown> | undefined;
+                    if (!usage) continue;
+
+                    const { inputTokens: sInput, outputTokens: sOutput } =
+                      extractTokenCounts(usage);
+
+                    const details = usage.inputTokenDetails as
+                      Record<string, unknown> | undefined;
+                    const outDetails = usage.outputTokenDetails as
+                      Record<string, unknown> | undefined;
+
+                    const sCacheRead = toNum(details?.cacheReadTokens);
+                    const sCacheWrite = toNum(details?.cacheWriteTokens);
+                    const sReasoning = toNum(outDetails?.reasoningTokens);
+
+                    inputTokens += sInput;
+                    outputTokens += sOutput;
+                    cacheReadTokens += sCacheRead;
+                    cacheWriteTokens += sCacheWrite;
+                    reasoningTokens += sReasoning;
+
+                    const stepModelId = (
+                      step.response as Record<string, unknown> | undefined
+                    )?.modelId as string | undefined;
+
+                    stepDetails.push({
+                      modelId: stepModelId || resolvedModelId,
+                      inputTokens: sInput,
+                      outputTokens: sOutput,
+                      cacheReadTokens: sCacheRead,
+                      cacheWriteTokens: sCacheWrite,
+                      reasoningTokens: sReasoning,
+                      costUsd: 0, // filled in by cost calculator
+                    });
+                  }
+
+                  // Fallback to top-level usage if no steps produced usage data
+                  if (stepDetails.length === 0) {
+                    try {
+                      const usage = (await result.usage) as unknown as Record<
+                        string,
+                        unknown
+                      >;
+                      const extracted = extractTokenCounts(usage ?? {});
+                      inputTokens = extracted.inputTokens;
+                      outputTokens = extracted.outputTokens;
+
+                      const details = usage?.inputTokenDetails as
+                        Record<string, unknown> | undefined;
+                      const outDetails = usage?.outputTokenDetails as
+                        Record<string, unknown> | undefined;
+                      cacheReadTokens = toNum(details?.cacheReadTokens);
+                      cacheWriteTokens = toNum(details?.cacheWriteTokens);
+                      reasoningTokens = toNum(outDetails?.reasoningTokens);
+                    } catch (err) {
+                      logger.warn("Failed to get usage from model", {
+                        error: err,
+                      });
+                    }
+                  }
+
+                  const totalTokens = inputTokens + outputTokens;
+
+                  logger.info(
+                    isAborted
+                      ? "Stream aborted, saving partial chat"
+                      : "Stream finished, saving chat",
+                    {
+                      chatId,
+                      isAborted,
+                      messageCount: allMessages.length,
+                      inputTokens,
+                      outputTokens,
+                      cacheReadTokens,
+                      totalTokens,
+                      durationMs,
+                    },
+                  );
+
+                  // Compute cost before saving so both trackUsage and saveChat receive it
+                  let costUsd: number | undefined;
+                  try {
+                    const costResult = await computeInvocationCost({
+                      modelId: resolvedModelId,
+                      inputTokens,
+                      outputTokens,
+                      cacheReadTokens,
+                      cacheWriteTokens,
+                      reasoningTokens,
+                      steps: stepDetails,
+                    });
+                    costUsd = costResult.totalCostUsd;
+                    if (costResult.steps) {
+                      stepDetails = costResult.steps;
+                    }
+                  } catch (err) {
+                    logger.warn("Failed to compute invocation cost", {
+                      error: err,
+                    });
+                  }
+
+                  // Track usage (fire-and-forget)
+                  void trackUsage({
+                    workspaceId,
+                    userId: actorId,
+                    chatId,
+                    invocationType: "chat",
+                    modelId: resolvedModelId,
+                    inputTokens,
+                    outputTokens,
+                    cacheReadTokens,
+                    cacheWriteTokens,
+                    reasoningTokens,
+                    totalTokens,
+                    steps: stepDetails,
+                    agentId: resolvedAgentId,
+                    durationMs,
+                    costUsd,
+                  }).catch(err =>
+                    logger.warn("Failed to track LLM usage", { error: err }),
+                  );
+
+                  try {
+                    await saveChat(chatId, workspaceId, actorId, allMessages, {
+                      promptTokens: inputTokens,
+                      completionTokens: outputTokens,
+                      totalTokens,
+                      cacheReadTokens,
+                      cacheWriteTokens,
+                      reasoningTokens,
+                      costUsd,
+                      model: resolvedModelId,
+                    });
+                  } catch (error) {
+                    logger.error("Error saving chat", { error });
+                  }
+
+                  // "No client attached" fallback: if this segment dead-ended on
+                  // client-only tool calls and no browser is attached, synthesize
+                  // the tool results and continue the turn server-side. When a
+                  // continuation starts it owns the resume pointer, so the clear
+                  // below is skipped.
+                  let continued = false;
+                  try {
+                    continued = await maybeContinueStrandedTurn(
+                      allMessages,
+                      isAborted,
+                      continuationDepth,
+                      turnStreamId,
+                    );
+                  } catch (error) {
+                    logger.warn("Stranded-turn continuation failed", {
+                      error,
+                      chatId,
+                    });
+                  }
+
+                  // Turn is finalized: drop the resume pointer so reconnecting
+                  // clients load the saved chat instead of reattaching. Guarded on
+                  // the streamId so a newer turn's pointer is never clobbered.
+                  if (!continued && turnStreamId) {
+                    clearActiveGeneration(chatId, turnStreamId);
+                    try {
+                      await Chat.updateOne(
+                        {
+                          _id: new ObjectId(chatId),
+                          activeStreamId: turnStreamId,
+                        },
+                        { $set: { activeStreamId: null } },
+                      );
+                    } catch (error) {
+                      logger.warn("Failed to clear activeStreamId", {
+                        error,
+                        chatId,
+                      });
+                    }
+                    publishRealtimeEvent(workspaceId, {
+                      type: "chat.activity",
+                      chatId,
+                      state: "idle",
+                    });
+                  }
+
+                  // The turn's context (what was asked, what came back) only
+                  // exists here; it rides along on the derivation request and
+                  // pre-empts the push-driven baseline (apps.md §16.4).
+                  if (isDescriptionGenAvailable()) {
+                    const consoleContexts =
+                      extractConsoleContextFromMessages(allMessages);
+                    for (const [consoleId, ctx] of consoleContexts) {
+                      requestConsoleDescription({
+                        workspaceId,
+                        consoleId,
+                        context: {
+                          conversationExcerpt: ctx.conversationExcerpt,
+                          resultSample: ctx.resultSample,
+                        },
+                        tracking: { userId: actorId, userEmail: actorEmail },
+                      });
+                    }
+                  }
+                });
+              },
+            }),
             // Buffer a tee'd copy of the SSE stream so detached clients (refresh,
             // other devices, additional viewers) can reattach via
             // GET /chat/:chatId/stream while the turn is still generating. The
@@ -1398,286 +1667,6 @@ agentRoutes.openapi(
                 });
                 reportPubSubFailure("resumable-stream-setup", error);
               }
-            },
-            onFinish: ({ messages: allMessages, isAborted }) => {
-              // Run finalization in the background so it does not block the UI
-              // message stream from closing. The AI SDK awaits onFinish inside the
-              // stream's flush(), and useChat only fires the tool-result auto-resume
-              // once the stream closes — so any slow work here (cost computation,
-              // saveChat, etc.) is serialized into the user-perceived latency of
-              // every client-side tool round-trip, making fast tools (e.g. an
-              // instant modify_console patch) appear frozen. See
-              // scheduleChatFinalization above.
-              scheduleChatFinalization(chatId, async () => {
-                if (requestExecutionIds.size > 0) {
-                  await cancelRegisteredExecutions();
-                  requestExecutionIds.clear();
-                }
-                const durationMs = Date.now() - startTime;
-
-                // Apps (Cursor-cloud model): turn the WIP this turn's apps
-                // tools produced into one commit per turn, scoped to the app
-                // folders THIS chat actually wrote to — the sandbox is shared
-                // across the user's chats, so an unscoped commit would sweep
-                // a concurrent chat's in-flight work on another app. No-op
-                // when the turn touched no app; never throws.
-                if (!isAborted && appsTouchedPaths.size > 0) {
-                  try {
-                    const lastUserText = [...allMessages]
-                      .reverse()
-                      .find(m => m.role === "user")
-                      ?.parts?.filter(
-                        (p): p is { type: "text"; text: string } =>
-                          (p as { type?: string }).type === "text",
-                      )
-                      .map(p => p.text)
-                      .join(" ");
-                    await commitAgentTurn(workspaceId, actorId, lastUserText, [
-                      ...appsTouchedPaths,
-                    ]);
-                  } catch (err) {
-                    logger.warn("Apps turn commit failed", { error: err });
-                  }
-                }
-
-                // Extract detailed per-step usage from result.steps
-                let steps: Array<Record<string, unknown>> = [];
-                try {
-                  steps = (await result.steps) as unknown as Array<
-                    Record<string, unknown>
-                  >;
-                } catch (err) {
-                  logger.warn("Failed to get steps from result", {
-                    error: err,
-                  });
-                }
-
-                // Aggregate detailed token usage across all steps
-                let inputTokens = 0;
-                let outputTokens = 0;
-                let cacheReadTokens = 0;
-                let cacheWriteTokens = 0;
-                let reasoningTokens = 0;
-
-                let stepDetails: Array<{
-                  modelId: string;
-                  inputTokens: number;
-                  outputTokens: number;
-                  cacheReadTokens: number;
-                  cacheWriteTokens: number;
-                  reasoningTokens: number;
-                  costUsd: number;
-                }> = [];
-
-                for (const step of steps) {
-                  const usage = step.usage as
-                    | Record<string, unknown>
-                    | undefined;
-                  if (!usage) continue;
-
-                  const { inputTokens: sInput, outputTokens: sOutput } =
-                    extractTokenCounts(usage);
-
-                  const details = usage.inputTokenDetails as
-                    | Record<string, unknown>
-                    | undefined;
-                  const outDetails = usage.outputTokenDetails as
-                    | Record<string, unknown>
-                    | undefined;
-
-                  const sCacheRead = toNum(details?.cacheReadTokens);
-                  const sCacheWrite = toNum(details?.cacheWriteTokens);
-                  const sReasoning = toNum(outDetails?.reasoningTokens);
-
-                  inputTokens += sInput;
-                  outputTokens += sOutput;
-                  cacheReadTokens += sCacheRead;
-                  cacheWriteTokens += sCacheWrite;
-                  reasoningTokens += sReasoning;
-
-                  const stepModelId = (
-                    step.response as Record<string, unknown> | undefined
-                  )?.modelId as string | undefined;
-
-                  stepDetails.push({
-                    modelId: stepModelId || resolvedModelId,
-                    inputTokens: sInput,
-                    outputTokens: sOutput,
-                    cacheReadTokens: sCacheRead,
-                    cacheWriteTokens: sCacheWrite,
-                    reasoningTokens: sReasoning,
-                    costUsd: 0, // filled in by cost calculator
-                  });
-                }
-
-                // Fallback to top-level usage if no steps produced usage data
-                if (stepDetails.length === 0) {
-                  try {
-                    const usage = (await result.usage) as unknown as Record<
-                      string,
-                      unknown
-                    >;
-                    const extracted = extractTokenCounts(usage ?? {});
-                    inputTokens = extracted.inputTokens;
-                    outputTokens = extracted.outputTokens;
-
-                    const details = usage?.inputTokenDetails as
-                      | Record<string, unknown>
-                      | undefined;
-                    const outDetails = usage?.outputTokenDetails as
-                      | Record<string, unknown>
-                      | undefined;
-                    cacheReadTokens = toNum(details?.cacheReadTokens);
-                    cacheWriteTokens = toNum(details?.cacheWriteTokens);
-                    reasoningTokens = toNum(outDetails?.reasoningTokens);
-                  } catch (err) {
-                    logger.warn("Failed to get usage from model", {
-                      error: err,
-                    });
-                  }
-                }
-
-                const totalTokens = inputTokens + outputTokens;
-
-                logger.info(
-                  isAborted
-                    ? "Stream aborted, saving partial chat"
-                    : "Stream finished, saving chat",
-                  {
-                    chatId,
-                    isAborted,
-                    messageCount: allMessages.length,
-                    inputTokens,
-                    outputTokens,
-                    cacheReadTokens,
-                    totalTokens,
-                    durationMs,
-                  },
-                );
-
-                // Compute cost before saving so both trackUsage and saveChat receive it
-                let costUsd: number | undefined;
-                try {
-                  const costResult = await computeInvocationCost({
-                    modelId: resolvedModelId,
-                    inputTokens,
-                    outputTokens,
-                    cacheReadTokens,
-                    cacheWriteTokens,
-                    reasoningTokens,
-                    steps: stepDetails,
-                  });
-                  costUsd = costResult.totalCostUsd;
-                  if (costResult.steps) {
-                    stepDetails = costResult.steps;
-                  }
-                } catch (err) {
-                  logger.warn("Failed to compute invocation cost", {
-                    error: err,
-                  });
-                }
-
-                // Track usage (fire-and-forget)
-                void trackUsage({
-                  workspaceId,
-                  userId: actorId,
-                  chatId,
-                  invocationType: "chat",
-                  modelId: resolvedModelId,
-                  inputTokens,
-                  outputTokens,
-                  cacheReadTokens,
-                  cacheWriteTokens,
-                  reasoningTokens,
-                  totalTokens,
-                  steps: stepDetails,
-                  agentId: resolvedAgentId,
-                  durationMs,
-                  costUsd,
-                }).catch(err =>
-                  logger.warn("Failed to track LLM usage", { error: err }),
-                );
-
-                try {
-                  await saveChat(chatId, workspaceId, actorId, allMessages, {
-                    promptTokens: inputTokens,
-                    completionTokens: outputTokens,
-                    totalTokens,
-                    cacheReadTokens,
-                    cacheWriteTokens,
-                    reasoningTokens,
-                    costUsd,
-                    model: resolvedModelId,
-                  });
-                } catch (error) {
-                  logger.error("Error saving chat", { error });
-                }
-
-                // "No client attached" fallback: if this segment dead-ended on
-                // client-only tool calls and no browser is attached, synthesize
-                // the tool results and continue the turn server-side. When a
-                // continuation starts it owns the resume pointer, so the clear
-                // below is skipped.
-                let continued = false;
-                try {
-                  continued = await maybeContinueStrandedTurn(
-                    allMessages,
-                    isAborted,
-                    continuationDepth,
-                    turnStreamId,
-                  );
-                } catch (error) {
-                  logger.warn("Stranded-turn continuation failed", {
-                    error,
-                    chatId,
-                  });
-                }
-
-                // Turn is finalized: drop the resume pointer so reconnecting
-                // clients load the saved chat instead of reattaching. Guarded on
-                // the streamId so a newer turn's pointer is never clobbered.
-                if (!continued && turnStreamId) {
-                  clearActiveGeneration(chatId, turnStreamId);
-                  try {
-                    await Chat.updateOne(
-                      {
-                        _id: new ObjectId(chatId),
-                        activeStreamId: turnStreamId,
-                      },
-                      { $set: { activeStreamId: null } },
-                    );
-                  } catch (error) {
-                    logger.warn("Failed to clear activeStreamId", {
-                      error,
-                      chatId,
-                    });
-                  }
-                  publishRealtimeEvent(workspaceId, {
-                    type: "chat.activity",
-                    chatId,
-                    state: "idle",
-                  });
-                }
-
-                // The turn's context (what was asked, what came back) only
-                // exists here; it rides along on the derivation request and
-                // pre-empts the push-driven baseline (apps.md §16.4).
-                if (isDescriptionGenAvailable()) {
-                  const consoleContexts =
-                    extractConsoleContextFromMessages(allMessages);
-                  for (const [consoleId, ctx] of consoleContexts) {
-                    requestConsoleDescription({
-                      workspaceId,
-                      consoleId,
-                      context: {
-                        conversationExcerpt: ctx.conversationExcerpt,
-                        resultSample: ctx.resultSample,
-                      },
-                      tracking: { userId: actorId, userEmail: actorEmail },
-                    });
-                  }
-                }
-              });
             },
           });
 

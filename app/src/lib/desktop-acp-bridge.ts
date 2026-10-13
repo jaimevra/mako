@@ -92,8 +92,7 @@ export async function completeDesktopHitlJob(
 ): Promise<void> {
   const pending = useDesktopHitlStore.getState().pending;
   let approvedGrantContext:
-    | { workspaceId: string; agentSessionId: string }
-    | undefined;
+    { workspaceId: string; agentSessionId: string } | undefined;
   if (
     pending?.jobId === jobId &&
     pending.toolName === "submit_plan" &&

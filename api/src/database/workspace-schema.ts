@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import { encryptString, decryptString } from "../services/crypto.service";
 import { loggers } from "../logging";
 import {
@@ -94,12 +94,7 @@ export interface IWorkspaceBilling {
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   subscriptionStatus:
-    | "active"
-    | "past_due"
-    | "canceled"
-    | "trialing"
-    | "incomplete"
-    | null;
+    "active" | "past_due" | "canceled" | "trialing" | "incomplete" | null;
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
   usageQuotaUsd: number;
@@ -617,10 +612,7 @@ export interface INotificationRule extends Document {
 }
 
 export type NotificationDeliveryStatus =
-  | "pending"
-  | "sent"
-  | "failed"
-  | "skipped";
+  "pending" | "sent" | "failed" | "skipped";
 
 export interface INotificationDelivery extends Document {
   _id: Types.ObjectId;
@@ -906,20 +898,11 @@ export type SyncEngine = "legacy" | "cdc";
 
 /** @deprecated Use StreamState + BackfillStatus instead */
 export type SyncState =
-  | "idle"
-  | "backfill"
-  | "catchup"
-  | "live"
-  | "paused"
-  | "degraded";
+  "idle" | "backfill" | "catchup" | "live" | "paused" | "degraded";
 
 export type StreamState = "idle" | "active" | "paused" | "error";
 export type BackfillStatus =
-  | "idle"
-  | "running"
-  | "paused"
-  | "completed"
-  | "error";
+  "idle" | "running" | "paused" | "completed" | "error";
 
 export interface ISyncStateMeta {
   lastEvent?: string;
@@ -1495,7 +1478,7 @@ const WorkspaceInviteSchema = new Schema<IWorkspaceInvite>({
     type: String,
     required: true,
     unique: true,
-    default: () => uuidv4().replace(/-/g, ""),
+    default: () => randomUUID().replace(/-/g, ""),
   },
   role: {
     type: String,
@@ -4730,11 +4713,7 @@ DbtJobSchema.index({ "scheduledRun.nextAt": 1, enabled: 1 }, { sparse: true });
 export const DbtJob = mongoose.model<IDbtJob>("DbtJob", DbtJobSchema);
 
 export type DbtRunStatus =
-  | "queued"
-  | "running"
-  | "success"
-  | "error"
-  | "cancelled";
+  "queued" | "running" | "success" | "error" | "cancelled";
 
 export interface IDbtRunLogLine {
   ts: Date;
@@ -5018,10 +4997,7 @@ export type McpAuthPerformer = "workspace" | "user";
 export type McpToolRestriction = "always" | "ask" | "block";
 export type McpWriteScope = "read" | "write_safe" | "write_destructive";
 export type McpServerStatus =
-  | "created"
-  | "awaiting_auth"
-  | "connected"
-  | "error";
+  "created" | "awaiting_auth" | "connected" | "error";
 
 export interface IMcpCachedTool {
   name: string;
@@ -5539,10 +5515,7 @@ export const AppProject = mongoose.model<IAppProject>(
  * own outcome already recorded.
  */
 export type AppDeployCommitState =
-  | "pending"
-  | "success"
-  | "failure"
-  | "superseded";
+  "pending" | "success" | "failure" | "superseded";
 
 export interface IAppDeployCommitStatus extends Document {
   workspaceId: Types.ObjectId;

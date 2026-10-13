@@ -10,6 +10,7 @@
  * `flow-sync.service.ts`. Runtime reads the derived row after comparing
  * `sourceBlobSha` to the blob at main.
  */
+import type { Types } from "mongoose";
 import { RepoRequiredError } from "../apps/config";
 import { loggers } from "../logging";
 import { authorForUser } from "../apps/workspace-consoles.service";
@@ -194,7 +195,7 @@ export async function exportWorkspaceFlows(
   const flows = await Flow.find({ workspaceId }).sort({ _id: 1 }).lean();
 
   const writes: Record<string, string> = {};
-  const shaBySlug = new Map<string, { id: unknown; sha: string }>();
+  const shaBySlug = new Map<string, { id: Types.ObjectId; sha: string }>();
   const failed: Array<{ slug: string; error: string }> = [];
   let skipped = 0;
 

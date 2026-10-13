@@ -29,9 +29,12 @@ export function LastRefreshedLabel({
     >
       <Typography
         variant="caption"
-        color="text.secondary"
         noWrap
-        sx={{ flexShrink: 0, mr: 0.5 }}
+        sx={{
+          color: "text.secondary",
+          flexShrink: 0,
+          mr: 0.5,
+        }}
       >
         Updated {label}
       </Typography>

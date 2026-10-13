@@ -483,6 +483,7 @@ export async function runDashboardDataSource(options: {
     if (!freshDs) {
       throw new Error(
         `Data source ${options.dataSourceId} not found after session recovery`,
+        { cause: error },
       );
     }
 

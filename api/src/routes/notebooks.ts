@@ -299,7 +299,7 @@ notebookRoutes.openapi(
     if (!artifact) {
       return c.json({ success: false, error: "Artifact not found" }, 404);
     }
-    return c.body(artifact.body, 200, {
+    return c.body(new Uint8Array(artifact.body), 200, {
       "Content-Type": artifact.contentType,
       "Cache-Control": "private, max-age=31536000, immutable",
     });
@@ -324,7 +324,7 @@ async function loadReadableNotebook(
   | { errorResponse: Response }
 > {
   const ws = workspaceId(c);
-  const id = c.req.param("id");
+  const id = c.req.param("id") as string;
   const userId = editorUserId(c);
   const access = await requireNotebookAccess(
     ws,
@@ -641,8 +641,7 @@ notebookRoutes.openapi(
       return c.json({ success: false, error: "clientId is required" }, 400);
     }
     const user = c.get("user") as
-      | { id?: unknown; email?: string; name?: string }
-      | undefined;
+      { id?: unknown; email?: string; name?: string } | undefined;
     publishRealtimeEvent(ws, {
       type: "notebook.presence",
       notebookId: id,

@@ -491,32 +491,37 @@ export async function finalizeCancelledDbtRun(
   fallbackCancelledBy?: string,
 ): Promise<void> {
   const _id = typeof runId === "string" ? new Types.ObjectId(runId) : runId;
-  await DbtRun.updateOne({ _id, status: { $in: ["queued", "running"] } }, [
-    {
-      $set: {
-        status: "cancelled",
-        completedAt: "$$NOW",
-        cancelledAt: { $ifNull: ["$cancelledAt", "$$NOW"] },
-        cancelledBy: {
-          $ifNull: ["$cancelledBy", fallbackCancelledBy ?? "user"],
-        },
-        error: { $ifNull: ["$error", "Cancelled"] },
-        durationMs: {
-          $cond: [
-            { $ifNull: ["$startedAt", false] },
-            {
-              $dateDiff: {
-                startDate: "$startedAt",
-                endDate: "$$NOW",
-                unit: "millisecond",
+  await DbtRun.updateOne(
+    { _id, status: { $in: ["queued", "running"] } },
+    [
+      {
+        $set: {
+          status: "cancelled",
+          completedAt: "$$NOW",
+          cancelledAt: { $ifNull: ["$cancelledAt", "$$NOW"] },
+          cancelledBy: {
+            $ifNull: ["$cancelledBy", fallbackCancelledBy ?? "user"],
+          },
+          error: { $ifNull: ["$error", "Cancelled"] },
+          durationMs: {
+            $cond: [
+              { $ifNull: ["$startedAt", false] },
+              {
+                $dateDiff: {
+                  startDate: "$startedAt",
+                  endDate: "$$NOW",
+                  unit: "millisecond",
+                },
               },
-            },
-            "$durationMs",
-          ],
+              "$durationMs",
+            ],
+          },
         },
       },
-    },
-  ]);
+    ],
+    // Mongoose 9 rejects pipeline updates unless they opt in.
+    { updatePipeline: true },
+  );
 }
 
 export interface DbtRunCancelResult {
@@ -581,7 +586,7 @@ export async function requestDbtRunCancel(params: {
         cancelledBy,
       },
     },
-    { new: true },
+    { returnDocument: "after" },
   )
     .select("status cancelledAt cancelledBy")
     .lean();
@@ -632,9 +637,8 @@ export async function requestDbtRunCancel(params: {
 /** Recompute a job's next scheduled run after a schedule edit. */
 export async function applyJobScheduleChange(job: IDbtJob): Promise<void> {
   if (job.schedule?.cron && job.enabled) {
-    const { getNextScheduledConsoleRunAt } = await import(
-      "../services/scheduled-query-schedule.service"
-    );
+    const { getNextScheduledConsoleRunAt } =
+      await import("../services/scheduled-query-schedule.service");
     const nextAt = getNextScheduledConsoleRunAt({
       cron: job.schedule.cron,
       timezone: job.schedule.timezone || "UTC",

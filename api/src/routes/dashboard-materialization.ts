@@ -115,7 +115,7 @@ function parseRangeHeader(rangeHeader: string, size: number) {
 app.use("*", unifiedAuthMiddleware);
 
 app.use("*", async (c: AuthenticatedContext, next) => {
-  const workspaceId = c.req.param("workspaceId");
+  const workspaceId = c.req.param("workspaceId") as string;
   if (!workspaceId) {
     return await next();
   }
@@ -156,8 +156,8 @@ app.use("*", async (c: AuthenticatedContext, next) => {
 });
 
 async function getScopedDashboardOrResponse(c: Context<AuthEnv>) {
-  const workspaceId = c.req.param("workspaceId");
-  const dashboardId = c.req.param("dashboardId");
+  const workspaceId = c.req.param("workspaceId") as string;
+  const dashboardId = c.req.param("dashboardId") as string;
   const dashboard = await getDashboardForMaterialization({
     workspaceId,
     dashboardId,
@@ -458,7 +458,7 @@ app.openapi(
       const run = await getMaterializationRunByRunId({
         workspaceId: dashboard.workspaceId.toString(),
         dashboardId: dashboard._id.toString(),
-        runId: c.req.param("runId"),
+        runId: c.req.param("runId") as string,
       });
 
       if (!run) {

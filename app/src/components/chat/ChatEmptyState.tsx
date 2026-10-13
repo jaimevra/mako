@@ -103,8 +103,11 @@ export const ChatEmptyState = React.memo(function ChatEmptyState({
             </Typography>
             <Typography
               variant="body2"
-              color="text.secondary"
-              sx={{ mt: 1, maxWidth: 360 }}
+              sx={{
+                color: "text.secondary",
+                mt: 1,
+                maxWidth: 360,
+              }}
             >
               Ask a question in plain English — Mako writes and runs the query
               for you.

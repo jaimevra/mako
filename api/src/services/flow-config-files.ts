@@ -28,7 +28,8 @@
  * it is not yet a trust boundary — block 3 hardens validation before
  * flipping direction.
  */
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
+import { loadYaml } from "../utils/yaml";
 
 // Type-only: the format layer must stay free of runtime imports so it can
 // be exercised without booting the git/mongo stack.
@@ -64,12 +65,13 @@ export interface FlowFileBackfillSchedule extends FlowFileSchedule {
 export interface FlowFile {
   name: string;
   type: "scheduled" | "webhook";
-  source: /**
-   * A source connection (a credential configured with a connector). On
-   * disk this is `source.connection_id`; `connector_id` is the older key
-   * and is still read.
-   */
-  | { type: "connector"; connectionId: string }
+  source:
+    /**
+     * A source connection (a credential configured with a connector). On
+     * disk this is `source.connection_id`; `connector_id` is the older key
+     * and is still read.
+     */
+    | { type: "connector"; connectionId: string }
     | {
         type: "database";
         connectionId?: string;
@@ -342,13 +344,12 @@ function backfillScheduleFrom(v: unknown): FlowFileBackfillSchedule | null {
  * no validator, because it certifies files the parser will reject.
  */
 export type FlowFileParse =
-  | { ok: true; file: FlowFile }
-  | { ok: false; reason: string };
+  { ok: true; file: FlowFile } | { ok: false; reason: string };
 
 export function parseFlowFileResult(contents: string): FlowFileParse {
   let raw: unknown;
   try {
-    raw = yaml.load(contents);
+    raw = loadYaml(contents);
   } catch (error) {
     return {
       ok: false,
@@ -405,8 +406,7 @@ export function parseFlowFileResult(contents: string): FlowFileParse {
           schema: str(tableDoc.schema),
           tableName: str(tableDoc.table_name),
           createIfNotExists: tableDoc.create_if_not_exists as
-            | boolean
-            | undefined,
+            boolean | undefined,
           partitioning: tableDoc.partitioning
             ? camelKeys(tableDoc.partitioning as Record<string, unknown>)
             : undefined,
