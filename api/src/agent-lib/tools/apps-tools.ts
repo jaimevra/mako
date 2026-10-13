@@ -170,7 +170,7 @@ const WORKFLOW_TOOLS: Record<string, string> = {
   glob: "Find files of a workflow by glob pattern (e.g. `**/*.ts`).",
   grep: "Search a workflow's files with a regex. Returns path:line:text matches.",
   write_file:
-    "Create or fully overwrite a file of a workflow in your checkout. Uncommitted until you commit. For small edits prefer workflow_edit_file.",
+    "Create or fully overwrite a file of a workflow in your checkout. Nothing is committed, at the end of the turn either, until workflow_commit. For small edits prefer workflow_edit_file.",
   edit_file:
     "Anchored string-replacement edit of a workflow's file. oldString must match exactly once unless replaceAll is set.",
   status:
@@ -217,9 +217,12 @@ function buildTools(
   const ensureActorWorktree = (project: IAppProject) =>
     ensureWorktree(project, actorId);
   // Every tool that can dirty the working copy records the app folder it
-  // wrote to; see AppsToolsOptions.touchedPaths for why.
-  const markTouched = (project: IAppProject) =>
-    touchedPaths?.add(appRootFor(project));
+  // wrote to; see AppsToolsOptions.touchedPaths for why. A workflow folder is
+  // left out: on main a commit is the deploy, so the end of a turn must not
+  // make one. Only workflow_commit does.
+  const markTouched = (project: IAppProject) => {
+    if (!workflowFolders.has(project)) touchedPaths?.add(appRootFor(project));
+  };
   // The branch is whatever the checkout is on — main by default, or wherever
   // the user (or this agent, via `git checkout` in app_bash) switched to.
   // Read it fresh per call; a cached value goes stale the moment anyone
@@ -529,7 +532,18 @@ function buildTools(
           };
         } catch (error) {
           logger.error("app_bash failed", { error, appId });
-          return { success: false, error: errorMessage(error) };
+          const message = errorMessage(error);
+          // The shell starts in the workflow's folder, which a new or deleted
+          // workflow does not have.
+          const noFolder =
+            workflowFolders.has(loaded.project) &&
+            /cwd '.*' does not exist/i.test(message);
+          return {
+            success: false,
+            error: noFolder
+              ? `Workflow "${workflowId}" has no folder: a new name gets one on its first workflow_write_file, and a deleted one is gone. Pass a workflow that exists and cd from there.`
+              : message,
+          };
         }
       },
     }),
