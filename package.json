@@ -83,7 +83,7 @@
     "node": ">=22.12.0"
   },
   "dependencies": {
-    "dotenv": "^16.3.1"
+    "dotenv": "^18.0.7"
   },
   "lint-staged": {
     "app/**/*.{ts,tsx}": [
@@ -102,14 +102,14 @@
     ]
   },
   "devDependencies": {
-    "@types/node": "^20.10.4",
-    "concurrently": "^8.2.2",
-    "eslint": "^8.55.0",
+    "@types/node": "^24.19.2",
+    "concurrently": "^10.0.6",
+    "eslint": "^10.12.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.2.7",
-    "prettier": "^3.1.0",
-    "tsx": "^4.19.4",
-    "typescript": "^5.3.3",
-    "wrangler": "^3.99.0"
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.149.0"
   }
 }
