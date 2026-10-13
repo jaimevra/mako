@@ -14,6 +14,7 @@ import { eyesShotKey } from "../apps/eyes.service";
 import { Types } from "mongoose";
 import {
   AppProject,
+  Chat,
   GitHubInstallation,
   type IAppProject,
 } from "../database/workspace-schema";
@@ -140,6 +141,7 @@ import {
   type ViewerIdentity,
 } from "../apps/app-viewer.service";
 import { ensureAutoJoin } from "../services/auto-join.service";
+import { liveViewerRedirect } from "../apps/live-viewer-redirect";
 import {
   forgetTerminalCaches,
   killAllTerminalSessions,
@@ -322,6 +324,7 @@ function toProjectJson(
     defaultBranch: p.defaultBranch,
     publishedSha: p.publishedSha,
     publishedAt: p.publishedAt,
+    chatEnabled: p.chatEnabled === true,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
@@ -771,6 +774,7 @@ appsRoutes.openapi(
             publicShare: serializePublicShare(state?.publicShare),
             publishedSha: state?.publishedSha,
             publishedAt: state?.publishedAt,
+            chatEnabled: state?.chatEnabled === true,
             // A copied app that still declares its source's id: the index
             // filed it under its own derived id; the UI offers to stamp one.
             duplicateOf: folder.duplicateOf,
@@ -3062,6 +3066,15 @@ appsRoutes.openapi(
  * published counterpart to the preview's token-gated data path.
  */
 async function serveLive(c: AuthenticatedContext): Promise<Response> {
+  const viewerPage = liveViewerRedirect({
+    fetchDest: c.req.header("sec-fetch-dest"),
+    fetchMode: c.req.header("sec-fetch-mode"),
+    workspaceId: c.req.param("workspaceId"),
+    ref: c.req.param("id"),
+    path: c.req.path,
+    url: c.req.url,
+  });
+  if (viewerPage) return c.redirect(viewerPage, 302);
   const loaded = await loadProject(c, { write: false });
   if ("errorResponse" in loaded) return loaded.errorResponse;
   const project = loaded.project;
@@ -3362,6 +3375,55 @@ appsRoutes.openapi(
   },
 );
 
+appsRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/{id}/chats",
+    tags: ["Apps"],
+    summary: "List my chats with a published app",
+    description:
+      'The caller\'s own "chat with app" conversations about this app, newest first (without messages — load one through the chats API). Read access to the app is enough: these are the chats its live-link viewers have with it.',
+    security: AUTH_SECURITY,
+    request: { params: ProjectParam },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    try {
+      const loaded = await loadProject(c, { write: false });
+      if ("errorResponse" in loaded) return loaded.errorResponse;
+      if (!loaded.userId) {
+        return c.json({ success: false, error: "Sign in to chat" }, 403);
+      }
+      const chats = await Chat.find(
+        {
+          workspaceId: loaded.project.workspaceId,
+          appId: loaded.project._id.toString(),
+          createdBy: loaded.userId,
+        },
+        { title: 1, updatedAt: 1, createdAt: 1, activeStreamId: 1 },
+      )
+        .sort({ updatedAt: -1 })
+        .limit(50)
+        .lean();
+      return c.json(
+        {
+          success: true as const,
+          chats: chats.map(chat => ({
+            id: chat._id.toString(),
+            title: chat.title,
+            createdAt: chat.createdAt,
+            updatedAt: chat.updatedAt,
+            streaming: !!chat.activeStreamId,
+          })),
+        },
+        200,
+      );
+    } catch (error) {
+      return handleError(c, error);
+    }
+  },
+);
+
 appsRoutes.get("/:id/live", serveLive);
 appsRoutes.get("/:id/live/*", serveLive);
 
@@ -3425,6 +3487,59 @@ registerSharingSettingsRoutes(appsRoutes, {
   resourceName: "App",
   load: loadShareableApp,
 });
+
+// "Chat with app" on/off — beside the other link settings, with the same
+// gate: the owner or a workspace admin.
+appsRoutes.openapi(
+  createRoute({
+    method: "patch",
+    path: "/{id}/chat",
+    tags: ["Apps"],
+    summary: "Turn chat with a published app on or off",
+    security: AUTH_SECURITY,
+    request: {
+      params: ProjectParam,
+      body: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: z.object({ enabled: z.boolean() }),
+          },
+        },
+      },
+    },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    try {
+      const userId = actingUserId(c);
+      if (!userId) {
+        return c.json({ success: false, error: "Unauthorized" }, 401);
+      }
+      const { enabled } = c.req.valid("json");
+      const doc = await loadShareableApp(c);
+      if (!doc) {
+        return c.json({ success: false, error: "App not found" }, 404);
+      }
+      const workspaceId = c.req.param("workspaceId") as string;
+      const role = await memberRoleFor(workspaceId, userId);
+      if (!canManageSharing(doc, userId, role)) {
+        return c.json(
+          {
+            success: false,
+            error: "Only the owner or an admin can turn chat on or off",
+          },
+          403,
+        );
+      }
+      doc.chatEnabled = enabled;
+      await doc.save();
+      return c.json({ success: true as const, chatEnabled: enabled }, 200);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  },
+);
 registerPublicShareRoutes(appsRoutes, {
   resourceName: "App",
   load: loadShareableApp,

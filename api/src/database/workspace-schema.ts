@@ -764,6 +764,12 @@ export interface IChat extends Document {
   }>;
   activeAgent?: "mongo" | "bigquery" | "triage"; // Pinned specialist for this thread
   pinnedConsoleId?: string; // Console ID that this chat session is bound to
+  /**
+   * "Chat with app": the published app (AppProject id) this chat is about.
+   * Set at creation; such a chat only ever runs the closed app_chat agent
+   * and lives in the app's chat history, not the workspace's.
+   */
+  appId?: string;
   createdBy: string;
   titleGenerated: boolean;
   /** Set on a run of Mako's agent from a workflow step: kept, not listed. */
@@ -2157,6 +2163,10 @@ const ChatSchema = new Schema<IChat>(
       type: String,
       required: false,
     },
+    appId: {
+      type: String,
+      required: false,
+    },
     createdBy: {
       type: String,
       ref: "User",
@@ -2272,6 +2282,10 @@ const ChatSchema = new Schema<IChat>(
 ChatSchema.index({ workspaceId: 1 });
 ChatSchema.index({ workspaceId: 1, title: 1 });
 ChatSchema.index({ workspaceId: 1, createdBy: 1 }); // For user-specific chat queries
+ChatSchema.index(
+  { workspaceId: 1, appId: 1, createdBy: 1, updatedAt: -1 },
+  { partialFilterExpression: { appId: { $type: "string" } } },
+); // An app's chat history, per viewer
 
 /**
  * Chat Attachment Schema
@@ -5449,6 +5463,11 @@ export interface IAppProject extends Document {
   cloudRepo?: { owner: string; repo: string };
   /** Commit SHA of the last published deployment (§13.3). */
   publishedSha?: string;
+  /**
+   * "Chat with app" on the live link. Off unless `true` — the owner (or a
+   * workspace admin) opts each app in from the Share dialog.
+   */
+  chatEnabled?: boolean;
   /** When publishedSha was last repointed (publish or rollback). */
   publishedAt?: Date;
   /**
@@ -5513,6 +5532,7 @@ const AppProjectSchema = new Schema<IAppProject>(
       default: undefined,
     },
     publishedSha: { type: String },
+    chatEnabled: { type: Boolean },
     publishedAt: { type: Date },
     lastDeployError: {
       type: new Schema(

@@ -77,6 +77,7 @@ const SourceControlExplorer = lazy(
   () => import("./components/SourceControlExplorer"),
 );
 const PublicSharePage = lazy(() => import("./pages/PublicSharePage"));
+const AppViewerPage = lazy(() => import("./pages/AppViewerPage"));
 const loadDbtExplorer = () => import("./components/DbtExplorer");
 const DbtExplorer = lazy(loadDbtExplorer);
 import { AuthWrapper } from "./components/AuthWrapper";
@@ -1095,6 +1096,17 @@ function App() {
             }
           />
         ))}
+
+        {/* A published app's live link: the app full screen, with chat.
+            Signs the visitor in first (the page redirects to /login). */}
+        <Route
+          path="/view/:workspaceId/:appId"
+          element={
+            <Suspense fallback={<LoadingScreen />}>
+              <AppViewerPage />
+            </Suspense>
+          }
+        />
 
         {/* Desktop sign-in handoff - renders for both authed and unauthed users */}
         <Route path="/desktop-auth" element={<DesktopAuthPage />} />

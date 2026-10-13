@@ -4745,6 +4745,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspaceId}/apps/{id}/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List my chats with a published app
+         * @description The caller's own "chat with app" conversations about this app, newest first (without messages — load one through the chats API). Read access to the app is enough: these are the chats its live-link viewers have with it.
+         */
+        get: operations["get_api_workspaces_workspaceId_apps_id_chats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspaceId}/apps/{id}/collaborators": {
         parameters: {
             query?: never;
@@ -4796,6 +4816,23 @@ export interface paths {
         head?: never;
         /** Update App general access */
         patch: operations["patch_api_workspaces_workspaceId_apps_id_sharing"];
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/apps/{id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Turn chat with a published app on or off */
+        patch: operations["patch_api_workspaces_workspaceId_apps_id_chat"];
         trace?: never;
     };
     "/api/workspaces/{workspaceId}/apps/{id}/public-share": {
@@ -21444,6 +21481,47 @@ export interface operations {
             };
         };
     };
+    get_api_workspaces_workspaceId_apps_id_chats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenericJsonResponse"] & (Record<string, never> | null);
+                };
+            };
+            /** @description Invalid request */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_api_workspaces_workspaceId_apps_id_collaborators: {
         parameters: {
             query?: never;
@@ -21642,6 +21720,53 @@ export interface operations {
                     access?: "private" | "workspace";
                     /** @enum {string} */
                     workspaceRole?: "viewer" | "editor";
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenericJsonResponse"] & (Record<string, never> | null);
+                };
+            };
+            /** @description Invalid request */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patch_api_workspaces_workspaceId_apps_id_chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
                 };
             };
         };
