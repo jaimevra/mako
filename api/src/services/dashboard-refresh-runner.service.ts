@@ -11,9 +11,7 @@ import {
 const logger = loggers.api("dashboard-refresh-runner");
 
 export type DashboardRefreshTriggerType =
-  | "manual"
-  | "schedule"
-  | "dashboard_update";
+  "manual" | "schedule" | "dashboard_update";
 
 export interface QueueDashboardArtifactRefreshResult {
   queued: boolean;
@@ -50,8 +48,7 @@ export async function queueDashboardArtifactRefresh(input: {
   const dataSourceIds = requestedIds.filter(dataSourceId =>
     dashboard.dataSources.some(
       dataSource =>
-        dataSource.id === dataSourceId &&
-        dataSource.materialization !== "live",
+        dataSource.id === dataSourceId && dataSource.materialization !== "live",
     ),
   );
 
@@ -140,7 +137,7 @@ export async function queueDashboardArtifactRefresh(input: {
       {
         $set: updates,
       },
-      { new: false },
+      { returnDocument: "before" },
     );
 
     if (!lockAcquired) {

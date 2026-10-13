@@ -154,7 +154,7 @@ export const scheduledQueryExecutorFunction = inngest.createFunction(
           savedConsole,
           connection,
         };
-      })) as {
+      })) as unknown as {
         savedConsole: ISavedConsole;
         connection: IDatabaseConnection;
       };

@@ -1,3 +1,4 @@
+import { propagateAttributes } from "@langfuse/tracing";
 import { embed, embedMany } from "ai";
 import { getEmbeddingModel } from "../agent-lib/ai-gateway";
 import { loggers } from "../logging";
@@ -24,15 +25,16 @@ export function getEmbeddingModelName(): string | null {
 export async function embedText(text: string): Promise<number[] | null> {
   if (!isEmbeddingAvailable()) return null;
 
-  const { embedding } = await embed({
-    model: getEmbeddingModel(GATEWAY_EMBEDDING_MODEL_ID),
-    value: text,
-    experimental_telemetry: {
-      isEnabled: true,
-      functionId: "embed-text",
-      metadata: { model: EMBEDDING_MODEL_LABEL },
-    },
-  });
+  const { embedding } = await propagateAttributes(
+    // Metadata only: embeddings often run inside another trace (a chat turn).
+    { metadata: { model: EMBEDDING_MODEL_LABEL } },
+    () =>
+      embed({
+        model: getEmbeddingModel(GATEWAY_EMBEDDING_MODEL_ID),
+        value: text,
+        telemetry: { functionId: "embed-text" },
+      }),
+  );
   return embedding;
 }
 
@@ -43,15 +45,15 @@ export async function embedTexts(
     return texts.map(() => null);
   }
 
-  const { embeddings } = await embedMany({
-    model: getEmbeddingModel(GATEWAY_EMBEDDING_MODEL_ID),
-    values: texts,
-    experimental_telemetry: {
-      isEnabled: true,
-      functionId: "embed-texts",
-      metadata: { model: EMBEDDING_MODEL_LABEL, count: texts.length },
-    },
-  });
+  const { embeddings } = await propagateAttributes(
+    { metadata: { model: EMBEDDING_MODEL_LABEL, count: String(texts.length) } },
+    () =>
+      embedMany({
+        model: getEmbeddingModel(GATEWAY_EMBEDDING_MODEL_ID),
+        values: texts,
+        telemetry: { functionId: "embed-texts" },
+      }),
+  );
   return embeddings;
 }
 

@@ -213,7 +213,7 @@ export async function addFavourite(
       const moved = await Favourite.findOneAndUpdate(
         { _id: existing._id, ...scopeFilter(scope) },
         { $set: { parentId, position: await nextPosition(scope, parentId) } },
-        { new: true },
+        { returnDocument: "after" },
       ).lean();
       return { ok: true, value: toJson(moved ?? existing) };
     }

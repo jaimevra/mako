@@ -3,7 +3,7 @@ import { decryptEncrypted } from "../services/crypto.service";
 import * as dotenv from "dotenv";
 import { databaseConnectionService } from "../services/database-connection.service";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 // Database-based destination manager for app destinations
 export class DatabaseDestinationManager {

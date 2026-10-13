@@ -1,4 +1,4 @@
-import { Google, GitHub } from "arctic";
+import { Google, GitHub } from "./oauth-client";
 import { getProductionUrl } from "./oauth-proxy";
 
 /**

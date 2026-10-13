@@ -191,7 +191,7 @@ export function createServerConsoleTools({
 
   const canWrite = async (doc: ISavedConsole): Promise<boolean> => {
     if (!userId) return true; // workspace-scoped API-key automation
-    let isAdmin = false;
+    let isAdmin: boolean;
     try {
       const member = await workspaceService.getMember(workspaceId, userId);
       isAdmin = member?.role === "owner" || member?.role === "admin";
@@ -371,7 +371,7 @@ export function createServerConsoleTools({
                       : currentRevision,
                 },
                 { $set: setFields },
-                { new: true },
+                { returnDocument: "after" },
               );
 
               if (!updated) {
@@ -542,7 +542,7 @@ export function createServerConsoleTools({
                 draftRevision: (doc.draftRevision ?? 1) + 1,
               },
             },
-            { new: true },
+            { returnDocument: "after" },
           );
           if (!updated) {
             return { success: false, error: "Console not found" };

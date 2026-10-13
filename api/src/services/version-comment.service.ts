@@ -115,14 +115,15 @@ async function generateCommitMessage(
       traceName: "version-comment",
       userId: trackingCtx?.userEmail ?? trackingCtx?.userId,
       tags: ["type:version_comment"],
-      metadata: trackingCtx
-        ? { workspaceId: trackingCtx.workspaceId }
-        : undefined,
+      metadata: {
+        workspaceId: trackingCtx?.workspaceId ?? "unknown",
+        invocationType: "version_comment",
+      },
     },
     () =>
       generateText({
         model: getModel(utilityModel),
-        system,
+        instructions: system,
         prompt,
         providerOptions: {
           gateway: {
@@ -133,20 +134,12 @@ async function generateCommitMessage(
             ],
           } satisfies GatewayLanguageModelOptions,
         },
-        experimental_telemetry: {
-          isEnabled: true,
-          functionId: "version-comment",
-          metadata: {
-            workspaceId: trackingCtx?.workspaceId ?? "unknown",
-            invocationType: "version_comment",
-          },
-        },
+        telemetry: { functionId: "version-comment" },
       }),
   );
 
   const actualModelId = (response as Record<string, unknown>)?.modelId as
-    | string
-    | undefined;
+    string | undefined;
   const modelId = actualModelId || utilityModel;
 
   if (trackingCtx) {

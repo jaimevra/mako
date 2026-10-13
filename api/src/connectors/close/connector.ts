@@ -2024,7 +2024,6 @@ export class CloseConnector extends BaseConnector {
     rangeEnd: string,
     windowField: "date_created" | "date_updated" = "date_created",
   ): Promise<boolean> {
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         const resp = await api.post("/data/search/", {
@@ -2773,6 +2772,7 @@ export class CloseConnector extends BaseConnector {
       })();
       throw new Error(
         `Failed to create Close webhook subscription: ${message}`,
+        { cause: error },
       );
     }
   }

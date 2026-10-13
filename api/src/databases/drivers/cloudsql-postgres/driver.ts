@@ -418,6 +418,7 @@ export class CloudSQLPostgresDatabaseDriver implements DatabaseDriver {
           throw new Error(
             "Authentication failed. The service account credentials may not have the required permissions. " +
               "Please ensure the service account has 'Cloud SQL Client' role in the project.",
+            { cause: getOptionsError },
           );
         }
         throw getOptionsError;
@@ -613,6 +614,7 @@ export class CloudSQLPostgresDatabaseDriver implements DatabaseDriver {
         `Failed to establish Cloud SQL connection: ${
           error instanceof Error ? error.message : "Unknown error"
         }`,
+        { cause: error },
       );
     }
   }
@@ -706,6 +708,7 @@ export class CloudSQLPostgresDatabaseDriver implements DatabaseDriver {
                 ? authTestError.message
                 : "Unknown error"
             }`,
+            { cause: authTestError },
           );
         }
 
@@ -726,6 +729,7 @@ export class CloudSQLPostgresDatabaseDriver implements DatabaseDriver {
           `Invalid service account JSON: ${
             parseError instanceof Error ? parseError.message : "Parse error"
           }`,
+          { cause: parseError },
         );
       }
     } else {
@@ -751,6 +755,7 @@ export class CloudSQLPostgresDatabaseDriver implements DatabaseDriver {
             authError instanceof Error ? authError.message : "Unknown error"
           }. ` +
             `Please provide service account JSON or ensure GOOGLE_APPLICATION_CREDENTIALS is set.`,
+          { cause: authError },
         );
       }
     }

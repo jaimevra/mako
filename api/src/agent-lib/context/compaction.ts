@@ -340,13 +340,9 @@ export interface DedupeReasoningResult {
  */
 function reasoningSignature(part: Record<string, unknown>): string | null {
   const meta = part.providerMetadata as
-    | Record<string, unknown>
-    | undefined
-    | null;
+    Record<string, unknown> | undefined | null;
   const anthropic = meta?.anthropic as
-    | Record<string, unknown>
-    | undefined
-    | null;
+    Record<string, unknown> | undefined | null;
   const sig = anthropic?.signature;
   return typeof sig === "string" && sig.length > 0 ? sig : null;
 }
@@ -584,10 +580,11 @@ async function summarizeMessages(
     const modelId = await getUtilityModelId();
     const { text } = await generateText({
       model: getModel(modelId),
-      system: SUMMARY_INSTRUCTIONS,
+      instructions: SUMMARY_INSTRUCTIONS,
       prompt: `Summarize this earlier conversation:\n\n${transcript}`,
       maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
       abortSignal,
+      telemetry: { functionId: "context-compaction" },
     });
     const trimmed = text.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -643,10 +640,7 @@ export interface CompactionOptions {
 }
 
 export type CompactionStrategy =
-  | "none"
-  | "elide"
-  | "summarize"
-  | "emergency-drop";
+  "none" | "elide" | "summarize" | "emergency-drop";
 
 export interface CompactionResult {
   messages: UIMessage[];

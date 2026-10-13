@@ -6,7 +6,7 @@ import { isWorkspaceConnectorType } from "../connectors/workspace/SandboxedConne
 import { databaseConnectionService } from "../services/database-connection.service";
 import { loggers } from "../logging";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const logger = loggers.sync("source-connection-manager");
 

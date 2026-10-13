@@ -196,7 +196,7 @@ async function failStaleJob(
         expiresAt: new Date(now.getTime() + JOB_TTL_MS),
       },
     },
-    { new: true },
+    { returnDocument: "after" },
   ).lean()) as BindingJobDoc | null;
   if (updated) {
     // A worker that died between uploading its draft and recording it

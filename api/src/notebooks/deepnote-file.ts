@@ -16,7 +16,8 @@
  * owner-first layout consoles use.
  */
 import { createHash, randomUUID } from "node:crypto";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
+import { loadYaml } from "../utils/yaml";
 import { deepnoteFileSchema } from "@deepnote/blocks";
 import type { NotebookBlock, NotebookDoc } from "./types";
 
@@ -137,7 +138,7 @@ export interface ParsedNotebookFile {
 export function parseNotebookFile(contents: string): ParsedNotebookFile | null {
   let raw: unknown;
   try {
-    raw = yaml.load(contents);
+    raw = loadYaml(contents);
   } catch {
     return null;
   }

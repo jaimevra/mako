@@ -12,6 +12,7 @@
 
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
+import type { Types } from "mongoose";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { loggers } from "../../logging";
 import type { AuthenticatedContext } from "../../middleware/workspace.middleware";
@@ -84,7 +85,7 @@ function slugify(text: string): string {
 /** Tokens are resolved globally, so check both shareable collections. */
 async function isShareTokenTaken(
   token: string,
-  excludeId?: unknown,
+  excludeId?: Types.ObjectId | string,
 ): Promise<boolean> {
   const filter = { "publicShare.token": token, _id: { $ne: excludeId } };
   const [dashboard, app] = await Promise.all([
@@ -101,7 +102,7 @@ async function isShareTokenTaken(
  */
 async function generateShareToken(
   title: string | undefined,
-  options: { forceSuffix?: boolean; excludeId?: unknown } = {},
+  options: { forceSuffix?: boolean; excludeId?: Types.ObjectId | string } = {},
 ): Promise<string> {
   const slug = title ? slugify(title) : "";
   if (!slug) return crypto.randomBytes(8).toString("hex");

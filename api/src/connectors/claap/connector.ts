@@ -137,9 +137,7 @@ function formatClaapApiError(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
     const data = error.response?.data as
-      | { error?: { message?: string }; message?: string }
-      | string
-      | undefined;
+      { error?: { message?: string }; message?: string } | string | undefined;
 
     const directError =
       typeof data === "string"
@@ -251,7 +249,6 @@ export class ClaapConnector extends BaseConnector {
     maxRetries = 5,
   ): Promise<T> {
     let attempt = 0;
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         return await fn();
@@ -639,6 +636,7 @@ export class ClaapConnector extends BaseConnector {
     } catch (error) {
       throw new Error(
         `Failed to create Claap webhook subscription: ${formatClaapApiError(error)}`,
+        { cause: error },
       );
     }
   }

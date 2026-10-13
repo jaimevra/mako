@@ -265,7 +265,7 @@ app.openapi(
   }),
   async c => {
     try {
-      const token = c.req.param("token");
+      const token = c.req.param("token") as string;
       const resource = await findByToken(token);
       if (!resource) {
         return c.json({ success: false, error: "Share link not found" }, 404);
@@ -299,7 +299,7 @@ app.openapi(
   }),
   async c => {
     try {
-      const token = c.req.param("token");
+      const token = c.req.param("token") as string;
       const resource = await findByToken(token);
       if (!resource) {
         return c.json({ success: false, error: "Share link not found" }, 404);
@@ -359,7 +359,7 @@ app.openapi(
   }),
   async c => {
     try {
-      const token = c.req.param("token");
+      const token = c.req.param("token") as string;
       const resource = await findByToken(token);
       if (!resource) {
         return c.json({ success: false, error: "Share link not found" }, 404);
@@ -422,7 +422,7 @@ app.openapi(
   }),
   async c => {
     try {
-      const token = c.req.param("token");
+      const token = c.req.param("token") as string;
       const artifactId = c.req.param("artifactId");
       const resource = await findByToken(token);
       if (!resource) {
@@ -515,7 +515,7 @@ app.openapi(
   }),
   async c => {
     try {
-      const token = c.req.param("token");
+      const token = c.req.param("token") as string;
       const resource = await findByToken(token);
       if (!resource) {
         return c.json({ success: false, error: "Share link not found" }, 404);
@@ -574,7 +574,7 @@ app.openapi(
           ],
         },
         { $set: { "publicShare.lastPublicRefreshAt": new Date() } },
-        { new: true },
+        { returnDocument: "after" },
       );
       if (!claimed) {
         return c.json(
@@ -635,7 +635,7 @@ app.openapi(
  * shared app keeps its data without the viewer touching a warehouse.
  */
 async function serveSharedApp(c: Context): Promise<Response> {
-  const token = c.req.param("token");
+  const token = c.req.param("token") as string;
   const resource = await findByToken(token);
   if (!resource || resource.type !== "app") {
     return c.json({ success: false, error: "Share link not found" }, 404);
@@ -680,7 +680,7 @@ app.get("/:token/app/*", serveSharedApp);
  * atomically, so a crowd of viewers is one warehouse query, not a crowd.
  */
 app.post("/:token/app/__data/:name/refresh", async c => {
-  const token = c.req.param("token");
+  const token = c.req.param("token") as string;
   const resource = await findByToken(token);
   if (!resource || resource.type !== "app") {
     return c.json({ success: false, error: "Share link not found" }, 404);

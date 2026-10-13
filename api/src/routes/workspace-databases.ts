@@ -47,8 +47,7 @@ type WorkspaceDatabaseRouteError = {
 };
 
 type WorkspaceDatabaseResult =
-  | WorkspaceDatabaseRouteError
-  | { database: IDatabaseConnection };
+  WorkspaceDatabaseRouteError | { database: IDatabaseConnection };
 
 type WorkspaceMongoDbResult = WorkspaceDatabaseRouteError | { db: Db };
 
@@ -1990,7 +1989,7 @@ workspaceExecuteRoutes.openapi(
   async c => {
     const startTime = Date.now();
     let database: IDatabaseConnection | null = null;
-    let executionStatus: QueryStatus = "error";
+    let executionStatus: QueryStatus;
     let rowCount: number | undefined;
     let errorType: string | undefined;
 

@@ -506,9 +506,7 @@ function sanitizeDashboardResponse<
   }
   dashboard.materializationSchedule = normalizeDashboardMaterializationSchedule(
     dashboard.materializationSchedule as
-      | Record<string, unknown>
-      | null
-      | undefined,
+      Record<string, unknown> | null | undefined,
   );
   if (dashboard.cache && typeof dashboard.cache === "object") {
     delete dashboard.cache.ttlSeconds;
@@ -761,9 +759,7 @@ app.openapi(
       try {
         materializationSchedule = validateDashboardMaterializationSchedule(
           dashboardInput.materializationSchedule as
-            | Record<string, unknown>
-            | null
-            | undefined,
+            Record<string, unknown> | null | undefined,
         );
       } catch (error) {
         return c.json(
@@ -1096,7 +1092,7 @@ app.openapi(
           $set: updateFields,
           $inc: { version: 1 },
         },
-        { new: true, runValidators: true },
+        { returnDocument: "after", runValidators: true },
       );
 
       if (!updated) {
@@ -1338,7 +1334,7 @@ app.openapi(
           $set: validatedBody,
           $inc: { version: 1 },
         },
-        { new: true, runValidators: true },
+        { returnDocument: "after", runValidators: true },
       );
 
       if (!dashboard) {
@@ -1860,7 +1856,7 @@ app.openapi(
           },
         },
         {
-          new: true,
+          returnDocument: "after",
           projection: {
             _id: 1,
             editLock: 1,
@@ -1963,7 +1959,7 @@ app.openapi(
             "editLock.expiresAt": expiresAt,
           },
         },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       if (!dashboard) {
@@ -2203,7 +2199,7 @@ const dashboardVersionBackend: VersionBackend = {
         workspaceId: new Types.ObjectId(ctx.workspaceId),
       },
       { $set: restoreFields, $inc: { version: 1 } },
-      { new: true },
+      { returnDocument: "after" },
     );
     if (!restored) {
       throw new Error("Restore failed");

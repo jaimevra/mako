@@ -205,11 +205,9 @@ async function attachFlowLookups(
     const sourceType =
       flow.sourceType === "database" ? "database" : "connector";
     const databaseSource = flow.databaseSource as
-      | { connectionId?: unknown }
-      | undefined;
+      { connectionId?: unknown } | undefined;
     const tableDestination = flow.tableDestination as
-      | { connectionId?: unknown }
-      | undefined;
+      { connectionId?: unknown } | undefined;
     if (sourceType === "database") {
       pushId(databaseSource?.connectionId, destIds, seenDest);
     } else {
@@ -241,11 +239,9 @@ async function attachFlowLookups(
     const sourceType =
       flow.sourceType === "database" ? "database" : "connector";
     const databaseSource = flow.databaseSource as
-      | { connectionId?: unknown }
-      | undefined;
+      { connectionId?: unknown } | undefined;
     const tableDestination = flow.tableDestination as
-      | { connectionId?: unknown }
-      | undefined;
+      { connectionId?: unknown } | undefined;
     if (sourceType === "database") {
       const dbConn = destById.get(
         asObjectIdString(databaseSource?.connectionId) ?? "",
@@ -747,9 +743,7 @@ function selectedEntitiesFromFlowBody(body: {
 
 function resolveConnectorIncrementalCapabilities(
   sourceConnection:
-    | { type?: string; config?: Record<string, unknown> }
-    | null
-    | undefined,
+    { type?: string; config?: Record<string, unknown> } | null | undefined,
 ): IncrementalCapabilities | undefined {
   if (!sourceConnection?.type) return undefined;
   try {
@@ -1215,9 +1209,8 @@ flowRoutes.openapi(
         flowData.tableDestination?.schema
       ) {
         try {
-          const { createDestinationWriter } = await import(
-            "../services/destination-writer.service"
-          );
+          const { createDestinationWriter } =
+            await import("../services/destination-writer.service");
           // createDestinationWriter.initialize() calls ensureSchema which creates the dataset
           await createDestinationWriter(
             {
@@ -3849,10 +3842,7 @@ flowRoutes.openapi(
           repartition: (state as any)?.repartition?.status
             ? {
                 status: (state as any).repartition.status as
-                  | "pending"
-                  | "running"
-                  | "done"
-                  | "failed",
+                  "pending" | "running" | "done" | "failed",
                 error: (state as any).repartition.error ?? null,
               }
             : null,
@@ -4947,7 +4937,7 @@ flowRoutes.openapi(
           $set: { status: "pending" },
           $unset: { applyError: "", error: "", processedAt: "" },
         },
-        { new: true, projection: { eventId: 1, flowId: 1 } },
+        { returnDocument: "after", projection: { eventId: 1, flowId: 1 } },
       );
 
       if (!event) {

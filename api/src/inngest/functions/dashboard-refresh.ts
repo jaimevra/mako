@@ -148,7 +148,7 @@ export const dashboardSchedulerFunction = inngest.createFunction(
     const buildingByWorkspace = new Map<string, number>();
 
     for (const dashboard of dashboards) {
-      let isDue = false;
+      let isDue: boolean;
       try {
         isDue = isDashboardMaterializationDue({
           schedule: dashboard.materializationSchedule,
