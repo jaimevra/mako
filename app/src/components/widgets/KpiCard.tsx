@@ -138,7 +138,12 @@ const KpiCardComponent: React.FC<KpiCardProps> = ({
             {(delta * 100).toFixed(1)}%
           </Typography>
           {kpiConfig.comparisonLabel && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               {kpiConfig.comparisonLabel}
             </Typography>
           )}

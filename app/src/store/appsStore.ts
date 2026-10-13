@@ -844,11 +844,7 @@ export const useAppsStore = create<AppsStore>()(
           ) as {
             repo?: AppRepoBinding;
             adoption?:
-              | "imported"
-              | "seeded"
-              | "reconnected"
-              | "fresh"
-              | "deferred";
+              "imported" | "seeded" | "reconnected" | "fresh" | "deferred";
           };
           set(s => {
             s.canCreate = true;

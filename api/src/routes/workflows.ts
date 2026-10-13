@@ -341,8 +341,7 @@ workflowRuntimeRoutes.use("*", unifiedAuthMiddleware);
 /** The worker behind the request: its workspace and who set it up. */
 function workerOf(c: AuthenticatedContext): Worker | null {
   const key = c.get("apiKey") as
-    | { scopes?: string[]; createdBy?: string }
-    | undefined;
+    { scopes?: string[]; createdBy?: string } | undefined;
   const workspace = c.get("workspace");
   if (c.get("authType") !== "apiKey" || !key || !workspace) return null;
   const scopes = resolveWorkspaceApiKeyScopes(key.scopes);
@@ -519,7 +518,7 @@ workflowRuntimeRoutes.post(
 workflowRuntimeRoutes.get(
   "/source/:sha",
   asWorker(async (c, { workspaceId }) => {
-    const sha = c.req.param("sha");
+    const sha = c.req.param("sha") ?? "";
     if (!isOid(sha)) return c.json({ error: "Invalid commit" }, 400);
     // A fresh API instance has an empty disk: restore the repository and this
     // commit from the mirror first.

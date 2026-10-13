@@ -577,7 +577,7 @@ export const flowFunction = inngest.createFunction(
           throw new Error(`Flow ${flowId} not found`);
         }
         return fresh.toObject() as IFlow;
-      })) as IFlow;
+      })) as unknown as IFlow;
       flowRef = flow; // Store for error handler
 
       const destinationType = (await step.run(
@@ -672,7 +672,7 @@ export const flowFunction = inngest.createFunction(
             lastRunAt: new Date(),
             $inc: { runCount: 1 },
           },
-          { new: true },
+          { returnDocument: "after" },
         );
         if (result) {
           return result.runCount;
@@ -1988,7 +1988,7 @@ export const flowSchedulerFunction = inngest.createFunction(
         })),
       });
       return found.map(f => f.toObject() as IFlow);
-    })) as IFlow[];
+    })) as unknown as IFlow[];
 
     const now = new Date();
     const executedFlows: string[] = [];

@@ -446,7 +446,7 @@ async function endToEnd() {
     !step.activeTools.some(n => n.startsWith("mcp_slack_tool_")),
     "no MCP tool active before loading",
   );
-  const inventoryMsg = step.system.map(m => m.content).join("\n");
+  const inventoryMsg = step.instructions.map(m => m.content).join("\n");
   assert.ok(
     inventoryMsg.includes("Slack (200 tools via MCP)"),
     "inventory block lists the server",

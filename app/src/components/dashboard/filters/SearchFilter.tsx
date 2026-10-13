@@ -22,7 +22,13 @@ const SearchFilter: React.FC<SearchFilterProps> = ({
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          mr: 0.5,
+        }}
+      >
         {filter.label}
       </Typography>
       <TextField

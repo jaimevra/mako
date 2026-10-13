@@ -937,7 +937,7 @@ export async function createProject(input: {
   // §10 monorepo: commit the scaffold under its folder onto main. The row's
   // id goes into the manifest: that is the app's identity from here on,
   // whatever folder it is later filed under.
-  let scaffoldCommit: { commitOid: string; previousHead: string } | null = null;
+  let scaffoldCommit: { commitOid: string; previousHead: string } | null;
   try {
     const scaffold = createAppsScaffold({
       title: project.title,
@@ -995,6 +995,7 @@ export async function createProject(input: {
     });
     throw new Error(
       `Could not store the app durably (GitHub push failed): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
   logger.info("Apps project created", {
@@ -1166,6 +1167,7 @@ async function commitOnMainDurably(
     }
     throw new Error(
       `Could not store the change durably (GitHub push failed): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
   invalidateAppsIndexCache(workspaceId);
@@ -1380,7 +1382,7 @@ export async function stampAppId(
   options: { userId?: string; author?: GitAuthor } = {},
 ): Promise<void> {
   const repoDir = await requireWorkspaceRepo(workspaceId);
-  let contents: string | null = null;
+  let contents: string | null;
   try {
     contents = (
       await readBlob(repoDir, DEFAULT_BRANCH, `${app.path}/${APP_MANIFEST}`)
@@ -1518,7 +1520,7 @@ async function ensureWorktreeCore(
   const doc = await AppWorktree.findOneAndUpdate(
     { workspaceId: new Types.ObjectId(workspaceId), userId: actorId },
     { $setOnInsert: { branch } },
-    { new: true, upsert: true },
+    { returnDocument: "after", upsert: true },
   );
 
   return { doc, repoDir };

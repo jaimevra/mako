@@ -4,7 +4,7 @@
  * - Invitation / verification / password-reset: SendGrid dynamic templates
  *   (template variables are escaped by SendGrid).
  * - Flow & scheduled-query run notifications: HTML + plain text rendered in-repo
- *   via React Email (@react-email); user content is rendered as React text nodes
+ *   via React Email (react-email); user content is rendered as React text nodes
  *   (never dangerouslySetInnerHTML).
  */
 
@@ -226,12 +226,10 @@ export class EmailService {
     };
 
     if (!config.apiKey) {
-      logEmailForDev(
-        "Verification",
-        to,
-        "Verify your email address",
-        { kind: "template", templateData },
-      );
+      logEmailForDev("Verification", to, "Verify your email address", {
+        kind: "template",
+        templateData,
+      });
       logger.info("Verification email logged (dev mode)", { to });
       return;
     }

@@ -327,8 +327,7 @@ export function useQueuedPrompts({
       capturedConsoleIdRef.current = activeConsoleIdRef.current;
       const store = useConsoleStore.getState();
       const currentTab = store.tabs[store.activeTabId || ""] as
-        | (ConsoleTab & { metadata?: Record<string, unknown> })
-        | undefined;
+        (ConsoleTab & { metadata?: Record<string, unknown> }) | undefined;
       const dashboardId =
         currentTab?.kind === "dashboard"
           ? ((currentTab.metadata?.dashboardId as string | undefined) ?? null)

@@ -330,8 +330,11 @@ export default function NotebookRenderer({
         {doc.blocks.length === 0 && (
           <Typography
             variant="body2"
-            color="text.secondary"
-            sx={{ mb: 2, maxWidth: 520 }}
+            sx={{
+              color: "text.secondary",
+              mb: 2,
+              maxWidth: 520,
+            }}
           >
             Empty notebook. Add a cell to get started — SQL runs against a data
             source, Python runs on the kernel, Markdown renders inline.

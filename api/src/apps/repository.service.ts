@@ -507,7 +507,7 @@ export async function grepTree(
   args.push("-e", pattern, refOrOid);
   if (options.pathspec) args.push("--", options.pathspec);
 
-  let stdout = "";
+  let stdout: string;
   try {
     ({ stdout } = await runGit(args, { maxBufferBytes: 16 * 1024 * 1024 }));
   } catch (error) {

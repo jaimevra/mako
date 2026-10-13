@@ -126,13 +126,22 @@ export default function SettingsLimits() {
             clamp(parseInt(e.target.value, 10), dashboardMax, dashboardDefault),
           )
         }
-        inputProps={{ min: 1, max: dashboardMax }}
         disabled={loading || saving || !workspaceId}
         sx={{ mb: 1, maxWidth: 420 }}
         helperText={`Range 1–${dashboardMax}. Default ${dashboardDefault}. One dashboard may still rematerialize multiple sources.`}
+        slotProps={{
+          htmlInput: { min: 1, max: dashboardMax },
+        }}
       />
 
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 2 }}>
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          mt: 2,
+          mb: 2,
+        }}
+      >
         Applies to scheduled and manual materialization. Owners and admins can
         change these values.
       </Typography>

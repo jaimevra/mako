@@ -198,7 +198,7 @@ const ProjectParam = WorkspaceParam.extend({
 appsRoutes.use("*", unifiedAuthMiddleware);
 
 appsRoutes.use("*", async (c: AuthenticatedContext, next) => {
-  const workspaceId = c.req.param("workspaceId");
+  const workspaceId = c.req.param("workspaceId") as string;
   if (workspaceId) {
     const user = c.get("user");
     const workspace = c.get("workspace");
@@ -251,7 +251,7 @@ async function loadProject(
 ): Promise<
   { project: IAppProject; userId?: string } | { errorResponse: Response }
 > {
-  const workspaceId = c.req.param("workspaceId");
+  const workspaceId = c.req.param("workspaceId") as string;
   const id = c.req.param("id");
   if (!id) {
     return {
@@ -3405,7 +3405,7 @@ appsRoutes.post("/:id/live/__data/:name/refresh", async c => {
 // anonymous consumption side lives in routes/public-share.ts.
 const loadShareableApp = async (c: AuthenticatedContext) => {
   const id = c.req.param("id");
-  const workspaceId = c.req.param("workspaceId");
+  const workspaceId = c.req.param("workspaceId") as string;
   if (!id || !workspaceId) return null;
   const ref = id.replace(/^apps\//, "");
   // Sharing is one of the three things that gives an app a database row

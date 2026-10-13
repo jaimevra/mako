@@ -1056,7 +1056,7 @@ export const useConsoleStore = create<ConsoleStore>()(
             blockedDraftSaves.delete(consoleId);
             lastSavedContentHash.set(consoleId, baseStateHash);
           }
-        } catch (_e) {
+        } catch {
           // Best-effort: the revision base is unchanged, so the next sync
           // re-surfaces the agent edit for review rather than losing data.
         }
@@ -1140,7 +1140,7 @@ export const useConsoleStore = create<ConsoleStore>()(
               ),
             );
           }
-        } catch (_e) {
+        } catch {
           // Best-effort; the banner stays until a retry succeeds.
         }
       },
@@ -1846,7 +1846,7 @@ export const useConsoleStore = create<ConsoleStore>()(
             } else if (vm) {
               vm.updateVersion(versionId, { aiCommentStatus: "failed" });
             }
-          } catch (_e) {
+          } catch {
             if (vm) {
               vm.updateVersion(versionId, { aiCommentStatus: "failed" });
             }
@@ -2091,7 +2091,7 @@ export const useConsoleStore = create<ConsoleStore>()(
               }
               lastSavedContentHash.set(consoleId, stateHash);
             }
-          } catch (_e) {
+          } catch {
             // Auto-save failure - silently ignore as this is a best-effort operation
           }
         }, DRAFT_SAVE_DEBOUNCE_MS);

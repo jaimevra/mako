@@ -45,13 +45,13 @@ import {
   KeyRound as EnvIcon,
   Pencil as RenameIcon,
   Plus as AddIcon,
-  Github as LinkIcon,
   RefreshCw as RefreshIcon,
   Star as StarIcon,
   Trash2 as DeleteIcon,
   UserPlus as ShareMenuIcon,
   Wand2 as StampIcon,
 } from "lucide-react";
+import LinkIcon from "./icons/GithubIcon";
 import { useWorkspace } from "../contexts/workspace-context";
 import {
   useConsoleStore,
@@ -1243,7 +1243,13 @@ export default function AppsExplorer() {
           <Box sx={{ display: "flex", flexDirection: "column" }}>
             {canCreate === false ? (
               <Box sx={{ p: 2 }}>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
+                <Typography
+                  variant="body2"
+                  gutterBottom
+                  sx={{
+                    color: "text.secondary",
+                  }}
+                >
                   Apps live in a GitHub repository. Link one to get started —
                   each app is a folder in the repo, everyone works on their own
                   branch, and publishing merges it back to the default branch.
@@ -1259,7 +1265,13 @@ export default function AppsExplorer() {
                 </Button>
               </Box>
             ) : !hasAnything && !loading ? (
-              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                  p: 2,
+                }}
+              >
                 No apps yet. Create one, or ask the agent to build one (Apps
                 tools).
               </Typography>
@@ -1268,8 +1280,12 @@ export default function AppsExplorer() {
                 {activeAppId && filesTruncatedByApp[activeAppId] && (
                   <Typography
                     variant="caption"
-                    color="text.secondary"
-                    sx={{ px: 2, py: 0.5, display: "block" }}
+                    sx={{
+                      color: "text.secondary",
+                      px: 2,
+                      py: 0.5,
+                      display: "block",
+                    }}
                   >
                     Showing the first{" "}
                     {filesTruncatedByApp[activeAppId].shown.toLocaleString()}
@@ -1486,7 +1502,12 @@ export default function AppsExplorer() {
               </option>
             ))}
           </TextField>
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             {repos.length > 0
               ? `Creates a real Vite + React project in the connected GitHub repo (${repos[0].owner}/${repos[0].repo}).`
               : "Creates a real Vite + React project in the workspace repo."}

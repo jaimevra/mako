@@ -1,5 +1,5 @@
 import mongoose, { type ConnectOptions, Schema, Document } from "mongoose";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import { loggers } from "../logging";
 
 const mongooseLogger = loggers.db("mongodb");
@@ -100,7 +100,7 @@ export interface IUserOnboarding {
 /**
  * User model interface
  */
-export interface IUser extends Document {
+export interface IUser extends Document<string> {
   _id: string;
   email: string;
   hashedPassword?: string;
@@ -113,7 +113,7 @@ export interface IUser extends Document {
 /**
  * Email verification model interface
  */
-export interface IEmailVerification extends Document {
+export interface IEmailVerification extends Document<string> {
   _id: string;
   email: string;
   code: string;
@@ -131,7 +131,7 @@ export interface IEmailVerification extends Document {
  * `challenge` is the PKCE-style S256 hash of a verifier held only by the
  * desktop app instance that initiated the flow.
  */
-export interface IDesktopAuthCode extends Document {
+export interface IDesktopAuthCode extends Document<string> {
   _id: string; // SHA-256 hash (base64url) of the raw code
   userId: string;
   challenge: string; // base64url(SHA-256(verifier))
@@ -148,7 +148,7 @@ export interface IDesktopAuthCode extends Document {
  * here (Schema.Types.Mixed) so the marketing site can evolve captured fields
  * without an app migration. Contains no IP address.
  */
-export interface IUserAttribution extends Document {
+export interface IUserAttribution extends Document<string> {
   _id: string; // user id (1:1 with users)
   sid?: string; // marketing-site visitor id (random UUID)
   gclid?: string; // denormalized ad click id for indexed joins
@@ -162,7 +162,7 @@ export interface IUserAttribution extends Document {
 /**
  * Session model interface for Lucia
  */
-export interface ISession extends Document {
+export interface ISession extends Document<string> {
   _id: string;
   userId: string;
   expiresAt: Date;
@@ -187,7 +187,7 @@ const UserSchema = new Schema<IUser>(
   {
     _id: {
       type: String,
-      default: () => uuidv4(),
+      default: () => randomUUID(),
     },
     email: {
       type: String,
@@ -240,7 +240,7 @@ const EmailVerificationSchema = new Schema<IEmailVerification>(
   {
     _id: {
       type: String,
-      default: () => uuidv4(),
+      default: () => randomUUID(),
     },
     email: {
       type: String,
@@ -308,7 +308,7 @@ DesktopAuthCodeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 const SessionSchema = new Schema<ISession>({
   _id: {
     type: String,
-    default: () => uuidv4(),
+    default: () => randomUUID(),
   },
   userId: {
     type: String,
@@ -442,7 +442,8 @@ export interface ILlmUsage extends Document {
     | "description_generation"
     | "embedding"
     | "version_comment"
-    | "workflow";
+    | "workflow"
+    | "commit_message";
   modelId: string;
   inputTokens: number;
   outputTokens: number;
@@ -489,6 +490,7 @@ const LlmUsageSchema = new Schema<ILlmUsage>(
         "embedding",
         "version_comment",
         "workflow",
+        "commit_message",
       ],
     },
     modelId: { type: String, required: true },
@@ -520,8 +522,11 @@ export const LlmUsage =
 // Model Catalog Snapshot — raw upstream API responses persisted per source
 // ---------------------------------------------------------------------------
 
-export interface IModelCatalogSnapshot extends Document {
-  _id: "gateway" | "arena" | "pricing" | "curation" | "capabilities";
+type ModelCatalogSnapshotId =
+  "gateway" | "gateway-raw" | "arena" | "pricing" | "curation" | "capabilities";
+
+export interface IModelCatalogSnapshot extends Document<ModelCatalogSnapshotId> {
+  _id: ModelCatalogSnapshotId;
   /**
    * Free-form payload keyed by snapshot id:
    *  - gateway / pricing → array of normalized upstream records

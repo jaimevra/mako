@@ -1748,7 +1748,7 @@ workspaceRoutes.openapi(
         {
           $push: { apiKeys: newApiKey },
         },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       // Find the newly created API key
@@ -1822,7 +1822,7 @@ workspaceRoutes.openapi(
         {
           $pull: { apiKeys: { _id: keyId } },
         },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       if (!updatedWorkspace) {

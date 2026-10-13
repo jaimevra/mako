@@ -12,6 +12,7 @@ import { Types } from "mongoose";
 import {
   Connector as SourceConnection,
   DatabaseConnection,
+  type IDatabaseConnection,
 } from "../../database/workspace-schema";
 import type { AgentToolExecutionContext } from "../../agents/types";
 import type { QueryAccess } from "../../auth/api-key-scopes";
@@ -76,11 +77,9 @@ export function summarizeConnectionForListing(db: {
 
   if (sqlDialect === "postgresql" || sqlDialect === "mysql") {
     const host = (connection.host || connection.instanceConnectionName) as
-      | string
-      | undefined;
+      string | undefined;
     const databaseName = (connection.database || connection.db) as
-      | string
-      | undefined;
+      string | undefined;
     const displayInfo = `${host || "unknown-host"}/${databaseName || "unknown-db"}`;
     return {
       id: db._id.toString(),
@@ -148,7 +147,11 @@ export async function listAllConnectionsImpl(
       : (
           await DatabaseConnection.find({
             workspaceId: wsId,
-            type: { $in: Array.from(ALL_SUPPORTED_TYPES) },
+            type: {
+              $in: Array.from(
+                ALL_SUPPORTED_TYPES,
+              ) as IDatabaseConnection["type"][],
+            },
           }).sort({ name: 1 })
         ).map(db => ({
           ...summarizeConnectionForListing(

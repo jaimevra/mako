@@ -208,7 +208,7 @@ export const dbtRunExecutorFunction = inngest.createFunction(
       const run = await DbtRun.findOneAndUpdate(
         { _id: runObjectId, status: "queued" },
         { $set: { status: "running", startedAt: new Date() } },
-        { new: true },
+        { returnDocument: "after" },
       ).lean();
       if (!run) return null;
 
@@ -603,7 +603,7 @@ export const dbtRunExecutorFunction = inngest.createFunction(
               ...(failed ? { "scheduledRun.consecutiveFailures": 1 } : {}),
             },
           },
-          { new: true },
+          { returnDocument: "after" },
         );
 
         // Stop a broken scheduled job from hammering the warehouse forever:
@@ -619,9 +619,8 @@ export const dbtRunExecutorFunction = inngest.createFunction(
           failures >= DBT_AUTO_DISABLE_AFTER_FAILURES
         ) {
           try {
-            const { commitDbtJobFile } = await import(
-              "../../dbt/dbt-config.service"
-            );
+            const { commitDbtJobFile } =
+              await import("../../dbt/dbt-config.service");
             updatedJob.enabled = false;
             await commitDbtJobFile(
               { workspaceId: updatedJob.workspaceId },

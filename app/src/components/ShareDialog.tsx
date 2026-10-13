@@ -210,13 +210,25 @@ function PersonRow({
         <Typography variant="body2" sx={{ fontWeight: 500 }} noWrap>
           {primary}
           {isYou && (
-            <Typography component="span" variant="body2" color="text.secondary">
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               {" (you)"}
             </Typography>
           )}
         </Typography>
         {secondary && (
-          <Typography variant="caption" color="text.secondary" noWrap>
+          <Typography
+            variant="caption"
+            noWrap
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             {secondary}
           </Typography>
         )}
@@ -724,7 +736,13 @@ export default function ShareDialog({
             isYou={ownerId === user?.id}
             seed={ownerId || "owner"}
             action={
-              <Typography variant="body2" color="text.secondary" sx={{ pr: 1 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: "text.secondary",
+                  pr: 1,
+                }}
+              >
                 Owner
               </Typography>
             }
@@ -802,8 +820,10 @@ export default function ShareDialog({
                   ) : (
                     <Typography
                       variant="body2"
-                      color="text.secondary"
-                      sx={{ pr: 1 }}
+                      sx={{
+                        color: "text.secondary",
+                        pr: 1,
+                      }}
                     >
                       {collab.role === "viewer" ? "Viewer" : "Editor"}
                     </Typography>
@@ -882,8 +902,10 @@ export default function ShareDialog({
                 )}
                 <Typography
                   variant="caption"
-                  color="text.secondary"
-                  sx={{ display: "block" }}
+                  sx={{
+                    color: "text.secondary",
+                    display: "block",
+                  }}
                 >
                   {!selectedAppScope
                     ? "Choose a sharing scope to create a fullscreen link for others"
@@ -914,25 +936,27 @@ export default function ShareDialog({
                     }
                   }}
                   sx={{ mt: 1, ml: 6.5, width: "calc(100% - 52px)" }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Lock size={14} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: password ? (
-                      <InputAdornment position="end">
-                        <Button
-                          size="small"
-                          variant="contained"
-                          disableElevation
-                          disabled={busy}
-                          onClick={() => void handleSetPassword()}
-                        >
-                          Protect link
-                        </Button>
-                      </InputAdornment>
-                    ) : undefined,
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Lock size={14} />
+                        </InputAdornment>
+                      ),
+                      endAdornment: password ? (
+                        <InputAdornment position="end">
+                          <Button
+                            size="small"
+                            variant="contained"
+                            disableElevation
+                            disabled={busy}
+                            onClick={() => void handleSetPassword()}
+                          >
+                            Protect link
+                          </Button>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
                   }}
                 />
               )}
@@ -979,8 +1003,10 @@ export default function ShareDialog({
                 )}
                 <Typography
                   variant="caption"
-                  color="text.secondary"
-                  sx={{ display: "block" }}
+                  sx={{
+                    color: "text.secondary",
+                    display: "block",
+                  }}
                 >
                   {access === "private"
                     ? "Only people with access can open it"
@@ -1030,8 +1056,10 @@ export default function ShareDialog({
                   </Typography>
                   <Typography
                     variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block" }}
+                    sx={{
+                      color: "text.secondary",
+                      display: "block",
+                    }}
                   >
                     {publicShare.enabled
                       ? publicShare.hasPassword
@@ -1076,24 +1104,28 @@ export default function ShareDialog({
                       }
                     }}
                     onBlur={() => void handleSaveLinkName()}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ maxWidth: 260 }}
-                            noWrap
-                          >
-                            {publicShare.token
-                              ? buildPublicShareUrl(
-                                  publicShare.token,
-                                  currentWorkspace?.name,
-                                ).replace(/[^/]+$/, "")
-                              : ""}
-                          </Typography>
-                        </InputAdornment>
-                      ),
+                    slotProps={{
+                      input: {
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <Typography
+                              variant="caption"
+                              noWrap
+                              sx={{
+                                color: "text.secondary",
+                                maxWidth: 260,
+                              }}
+                            >
+                              {publicShare.token
+                                ? buildPublicShareUrl(
+                                    publicShare.token,
+                                    currentWorkspace?.name,
+                                  ).replace(/[^/]+$/, "")
+                                : ""}
+                            </Typography>
+                          </InputAdornment>
+                        ),
+                      },
                     }}
                   />
                 ) : (
@@ -1210,7 +1242,12 @@ export default function ShareDialog({
                           {revealedPassword}
                         </Typography>
                       ) : (
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: "text.secondary",
+                          }}
+                        >
                           Password protected
                         </Typography>
                       )}
@@ -1251,32 +1288,34 @@ export default function ShareDialog({
                           void handleSetPassword();
                         }
                       }}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <Lock size={14} />
-                          </InputAdornment>
-                        ),
-                        endAdornment: password ? (
-                          <InputAdornment position="end">
-                            <Button
-                              size="small"
-                              variant="contained"
-                              disableElevation
-                              disabled={busy}
-                              onClick={() => void handleSetPassword()}
-                              sx={{
-                                minWidth: 0,
-                                px: 1.5,
-                                py: 0.25,
-                                fontSize: 12,
-                                borderRadius: 1,
-                              }}
-                            >
-                              Set password
-                            </Button>
-                          </InputAdornment>
-                        ) : undefined,
+                      slotProps={{
+                        input: {
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <Lock size={14} />
+                            </InputAdornment>
+                          ),
+                          endAdornment: password ? (
+                            <InputAdornment position="end">
+                              <Button
+                                size="small"
+                                variant="contained"
+                                disableElevation
+                                disabled={busy}
+                                onClick={() => void handleSetPassword()}
+                                sx={{
+                                  minWidth: 0,
+                                  px: 1.5,
+                                  py: 0.25,
+                                  fontSize: 12,
+                                  borderRadius: 1,
+                                }}
+                              >
+                                Set password
+                              </Button>
+                            </InputAdornment>
+                          ) : undefined,
+                        },
                       }}
                     />
                   ) : null)}
@@ -1296,8 +1335,10 @@ export default function ShareDialog({
                       </Typography>
                       <Typography
                         variant="caption"
-                        color="text.secondary"
-                        sx={{ display: "block" }}
+                        sx={{
+                          color: "text.secondary",
+                          display: "block",
+                        }}
                       >
                         Re-runs the app&apos;s published queries on your
                         connection, at most every few minutes per binding

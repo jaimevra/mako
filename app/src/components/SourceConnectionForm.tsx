@@ -551,7 +551,12 @@ function SourceConnectionForm({
 
     if (type === "textarea") {
       return (
-        <Box key={name} position="relative">
+        <Box
+          key={name}
+          sx={{
+            position: "relative",
+          }}
+        >
           <Controller
             name={name}
             control={control}
@@ -635,7 +640,12 @@ function SourceConnectionForm({
     }
 
     return (
-      <Box key={name} position="relative">
+      <Box
+        key={name}
+        sx={{
+          position: "relative",
+        }}
+      >
         <Controller
           name={name}
           control={control}
@@ -730,7 +740,13 @@ function SourceConnectionForm({
 
     return (
       <Box sx={{ mt: 2 }}>
-        <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 1 }}>
+        <Typography
+          variant="subtitle1"
+          sx={{
+            fontWeight: "medium",
+            mb: 1,
+          }}
+        >
           {field.label}
         </Typography>
 
@@ -968,7 +984,12 @@ function SourceConnectionForm({
       )}
       {schema && schema.fields.map(f => renderDynamicField(f, form))}
       {!schemaLoading && !schema && (
-        <Typography color="text.secondary" sx={{ mt: 2 }}>
+        <Typography
+          sx={{
+            color: "text.secondary",
+            mt: 2,
+          }}
+        >
           Select a connector type to load configuration fields.
         </Typography>
       )}
@@ -1053,13 +1074,15 @@ function SourceConnectionForm({
               label="Timeout (ms)"
               type="number"
               margin="normal"
-              inputProps={{
-                min: 1000,
-                autoComplete: "nope",
-                "data-lpignore": "true",
-                "data-form-type": "other",
-              }}
               autoComplete="nope"
+              slotProps={{
+                htmlInput: {
+                  min: 1000,
+                  autoComplete: "nope",
+                  "data-lpignore": "true",
+                  "data-form-type": "other",
+                },
+              }}
             />
           )}
         />
@@ -1115,11 +1138,21 @@ function SourceConnectionForm({
               sx={{ width: 32, height: 32 }}
             />
             <Box>
-              <Typography variant="subtitle1" fontWeight="medium">
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  fontWeight: "medium",
+                }}
+              >
                 {connectorTypes.find(c => c.type === selectedType)?.name ||
                   selectedType}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                }}
+              >
                 {connectorTypes.find(c => c.type === selectedType)?.description}
               </Typography>
             </Box>

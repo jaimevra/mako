@@ -498,7 +498,7 @@ chatsRoutes.openapi(
           createdBy: userId.toString(),
         },
         { title, updatedAt: new Date() },
-        { new: true },
+        { returnDocument: "after" },
       );
 
       if (!result) {

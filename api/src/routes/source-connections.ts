@@ -764,7 +764,7 @@ sourceConnectionRoutes.openapi(
       limit?: number;
       fields?: string[];
       since?: string;
-    } = {};
+    };
     try {
       const raw = await c.req.text();
       body = raw.trim() ? JSON.parse(raw) : {};
@@ -857,7 +857,7 @@ sourceConnectionRoutes.openapi(
           isActive: body.enabled,
         },
         {
-          new: true,
+          returnDocument: "after",
         },
       );
 

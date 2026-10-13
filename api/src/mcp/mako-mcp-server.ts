@@ -629,6 +629,7 @@ export function buildMakoMcpServer(
       const result = await tool.execute(input as never, {
         toolCallId: nanoid(),
         messages: [],
+        context: undefined,
       });
       const richContent = extractMcpContent(result);
       if (richContent) {

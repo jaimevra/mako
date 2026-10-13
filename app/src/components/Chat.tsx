@@ -309,7 +309,7 @@ const Chat: React.FC<ChatProps> = ({
   const localAcpGenerationRef = useRef(0);
   /** In-flight refresh/wake reattach to a Local Agent turn (see resume below). */
   const localAcpResumeAbortRef = useRef<AbortController | null>(null);
-  const requestLocalAcpResumeRef = useRef<(() => void) | undefined>();
+  const requestLocalAcpResumeRef = useRef<(() => void) | undefined>(undefined);
   const [localAcpBusy, setLocalAcpBusy] = useState(false);
   const localAcpBusyRef = useRef(false);
   localAcpBusyRef.current = localAcpBusy;
@@ -317,7 +317,7 @@ const Chat: React.FC<ChatProps> = ({
   // and the per-chat toolCallId dispatch dedupe gate (the triplicate-tool
   // fix). Created before useChat — its register/settle callbacks are wired
   // into onToolCall; addToolOutputRef is assigned right after useChat.
-  const addToolOutputRef = useRef<AddToolOutputFn>();
+  const addToolOutputRef = useRef<AddToolOutputFn>(undefined);
   const {
     activeClientToolCallsRef,
     toolDispatchGateRef,
@@ -341,8 +341,8 @@ const Chat: React.FC<ChatProps> = ({
   // Stream-error handling lives in useStreamResume (which needs useChat's
   // state, so it runs after useChat); useChat's onError — captured once per
   // Chat instance — delegates through this ref.
-  const onStreamErrorImplRef = useRef<(error: unknown) => void>();
-  const clearErrorRef = useRef<(() => void) | undefined>();
+  const onStreamErrorImplRef = useRef<(error: unknown) => void>(undefined);
+  const clearErrorRef = useRef<(() => void) | undefined>(undefined);
   // Single-flight resume manager (assigned after useChat — it needs stop /
   // resumeStream). ALL reattach triggers (loadSession, wake, error retry) go
   // through requestResumeRef: calling the SDK's resumeStream directly attaches
@@ -350,17 +350,19 @@ const Chat: React.FC<ChatProps> = ({
   // every consumer re-processes every chunk — the root cause of the
   // triplicated tool executions and message parts.
   const requestResumeRef =
-    useRef<(opts?: { skipReload?: boolean }) => Promise<void>>();
+    useRef<(opts?: { skipReload?: boolean }) => Promise<void>>(undefined);
   // Refetch persisted messages + reset chat state; assigned by
   // useChatSessionLoader (shares the history-load conversion logic).
   const loadPersistedMessagesRef =
-    useRef<(opts?: { forHistoryLoad?: boolean }) => Promise<boolean>>();
+    useRef<(opts?: { forHistoryLoad?: boolean }) => Promise<boolean>>(
+      undefined,
+    );
   // Client tool dispatch lives in useClientToolDispatch (which needs useChat's
   // state, so it runs after useChat); useChat's onToolCall — captured once at
   // Chat-instance creation — delegates through this ref so it always invokes
   // the latest implementation.
   const onToolCallImplRef =
-    useRef<(toolCall: DispatchableToolCall) => Promise<void>>();
+    useRef<(toolCall: DispatchableToolCall) => Promise<void>>(undefined);
   const isLoadingRef = useRef(false);
   // While a submit_plan awaits review, the composer routes sent messages to
   // the plan as request_changes feedback. Assigned below (after the
@@ -1073,8 +1075,7 @@ const Chat: React.FC<ChatProps> = ({
       if (part.state !== "input-available" && !isStreamingPlan) continue;
       return {
         toolName: (isPlan ? "submit_plan" : "ask_clarifying_questions") as
-          | "ask_clarifying_questions"
-          | "submit_plan",
+          "ask_clarifying_questions" | "submit_plan",
         toolCallId: (part.toolCallId as string) || "",
         input: part.input,
         streaming: isStreamingPlan,

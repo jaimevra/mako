@@ -110,8 +110,7 @@ export async function executeConsoleAgentTool({
 
   if (toolName === "modify_chart_spec") {
     const vegaLiteSpec = input.vegaLiteSpec as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     if (!vegaLiteSpec) {
       emitToolOutput(addToolOutput, toolName, toolCallId, {
         success: false,
@@ -120,9 +119,8 @@ export async function executeConsoleAgentTool({
       return true;
     }
 
-    const { MakoChartSpec: MakoChartSpecSchema } = await import(
-      "../lib/chart-spec"
-    );
+    const { MakoChartSpec: MakoChartSpecSchema } =
+      await import("../lib/chart-spec");
     const parsed = MakoChartSpecSchema.safeParse(vegaLiteSpec);
     if (!parsed.success) {
       const issues = parsed.error.issues

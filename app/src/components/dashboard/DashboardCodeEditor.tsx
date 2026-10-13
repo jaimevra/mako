@@ -112,7 +112,12 @@ const DashboardCodeEditor: React.FC<DashboardCodeEditorProps> = ({
           backgroundColor: "background.paper",
         }}
       >
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           Dashboard Definition (JSON)
         </Typography>
         <Box sx={{ flex: 1 }} />

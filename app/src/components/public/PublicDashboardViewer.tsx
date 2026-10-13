@@ -303,13 +303,23 @@ export default function PublicDashboardViewer({
             {content.title}
           </Typography>
           {dataAsOf && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
               Data as of {new Date(dataAsOf).toLocaleString()}
             </Typography>
           )}
         </Box>
         {refreshNote && (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             {refreshNote}
           </Typography>
         )}
@@ -339,8 +349,12 @@ export default function PublicDashboardViewer({
           <LinearProgress />
           <Typography
             variant="caption"
-            color="text.secondary"
-            sx={{ display: "block", px: 3, py: 0.75 }}
+            sx={{
+              color: "text.secondary",
+              display: "block",
+              px: 3,
+              py: 0.75,
+            }}
           >
             Waiting for every data source to finish rebuilding before refreshing
             the dashboard…

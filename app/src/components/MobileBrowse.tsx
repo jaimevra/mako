@@ -69,8 +69,8 @@ function Identity() {
       {user?.email && (
         <Typography
           variant="caption"
-          color="text.secondary"
           sx={{
+            color: "text.secondary",
             display: "block",
             lineHeight: 1.2,
             overflow: "hidden",
@@ -149,7 +149,13 @@ function RecentRow({
         <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
           {entry.title}
         </Typography>
-        <Typography variant="caption" color="text.secondary" noWrap>
+        <Typography
+          variant="caption"
+          noWrap
+          sx={{
+            color: "text.secondary",
+          }}
+        >
           {tabKindEntityLabel(entry.kind)} · {relativeTime(entry.at)}
         </Typography>
       </Box>
@@ -308,7 +314,13 @@ export default function MobileBrowse({
           }}
         >
           <SearchIcon size={18} strokeWidth={1.5} />
-          <Typography variant="body2" color="text.secondary" noWrap>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             Search consoles, dashboards, apps…
           </Typography>
         </ButtonBase>

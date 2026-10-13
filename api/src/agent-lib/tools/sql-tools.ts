@@ -6,7 +6,10 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
-import { DatabaseConnection } from "../../database/workspace-schema";
+import {
+  DatabaseConnection,
+  type IDatabaseConnection,
+} from "../../database/workspace-schema";
 import { databaseConnectionService } from "../../services/database-connection.service";
 import { queryExecutionService } from "../../services/query-execution.service";
 import { sqlReadOnlyAccessError } from "../../services/read-only-query.service";
@@ -153,7 +156,9 @@ async function listSqlConnectionsImpl(workspaceId: string) {
 
   const databases = await DatabaseConnection.find({
     workspaceId: workspaceObjectId,
-    type: { $in: Array.from(ALL_SQL_TYPES) },
+    type: {
+      $in: Array.from(ALL_SQL_TYPES) as IDatabaseConnection["type"][],
+    },
   }).sort({ name: 1 });
 
   return databases.map(db => {
@@ -165,11 +170,9 @@ async function listSqlConnectionsImpl(workspaceId: string) {
     let displayInfo: string;
     if (dialect === "postgresql" || dialect === "mysql") {
       const host = (connection.host || connection.instanceConnectionName) as
-        | string
-        | undefined;
+        string | undefined;
       const dbName = (connection.database || connection.db) as
-        | string
-        | undefined;
+        string | undefined;
       displayInfo = `${host || "unknown-host"}/${dbName || "unknown-db"}`;
     } else if (dialect === "bigquery") {
       displayInfo = (connection.project_id as string) || "unknown-project";
@@ -564,7 +567,7 @@ async function inspectTableInner(
     types: string[];
     nullable?: boolean;
     defaultValue?: string;
-  }> = [];
+  }>;
   let samples: unknown[] = [];
   let entityKind: "table" | "view" = "table";
 
@@ -960,8 +963,7 @@ async function executeQueryImpl(
   if (!databaseName) {
     if (dialect === "postgresql" || dialect === "mysql") {
       databaseName = (connection.database ?? connection.db) as
-        | string
-        | undefined;
+        string | undefined;
     } else if (dialect === "sqlite") {
       databaseName = connection.database_id as string | undefined;
     }

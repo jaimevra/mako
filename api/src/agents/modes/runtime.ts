@@ -439,7 +439,8 @@ export interface UnifiedModeRuntime {
   system: SystemModelMessage[];
   prepareStep: (options: {
     stepNumber: number;
-  }) => { activeTools: string[]; system: SystemModelMessage[] } | undefined;
+  }) =>
+    { activeTools: string[]; instructions: SystemModelMessage[] } | undefined;
   /** Working-set telemetry for the request log. */
   workingSet: {
     pagingActive: boolean;
@@ -508,7 +509,8 @@ export function buildUnifiedModeRuntime(params: {
     catalog.push({
       name,
       source: { kind: "builtin", domain },
-      description: tool.description ?? name,
+      description:
+        typeof tool.description === "string" ? tool.description : name,
       readOnly: READ_ONLY_TOOL_NAMES.has(name),
       tier: "deferred",
     });
@@ -607,7 +609,7 @@ export function buildUnifiedModeRuntime(params: {
       mcpAllowlist,
       workingSetOptions,
     ),
-    system: buildModeSystem(context, modeState, inventoryFor()),
+    instructions: buildModeSystem(context, modeState, inventoryFor()),
   });
 
   const initialActiveTools = computeActiveTools(

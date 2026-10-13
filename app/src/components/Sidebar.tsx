@@ -172,9 +172,11 @@ export function SidebarUserMenu({
           vertical: "bottom",
           horizontal: "right",
         }}
-        PaperProps={{
-          sx: {
-            minWidth: 300,
+        slotProps={{
+          paper: {
+            sx: {
+              minWidth: 300,
+            },
           },
         }}
       >
@@ -182,8 +184,12 @@ export function SidebarUserMenu({
         <Box sx={{ px: 1.5, py: 1.25, minWidth: 0 }}>
           <Typography
             variant="caption"
-            color="text.secondary"
-            sx={{ mb: 0.75, display: "block", letterSpacing: 0.2 }}
+            sx={{
+              color: "text.secondary",
+              mb: 0.75,
+              display: "block",
+              letterSpacing: 0.2,
+            }}
           >
             Workspace
           </Typography>
@@ -192,10 +198,20 @@ export function SidebarUserMenu({
         <Divider />
 
         <Box sx={{ px: 2, py: 1 }}>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
             Signed in as
           </Typography>
-          <Typography variant="body2" fontWeight="medium">
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: "medium",
+            }}
+          >
             {user?.email}
           </Typography>
         </Box>

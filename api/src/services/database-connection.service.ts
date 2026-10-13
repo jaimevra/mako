@@ -2663,7 +2663,9 @@ export class DatabaseConnectionService {
       obj = typeof sa === "string" ? JSON.parse(sa) : sa;
     } catch (e) {
       logger.error("Failed to parse service_account_json", { error: e });
-      throw new Error("Invalid service_account_json: Not a valid JSON string");
+      throw new Error("Invalid service_account_json: Not a valid JSON string", {
+        cause: e,
+      });
     }
 
     if (!obj || typeof obj !== "object") {
@@ -2732,6 +2734,7 @@ export class DatabaseConnectionService {
       throw new Error(
         `Google authentication failed for service account "${sa.client_email}": ${detail}. ` +
           `The service-account key may have been rotated, disabled, or deleted — update this connection's service_account_json with a current key.`,
+        { cause: error },
       );
     }
     const token = res.data.access_token as string;

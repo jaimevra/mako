@@ -28,7 +28,6 @@ import {
   Database,
   FileCode,
   GitBranch,
-  Github,
   Server,
   History,
   KeySquare,
@@ -51,6 +50,7 @@ import {
   GitCompare,
   type LucideIcon,
 } from "lucide-react";
+import Github from "../components/icons/GithubIcon";
 import DbtIcon from "../components/icons/DbtIcon";
 import type {
   LeftPaneView,

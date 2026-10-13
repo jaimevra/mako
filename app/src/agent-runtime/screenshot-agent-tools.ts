@@ -104,8 +104,7 @@ function memoryDeltaBytes(
 
 function escapeAttributeValue(value: string): string {
   const css = globalThis.CSS as
-    | { escape?: (value: string) => string }
-    | undefined;
+    { escape?: (value: string) => string } | undefined;
   return css?.escape ? css.escape(value) : value.replace(/["\\]/g, "\\$&");
 }
 

@@ -680,7 +680,9 @@ const CreateDatabaseDialog: React.FC<CreateDatabaseDialogProps> = ({
                           <Typography
                             variant="body2"
                             align="center"
-                            fontWeight="medium"
+                            sx={{
+                              fontWeight: "medium",
+                            }}
                           >
                             {t.displayName || t.type}
                           </Typography>
@@ -853,7 +855,9 @@ const CreateDatabaseDialog: React.FC<CreateDatabaseDialogProps> = ({
                                 field.helperText && (
                                   <Typography
                                     variant="caption"
-                                    color="text.secondary"
+                                    sx={{
+                                      color: "text.secondary",
+                                    }}
                                   >
                                     {field.helperText}
                                   </Typography>
@@ -984,7 +988,9 @@ const CreateDatabaseDialog: React.FC<CreateDatabaseDialogProps> = ({
                                 field.helperText && (
                                   <Typography
                                     variant="caption"
-                                    color="text.secondary"
+                                    sx={{
+                                      color: "text.secondary",
+                                    }}
                                   >
                                     {field.helperText}
                                   </Typography>

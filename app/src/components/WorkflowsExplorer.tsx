@@ -25,10 +25,10 @@ import {
   ExternalLink as DashboardIcon,
   FileCode as FileIcon,
   Folder as FolderIcon,
-  Github as LinkIcon,
   RefreshCw as RefreshIcon,
 } from "lucide-react";
 import { useWorkspace } from "../contexts/workspace-context";
+import LinkIcon from "./icons/GithubIcon";
 import { EXPLORER_ICONS } from "../lib/entity-icons";
 import { openSettingsSection } from "../lib/command-palette/commands";
 import { useConsoleStore } from "../store/consoleStore";
