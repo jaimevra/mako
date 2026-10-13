@@ -85,6 +85,9 @@ const HEADLESS_DENIED_TOOLS = new Set([
   "app_bash",
   "app_commit",
   "app_merge_to_main",
+  "workflow_bash",
+  "workflow_commit",
+  "workflow_merge_to_main",
   "workflows_triggers",
 ]);
 

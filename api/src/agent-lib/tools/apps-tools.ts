@@ -134,30 +134,73 @@ export interface AppsToolsOptions {
 type LoadResult = { project: IAppProject } | { error: string };
 
 /**
- * What the shell, file and git tools work on: an app, or a workflow folder.
- * Exactly one of the two.
+ * What the shell, file and git tools work on. An `app_*` tool names an app
+ * (`appId`), a `workflow_*` tool a workflow folder (`workflowId`); each
+ * tool's schema holds the one its kind takes, and requires it.
  */
-const targetInput = {
-  appId: z
-    .string()
-    .optional()
-    .describe(
-      'The app\'s folder name under apps/ — e.g. "hello-world" for apps/hello-world. That folder IS the app. A legacy id also resolves.',
-    ),
-  workflowId: z
-    .string()
-    .optional()
-    .describe(
-      'Instead of appId: a workflow\'s folder name under workflows/ — e.g. "daily-digest" for workflows/daily-digest. Use "lib" for shared code. A new name creates the folder on first write.',
-    ),
+type TargetKind = "app" | "workflow";
+type TargetInput = {
+  appId: z.ZodOptional<z.ZodString>;
+  workflowId: z.ZodOptional<z.ZodString>;
+};
+const APP_ID_DESCRIPTION =
+  'The app\'s folder name under apps/ — e.g. "hello-world" for apps/hello-world. That folder IS the app. A legacy id also resolves.';
+const WORKFLOW_ID_DESCRIPTION =
+  'The workflow\'s folder name under workflows/ — e.g. "daily-digest" for workflows/daily-digest. Use "lib" for shared code. A new name creates the folder on first write.';
+/**
+ * The one key a kind's tools take. Typed as both, optional, so one tool body
+ * reads either: the other is never in the schema, so never in the input.
+ */
+const targetInputFor = (kind: TargetKind, describe = true): TargetInput => {
+  const [key, description] =
+    kind === "app"
+      ? ["appId", APP_ID_DESCRIPTION]
+      : ["workflowId", WORKFLOW_ID_DESCRIPTION];
+  const id = z.string();
+  return {
+    [key]: describe || kind === "workflow" ? id.describe(description) : id,
+  } as unknown as TargetInput;
 };
 
-export function createAppsTools({
-  workspaceId,
-  userId,
-  supportsVision,
-  touchedPaths,
-}: AppsToolsOptions): ToolSet {
+/** The `workflow_*` tools: the app tool each one is, and what it says it does. */
+const WORKFLOW_TOOLS: Record<string, string> = {
+  bash: "Run a bash command in your sandbox. cwd is the workflow's folder (workflows/<workflowId>) inside the workspace repo. Use it for git (status, checkout, pull, push) and for looking around; run a workflow with workflows_run, not from here.",
+  read_file:
+    "Read a file of a workflow, uncommitted edits included. Paths are relative to the workflow's folder. Returns line-numbered content.",
+  glob: "Find files of a workflow by glob pattern (e.g. `**/*.ts`).",
+  grep: "Search a workflow's files with a regex. Returns path:line:text matches.",
+  write_file:
+    "Create or fully overwrite a file of a workflow in your checkout. Uncommitted until you commit. For small edits prefer workflow_edit_file.",
+  edit_file:
+    "Anchored string-replacement edit of a workflow's file. oldString must match exactly once unless replaceAll is set.",
+  status:
+    "Show the checkout's git state for a workflow: branch, base commit, and changed files.",
+  commit:
+    "Commit this workflow's uncommitted work onto the current branch with a message. A commit on main is the deploy.",
+  merge_to_main:
+    "Merge a branch into main. For workflows, main is what is deployed, and only workspace admins may put workflow changes there.",
+};
+
+export function createAppsTools(options: AppsToolsOptions): ToolSet {
+  // One implementation, two names: a workflow is a folder like an app is, so
+  // each `workflow_*` tool is the app tool built to take a `workflowId`.
+  const forWorkflows = buildTools(options, "workflow");
+  return {
+    ...buildTools(options, "app"),
+    ...Object.fromEntries(
+      Object.entries(WORKFLOW_TOOLS).map(([name, description]) => [
+        `workflow_${name}`,
+        { ...forWorkflows[`app_${name}`], description } as ToolSet[string],
+      ]),
+    ),
+  };
+}
+
+function buildTools(
+  { workspaceId, userId, supportsVision, touchedPaths }: AppsToolsOptions,
+  kind: TargetKind,
+): ToolSet {
+  const targetInput = targetInputFor(kind, false);
   // A conversation is not a line of work.
   //
   // Chats used to get their own `chat/<chatId>` branch. That made opening a
@@ -252,12 +295,6 @@ export function createAppsTools({
     target: { appId?: string; workflowId?: string },
     opts: { write: boolean },
   ): Promise<LoadResult> => {
-    if (target.appId && target.workflowId) {
-      return { error: "Give appId or workflowId, not both." };
-    }
-    if (!target.appId && !target.workflowId) {
-      return { error: "Give appId (an app) or workflowId (a workflow)." };
-    }
     if (!target.workflowId) return loadProject(target.appId ?? "", opts);
     if (!isSafeSegment(target.workflowId)) {
       return { error: `Invalid workflow: ${target.workflowId}` };
@@ -418,7 +455,7 @@ export function createAppsTools({
       description:
         "Run a bash command in the app's sandbox session. cwd is the APP's folder (apps/<slug>) inside the workspace repo, not the repo root, so package.json and src/ are right here and `cwd` is interpreted relative to it. Use for anything a developer would do in a terminal: ls, grep, sed, cat, node, npm/pnpm install, npm run build, git status/log/diff. Each call is a one-shot command: backgrounding a long-running process (`vite &`) does NOT leave a server running the user can reach — use the app's preview controls for that. Git is fully yours: commit with app_commit or run git yourself — branch, checkout, merge, push; the sandbox is a real clone with a real remote. Note the checkout is SHARED with the user AND their other concurrent chats: a branch switch changes what everyone sees (do it when the task calls for it, and say so), and dirty files or 'Mako Agent' commits you don't recognize are someone else's in-flight work — normal, not corruption; leave them alone. Your end-of-turn auto-commit only includes apps YOU touched this turn. Output is capped (start + end kept); when it is cut, the full output is saved to a file in the sandbox whose path is returned — grep/tail/sed that file instead of re-running the command. Pipe noisy commands (installs, builds) through `| tail -n 50` or `| grep` up front.",
       inputSchema: z.object({
-        ...targetInput,
+        ...targetInputFor(kind),
         command: z.string().min(1).describe("Bash command line to execute"),
         cwd: z
           .string()
@@ -848,9 +885,8 @@ export function createAppsTools({
           if (!sha) {
             return { success: false, error: `branch ${branch} has no commits` };
           }
-          const { requestAppDeploys } = await import(
-            "../../inngest/functions/apps-deploy"
-          );
+          const { requestAppDeploys } =
+            await import("../../inngest/functions/apps-deploy");
           await requestAppDeploys(
             project.workspaceId.toString(),
             [project._id.toString()],

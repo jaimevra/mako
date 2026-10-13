@@ -147,8 +147,8 @@ claim a change rendered without evidence from one of these.`;
 export const WORKFLOW_MODE_SYSTEM_PROMPT = `## Workflow Mode
 
 A workflow is a folder in the workspace repo: \`workflows/<name>/workflow.ts\`, Hatchet
-TypeScript. Edit it with the \`app_*\` shell, file and git tools, passing \`workflowId\`
-instead of \`appId\`. Test before committing: \`workflows_run\` with \`sandbox: true\` runs
+TypeScript. Edit it with the \`workflow_*\` shell, file and git tools, which take the
+folder name as \`workflowId\`. Test before committing: \`workflows_run\` with \`sandbox: true\` runs
 your checkout as it is and returns the run. A commit on main is the deploy (admins only);
 a deployed workflow's schedule and webhook stay off until \`workflows_triggers\` switches
 it active. Load the \`workflows\` system skill before writing a workflow.`;

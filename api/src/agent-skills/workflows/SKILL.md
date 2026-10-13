@@ -44,13 +44,13 @@ schedule, and returns the finished run. **Main**: a commit on main is the
 deploy. **Active**: a deployed workflow starts inactive (schedule and webhook
 off, Run works); an admin switches it on. Like n8n: test, then activate.
 
-1. Write `workflow.ts` with `app_write_file` / `app_edit_file` and
+1. Write `workflow.ts` with `workflow_write_file` / `workflow_edit_file` and
    `workflowId: "<name>"`. A new name creates the folder. No commit yet.
 2. `workflows_run` with `sandbox: true` and an input. The answer is the run:
    each step's status, output, error and log lines, or the type errors if
    the file does not build. About ten seconds plus the workflow's own time.
 3. Fix and repeat from 1 until the run is `COMPLETED`.
-4. `app_commit`. On main that is the deploy; `workflows_status` until
+4. `workflow_commit`. On main that is the deploy; `workflows_status` until
    `deployment.liveSha` is your commit (`deployment.buildError` says why
    not; the previous version keeps running meanwhile). A member commits to
    a branch and asks an admin to merge: only admins put workflows on main.

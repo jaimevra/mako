@@ -251,22 +251,22 @@ const TRANSFORM_MODE_TOOL_NAMES: string[] = [
 
 /**
  * Workflows are files, so the mode is mostly the shell, file and git tools the
- * app mode has, pointed at a workflow folder (`workflowId`), plus the tools
- * that look at runs, start one, and give a workflow a webhook.
+ * app mode has, built to take a workflow folder (`workflow_*`, apps-tools.ts),
+ * plus the tools that look at runs, start one, and switch a workflow on.
  */
 const WORKFLOW_MODE_TOOL_NAMES: string[] = [
   "workflows_status",
   "workflows_run",
   "workflows_triggers",
-  "app_bash",
-  "app_read_file",
-  "app_write_file",
-  "app_edit_file",
-  "app_glob",
-  "app_grep",
-  "app_status",
-  "app_commit",
-  "app_merge_to_main",
+  "workflow_bash",
+  "workflow_read_file",
+  "workflow_write_file",
+  "workflow_edit_file",
+  "workflow_glob",
+  "workflow_grep",
+  "workflow_status",
+  "workflow_commit",
+  "workflow_merge_to_main",
   // Discovery: look at the data before writing a query into a step.
   "list_connections",
   "list_databases",

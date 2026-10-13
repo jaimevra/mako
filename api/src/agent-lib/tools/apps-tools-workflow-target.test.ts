@@ -1,9 +1,10 @@
 /**
  * The shell, file and git tools working on a workflow folder
- * (`workflowId`) instead of an app, against a real sandbox and a real
+ * (the `workflow_*` tools, `workflowId`) instead of an app, against a real sandbox and a real
  * repository. A workflow is a folder with no row behind it, so this is what
  * shows the tools need nothing but the folder.
  */
+import type { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -73,15 +74,35 @@ afterAll(async () => {
 });
 
 describe("workflowId as the tools' target", () => {
-  it("refuses a target that is both, neither, or not a folder name", async () => {
-    const tools = await toolsFor(MEMBER);
-    for (const input of [
-      { appId: "x", workflowId: "y" },
-      {},
-      { workflowId: "../apps" },
-      { workflowId: "a/b" },
+  it("gives each kind its own tools, each requiring its own id", async () => {
+    const tools = (await toolsFor(MEMBER)) as unknown as Record<
+      string,
+      { inputSchema: z.ZodObject }
+    >;
+    const names = ["bash", "read_file", "write_file", "edit_file", "glob"];
+    for (const name of [
+      ...names,
+      "grep",
+      "status",
+      "commit",
+      "merge_to_main",
     ]) {
-      const result = await call(tools, "app_read_file", {
+      const app = tools[`app_${name}`].inputSchema.shape;
+      const workflow = tools[`workflow_${name}`].inputSchema.shape;
+      // An app tool is what it was before workflows: no workflow parameter.
+      expect(Object.keys(app), name).not.toContain("workflowId");
+      expect(app.appId.safeParse(undefined).success, name).toBe(false);
+      expect(Object.keys(workflow), name).not.toContain("appId");
+      expect(workflow.workflowId.safeParse(undefined).success, name).toBe(
+        false,
+      );
+    }
+  });
+
+  it("refuses a workflow that is not a folder name", async () => {
+    const tools = await toolsFor(MEMBER);
+    for (const input of [{ workflowId: "../apps" }, { workflowId: "a/b" }]) {
+      const result = await call(tools, "workflow_read_file", {
         ...input,
         path: "workflow.ts",
       });
@@ -91,7 +112,7 @@ describe("workflowId as the tools' target", () => {
 
   it("lets a viewer read but not write", async () => {
     const tools = await toolsFor(VIEWER);
-    const write = await call(tools, "app_write_file", {
+    const write = await call(tools, "workflow_write_file", {
       workflowId: "score-leads",
       path: "workflow.ts",
       contents: WORKFLOW,
@@ -104,13 +125,13 @@ describe("workflowId as the tools' target", () => {
     const tools = await toolsFor(ADMIN);
     const target = { workflowId: "score-leads" };
 
-    const branch = await call(tools, "app_bash", {
+    const branch = await call(tools, "workflow_bash", {
       ...target,
       command: "git checkout -b workflow/score-leads",
     });
     expect(branch.success, String(branch.stderr)).toBe(true);
 
-    const write = await call(tools, "app_write_file", {
+    const write = await call(tools, "workflow_write_file", {
       ...target,
       path: "workflow.ts",
       contents: WORKFLOW,
@@ -118,14 +139,14 @@ describe("workflowId as the tools' target", () => {
     expect(write.success, write.error).toBe(true);
 
     // The shell starts in the workflow's own folder.
-    const pwd = await call(tools, "app_bash", {
+    const pwd = await call(tools, "workflow_bash", {
       ...target,
       command: "pwd && ls",
     });
     expect(String(pwd.stdout)).toMatch(/workflows\/score-leads\n/);
     expect(String(pwd.stdout)).toContain("workflow.ts");
 
-    const edit = await call(tools, "app_edit_file", {
+    const edit = await call(tools, "workflow_edit_file", {
       ...target,
       path: "workflow.ts",
       oldString: '"score-leads" }',
@@ -133,23 +154,23 @@ describe("workflowId as the tools' target", () => {
     });
     expect(edit.success, edit.error).toBe(true);
 
-    const read = await call(tools, "app_read_file", {
+    const read = await call(tools, "workflow_read_file", {
       ...target,
       path: "workflow.ts",
       withLineNumbers: false,
     });
     expect(String(read.contents)).toContain("Scores leads");
 
-    const grep = await call(tools, "app_grep", {
+    const grep = await call(tools, "workflow_grep", {
       ...target,
       pattern: "Scores",
     });
     expect(grep.count).toBe(1);
 
-    const status = await call(tools, "app_status", target);
+    const status = await call(tools, "workflow_status", target);
     expect(JSON.stringify(status.status)).toContain("workflow.ts");
 
-    const commit = await call(tools, "app_commit", {
+    const commit = await call(tools, "workflow_commit", {
       ...target,
       message: "Add score-leads",
     });
@@ -171,9 +192,8 @@ describe("workflowId as the tools' target", () => {
 
     // The merge is the deploy: a member cannot do it, even from the
     // Source Control panel, which merges without the tools.
-    const { mergeBranchToMain, workspaceScope } = await import(
-      "../../apps/worktree.service"
-    );
+    const { mergeBranchToMain, workspaceScope } =
+      await import("../../apps/worktree.service");
     await expect(
       mergeBranchToMain(
         workspaceScope(WS),
@@ -183,7 +203,7 @@ describe("workflowId as the tools' target", () => {
       ),
     ).rejects.toThrow(/Only workspace admins put workflows on main/);
 
-    const merge = await call(tools, "app_merge_to_main", target);
+    const merge = await call(tools, "workflow_merge_to_main", target);
     expect(merge.success, merge.error).toBe(true);
     const onMain = await runGit(["-C", repoDir, "show", `main:${file}`]);
     expect(onMain.stdout).toContain("Scores leads");
