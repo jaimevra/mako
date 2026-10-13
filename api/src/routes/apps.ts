@@ -16,8 +16,10 @@ import {
   AppProject,
   Chat,
   GitHubInstallation,
+  Workspace,
   type IAppProject,
 } from "../database/workspace-schema";
+import { getAvailableModels } from "../agent-lib/ai-models";
 import { loggers, enrichContextWithWorkspace } from "../logging";
 import { unifiedAuthMiddleware } from "../auth/unified-auth.middleware";
 import { workspaceService } from "../services/workspace.service";
@@ -325,6 +327,7 @@ function toProjectJson(
     publishedSha: p.publishedSha,
     publishedAt: p.publishedAt,
     chatEnabled: p.chatEnabled === true,
+    chatModelId: p.chatModelId ?? null,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
@@ -775,6 +778,7 @@ appsRoutes.openapi(
             publishedSha: state?.publishedSha,
             publishedAt: state?.publishedAt,
             chatEnabled: state?.chatEnabled === true,
+            chatModelId: state?.chatModelId ?? null,
             // A copied app that still declares its source's id: the index
             // filed it under its own derived id; the UI offers to stamp one.
             duplicateOf: folder.duplicateOf,
@@ -3495,7 +3499,7 @@ appsRoutes.openapi(
     method: "patch",
     path: "/{id}/chat",
     tags: ["Apps"],
-    summary: "Turn chat with a published app on or off",
+    summary: "Chat with a published app: on/off and model",
     security: AUTH_SECURITY,
     request: {
       params: ProjectParam,
@@ -3503,7 +3507,11 @@ appsRoutes.openapi(
         required: true,
         content: {
           "application/json": {
-            schema: z.object({ enabled: z.boolean() }),
+            schema: z.object({
+              enabled: z.boolean().optional(),
+              /** A model id from the workspace's allowed models; null = default. */
+              modelId: z.string().min(1).nullable().optional(),
+            }),
           },
         },
       },
@@ -3516,7 +3524,7 @@ appsRoutes.openapi(
       if (!userId) {
         return c.json({ success: false, error: "Unauthorized" }, 401);
       }
-      const { enabled } = c.req.valid("json");
+      const { enabled, modelId } = c.req.valid("json");
       const doc = await loadShareableApp(c);
       if (!doc) {
         return c.json({ success: false, error: "App not found" }, 404);
@@ -3527,14 +3535,41 @@ appsRoutes.openapi(
         return c.json(
           {
             success: false,
-            error: "Only the owner or an admin can turn chat on or off",
+            error: "Only the owner or an admin can change chat settings",
           },
           403,
         );
       }
-      doc.chatEnabled = enabled;
+      if (typeof modelId === "string") {
+        const ws = await Workspace.findById(workspaceId).select(
+          "settings.disabledModelIds",
+        );
+        const available = await getAvailableModels(
+          ws?.settings?.disabledModelIds,
+        );
+        if (!available.some(m => m.id === modelId)) {
+          return c.json(
+            {
+              success: false,
+              error: "That model is not available in this workspace",
+            },
+            400,
+          );
+        }
+        doc.chatModelId = modelId;
+      } else if (modelId === null) {
+        doc.chatModelId = undefined;
+      }
+      if (typeof enabled === "boolean") doc.chatEnabled = enabled;
       await doc.save();
-      return c.json({ success: true as const, chatEnabled: enabled }, 200);
+      return c.json(
+        {
+          success: true as const,
+          chatEnabled: doc.chatEnabled === true,
+          chatModelId: doc.chatModelId ?? null,
+        },
+        200,
+      );
     } catch (error) {
       return handleError(c, error);
     }

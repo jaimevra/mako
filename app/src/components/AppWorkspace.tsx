@@ -1833,6 +1833,7 @@ export default function AppWorkspace({
           workspaceRole={app.workspaceRole ?? "viewer"}
           publicShare={app.publicShare}
           chatEnabled={app.chatEnabled === true}
+          chatModelId={app.chatModelId ?? null}
           canManage={
             !app.owner_id || app.owner_id === user?.id || isWorkspaceAdmin
           }
@@ -1849,6 +1850,9 @@ export default function AppWorkspace({
               }
               if (changes.chatEnabled !== undefined) {
                 currentApp.chatEnabled = changes.chatEnabled;
+              }
+              if (changes.chatModelId !== undefined) {
+                currentApp.chatModelId = changes.chatModelId;
               }
             });
           }}

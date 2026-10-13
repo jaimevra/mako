@@ -175,7 +175,7 @@ interface ShareStoreState {
   updateAppChat: (
     workspaceId: string,
     appId: string,
-    enabled: boolean,
+    changes: { enabled?: boolean; modelId?: string | null },
   ) => Promise<Result>;
   /** Owner/admin only: reveal the public link password in plain text. */
   getPublicSharePassword: (
@@ -320,19 +320,19 @@ export const useShareStore = create<ShareStoreState>()(
       }
     },
 
-    updateAppChat: async (workspaceId, appId, enabled) => {
+    updateAppChat: async (workspaceId, appId, changes) => {
       try {
         unwrap(
           await api.PATCH("/api/workspaces/{workspaceId}/apps/{id}/chat", {
             params: { path: { workspaceId, id: appId } },
-            body: { enabled },
+            body: changes,
           }),
         );
         return { ok: true };
       } catch (error) {
         return {
           ok: false,
-          error: errMessage(error, "Failed to update chat setting"),
+          error: errMessage(error, "Failed to update chat settings"),
         };
       }
     },

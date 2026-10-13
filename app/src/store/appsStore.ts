@@ -140,6 +140,8 @@ export interface AppMeta {
   publicShare?: PublicShareInfo;
   /** Whether live-link viewers can chat with the app (default off). */
   chatEnabled?: boolean;
+  /** The model app chat runs on; null = the platform default. */
+  chatModelId?: string | null;
 }
 
 export interface AppFileEntry {

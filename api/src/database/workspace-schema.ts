@@ -5468,6 +5468,12 @@ export interface IAppProject extends Document {
    * workspace admin) opts each app in from the Share dialog.
    */
   chatEnabled?: boolean;
+  /**
+   * The model "chat with app" runs on, picked by the owner in the Share
+   * dialog. Unset = the platform's default chat model for the workspace's
+   * plan. Viewers never choose: they would be spending the workspace's money.
+   */
+  chatModelId?: string;
   /** When publishedSha was last repointed (publish or rollback). */
   publishedAt?: Date;
   /**
@@ -5533,6 +5539,7 @@ const AppProjectSchema = new Schema<IAppProject>(
     },
     publishedSha: { type: String },
     chatEnabled: { type: Boolean },
+    chatModelId: { type: String },
     publishedAt: { type: Date },
     lastDeployError: {
       type: new Schema(

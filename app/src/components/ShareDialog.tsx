@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { useWorkspace } from "../contexts/workspace-context";
 import { useAuth } from "../contexts/auth-context";
+import { useSettingsStore } from "../store/settingsStore";
 import {
   useShareStore,
   shareKey,
@@ -61,6 +62,8 @@ export interface ShareDialogProps {
   publicShare?: PublicShareInfo;
   /** Apps only: whether viewers of the live link can chat with the app. */
   chatEnabled?: boolean;
+  /** Apps only: the model app chat runs on (null/undefined = default). */
+  chatModelId?: string | null;
   /** Whether the current user can manage sharing (owner or workspace admin). */
   canManage?: boolean;
   onSharingChanged?: (changes: {
@@ -68,6 +71,7 @@ export interface ShareDialogProps {
     workspaceRole?: ShareRole;
     publicShare?: PublicShareInfo;
     chatEnabled?: boolean;
+    chatModelId?: string | null;
   }) => void;
 }
 
@@ -256,6 +260,7 @@ export default function ShareDialog({
   workspaceRole: workspaceRoleProp,
   publicShare: publicShareProp,
   chatEnabled: chatEnabledProp = false,
+  chatModelId: chatModelIdProp = null,
   canManage = false,
   onSharingChanged,
 }: ShareDialogProps) {
@@ -280,6 +285,8 @@ export default function ShareDialog({
   const disablePublicShare = useShareStore(s => s.disablePublicShare);
   const getPublicSharePassword = useShareStore(s => s.getPublicSharePassword);
   const updateAppChat = useShareStore(s => s.updateAppChat);
+  const models = useSettingsStore(s => s.models);
+  const fetchModels = useSettingsStore(s => s.fetchModels);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -291,6 +298,9 @@ export default function ShareDialog({
     publicShareProp ?? { enabled: false },
   );
   const [chatEnabled, setChatEnabled] = useState(chatEnabledProp);
+  const [chatModelId, setChatModelId] = useState<string | null>(
+    chatModelIdProp,
+  );
   const [password, setPassword] = useState("");
   const [copied, setCopied] = useState(false);
   const [internalCopied, setInternalCopied] = useState(false);
@@ -327,6 +337,13 @@ export default function ShareDialog({
     setWorkspaceRole(workspaceRoleProp ?? "viewer");
     setPublicShare(publicShareProp ?? { enabled: false });
     setChatEnabled(chatEnabledProp);
+    setChatModelId(chatModelIdProp);
+    if (
+      resourceType === "app" &&
+      useSettingsStore.getState().models.length === 0
+    ) {
+      void fetchModels();
+    }
     void loadMembers();
     if (workspaceId && resourceId) {
       void loadCollaborators(resourceType, workspaceId, resourceId);
@@ -560,10 +577,28 @@ export default function ShareDialog({
   const handleChatEnabled = async (enabled: boolean) => {
     if (!workspaceId || !resourceId) return;
     await run(async () => {
-      const result = await updateAppChat(workspaceId, resourceId, enabled);
+      const result = await updateAppChat(workspaceId, resourceId, {
+        enabled,
+      });
       if (result.ok) {
         setChatEnabled(enabled);
         onSharingChanged?.({ chatEnabled: enabled });
+      }
+      return result;
+    });
+  };
+
+  // Apps only: which model the app's chat runs on ("" = platform default).
+  const handleChatModel = async (modelId: string) => {
+    if (!workspaceId || !resourceId) return;
+    const next = modelId || null;
+    await run(async () => {
+      const result = await updateAppChat(workspaceId, resourceId, {
+        modelId: next,
+      });
+      if (result.ok) {
+        setChatModelId(next);
+        onSharingChanged?.({ chatModelId: next });
       }
       return result;
     });
@@ -1010,6 +1045,34 @@ export default function ShareDialog({
                 onChange={e => void handleChatEnabled(e.target.checked)}
               />
             </Box>
+            {chatEnabled && (
+              <Box
+                sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}
+              >
+                <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }}>
+                  Model
+                </Typography>
+                <Select
+                  size="small"
+                  value={chatModelId ?? ""}
+                  displayEmpty
+                  disabled={!canManage || busy}
+                  onChange={e => void handleChatModel(String(e.target.value))}
+                  inputProps={{ "aria-label": "Chat model" }}
+                  sx={{ minWidth: 200, fontSize: 13 }}
+                >
+                  <MenuItem value="">Default</MenuItem>
+                  {chatModelId && !models.some(m => m.id === chatModelId) && (
+                    <MenuItem value={chatModelId}>{chatModelId}</MenuItem>
+                  )}
+                  {models.map(model => (
+                    <MenuItem key={model.id} value={model.id}>
+                      {model.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </Box>
+            )}
           </>
         ) : (
           <>

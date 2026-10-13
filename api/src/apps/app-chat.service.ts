@@ -65,6 +65,19 @@ export interface AppChatData {
   skipped: Array<{ path: string; error: string }>;
 }
 
+/**
+ * The model a chat turn asks for. An app chat runs on the model its owner
+ * picked (undefined = the platform default) and ignores whatever the viewer
+ * sent: the turn is billed to the app's workspace, not chosen by its reader.
+ */
+export function requestedChatModelId(
+  appChat: { project: Pick<IAppProject, "chatModelId"> } | undefined,
+  bodyModelId: unknown,
+): string | undefined {
+  if (appChat) return appChat.project.chatModelId || undefined;
+  return typeof bodyModelId === "string" ? bodyModelId : undefined;
+}
+
 export type AppChatAuthorization =
   | { ok: true; project: IAppProject; title: string }
   | { ok: false; status: 400 | 403 | 404; error: string };

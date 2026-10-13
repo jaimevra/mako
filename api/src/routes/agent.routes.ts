@@ -113,7 +113,10 @@ import {
 import { hasAttachedClients } from "../services/realtime-presence.service";
 import { publishRealtimeEvent } from "../services/realtime.service";
 import { commitAgentTurn } from "../apps/worktree.service";
-import { authorizeAppChat } from "../apps/app-chat.service";
+import {
+  authorizeAppChat,
+  requestedChatModelId,
+} from "../apps/app-chat.service";
 import { reportPubSubFailure } from "../services/pubsub.service";
 import { AUTH_SECURITY, OPEN_RESPONSES, createRouter } from "../openapi/core";
 import {
@@ -565,10 +568,13 @@ agentRoutes.openapi(
 
     // Resolve model early so billing checks run against the actual model used.
     const available = await getAvailableModels(wsDisabledModelIds);
-    const isModelAllowed = available.some(m => m.id === modelId);
+    // App chat runs on the model the app's owner picked (or the default),
+    // never on one the viewer sends.
+    const requestedModelId = requestedChatModelId(appChat, modelId);
+    const isModelAllowed = available.some(m => m.id === requestedModelId);
     const resolvedModelId =
-      modelId && isModelAllowed
-        ? (modelId as string)
+      requestedModelId && isModelAllowed
+        ? requestedModelId
         : effectivePlan === "free"
           ? await getDefaultFreeModelId()
           : await getDefaultModelId();

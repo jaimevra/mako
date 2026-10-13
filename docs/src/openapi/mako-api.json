@@ -29800,7 +29800,7 @@
         "tags": [
           "Apps"
         ],
-        "summary": "Turn chat with a published app on or off",
+        "summary": "Chat with a published app: on/off and model",
         "security": [
           {
             "cookieAuth": []
@@ -29836,11 +29836,15 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "modelId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1
                   }
-                },
-                "required": [
-                  "enabled"
-                ]
+                }
               }
             }
           }

@@ -1561,6 +1561,7 @@ export default function AppsExplorer() {
           workspaceRole={shareApp.workspaceRole ?? "viewer"}
           publicShare={shareApp.publicShare}
           chatEnabled={shareApp.chatEnabled === true}
+          chatModelId={shareApp.chatModelId ?? null}
           canManage={
             !shareApp.owner_id ||
             shareApp.owner_id === userId ||
@@ -1579,6 +1580,9 @@ export default function AppsExplorer() {
               }
               if (changes.chatEnabled !== undefined) {
                 app.chatEnabled = changes.chatEnabled;
+              }
+              if (changes.chatModelId !== undefined) {
+                app.chatModelId = changes.chatModelId;
               }
             });
             if (workspaceId) void fetchApps(workspaceId);

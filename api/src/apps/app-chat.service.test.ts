@@ -26,7 +26,8 @@ vi.mock("./bindings.service", () => ({
   readBindingsTolerant: vi.fn(),
 }));
 
-const { authorizeAppChat } = await import("./app-chat.service");
+const { authorizeAppChat, requestedChatModelId } =
+  await import("./app-chat.service");
 const { liveViewerRedirect } = await import("./live-viewer-redirect");
 
 const WS = "64b000000000000000000001";
@@ -168,5 +169,27 @@ describe("liveViewerRedirect", () => {
     expect(
       liveViewerRedirect({ ...base, url: `${base.url}&raw=1` }),
     ).toBeNull();
+  });
+});
+
+describe("requestedChatModelId", () => {
+  it("runs app chat on the owner's model, whatever the viewer sends", () => {
+    expect(
+      requestedChatModelId(
+        { project: { chatModelId: "anthropic/cheap" } },
+        "anthropic/expensive",
+      ),
+    ).toBe("anthropic/cheap");
+  });
+
+  it("falls back to the default when the owner picked none", () => {
+    expect(
+      requestedChatModelId({ project: {} }, "anthropic/expensive"),
+    ).toBeUndefined();
+  });
+
+  it("keeps the caller's choice for ordinary chats", () => {
+    expect(requestedChatModelId(undefined, "openai/x")).toBe("openai/x");
+    expect(requestedChatModelId(undefined, 42)).toBeUndefined();
   });
 });

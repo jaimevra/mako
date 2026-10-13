@@ -4831,7 +4831,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Turn chat with a published app on or off */
+        /** Chat with a published app: on/off and model */
         patch: operations["patch_api_workspaces_workspaceId_apps_id_chat"];
         trace?: never;
     };
@@ -21766,7 +21766,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    enabled: boolean;
+                    enabled?: boolean;
+                    modelId?: string | null;
                 };
             };
         };
