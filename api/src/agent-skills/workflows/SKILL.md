@@ -174,6 +174,28 @@ const { text } = await generateText({
 });
 ```
 
+When code reads the answer (a label, a score, fields), ask for a typed one
+instead of parsing text. An answer that does not fit the schema throws, and
+the step's retry asks again.
+
+```ts
+import { generateText, Output } from "ai";
+import { z } from "zod";
+import { model } from "../lib/mako";
+
+const Label = z.object({
+  category: z.enum(["bug", "billing", "feature", "other"]),
+  confidence: z.number().min(0).max(1),
+});
+
+const { output } = await generateText({
+  model: model("anthropic/claude-haiku-4.5"),
+  output: Output.object({ schema: Label }),
+  prompt: `Classify this conversation:\n${text}`,
+});
+// output.category is "bug" | "billing" | "feature" | "other"
+```
+
 Use `generateText`, not `streamText`. Use plain `call` or `query` when no
 judgement is needed.
 
