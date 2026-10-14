@@ -101,6 +101,20 @@ Apps follow the same model as dashboards (see [Sharing & Collaborators](/dashboa
 
 Public links (optionally password-protected) render the published deployment for anonymous viewers.
 
+## Chat with an app
+
+Anyone who opens an app's live link (`/api/workspaces/:wid/apps/:id/live`) in a browser lands on a **viewer page** (`/view/<workspace>/<app>`): the published app full-screen, with an **Ask** chat beside it (resizable and hideable). The redirect only applies to top-level browser navigations to the app's page — the bundle's own requests (assets, `__data/`), API clients and embeds are served as before, and `?raw=1` opts out. The app's query string (filters, tabs) is carried over.
+
+Chat is **off by default**. The app's owner or a workspace admin turns it on with **Let viewers chat with this app** in the Share dialog (or `PATCH /api/workspaces/:wid/apps/:id/chat` with `{ "enabled": true }`). It works for people who can open the live link (they need read access to the app) and only once the app is published.
+
+The chat runs a closed `app_chat` agent that answers **only** from what the app has published, never from the underlying warehouse:
+
+- `describe_app_data` — the app's bindings (tables) with their SQL, columns, row counts and sample rows
+- `query_app_data` — read-only SQL over the published binding data (a locked-down DuckDB)
+- `read_app_source` — the app's source files at the published commit
+
+It cannot change the app, its data or its filters. If a question needs data the app doesn't have, it says so. Each viewer's own chats with the app are listed by `GET /api/workspaces/:wid/apps/:id/chats` (the 50 most recent).
+
 ## Identity: `useViewer()`
 
 Apps can ask who's looking. `@makoai/app-sdk` (v2.4+) exports a `useViewer()`
