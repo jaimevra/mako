@@ -453,7 +453,7 @@ export function AppChatPanel({
         onSubmit={handleSubmit}
         onStop={handleStop}
         isLoading={isLoading}
-        disabled={false}
+        disabled={isLoading}
         focusKey={focusKey}
         chatId={chatId}
         paletteMode={paletteMode}
