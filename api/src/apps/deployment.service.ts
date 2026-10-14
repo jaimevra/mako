@@ -833,6 +833,9 @@ export async function serveDeploymentFile(input: {
     });
   }
 
+  // Serving's own index, not part of the build: binding keys stay internal.
+  if (assetPath === DEPLOYMENT_BINDING_INDEX) return null;
+
   const asset = await readDeploymentAsset(projectId, sha, assetPath);
   if (!asset) return null;
   return new Response(

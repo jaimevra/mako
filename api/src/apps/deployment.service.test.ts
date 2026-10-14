@@ -266,6 +266,15 @@ describe("deployment binding index", () => {
       expect(missing).toBeNull();
     }
 
+    // the index itself is not a file of the app
+    expect(
+      await serveDeploymentFile({
+        projectId,
+        sha,
+        assetPath: DEPLOYMENT_BINDING_INDEX,
+      }),
+    ).toBeNull();
+
     expect(bindingArtifactKeyByName).not.toHaveBeenCalled();
     expect(readBindingsTolerant).not.toHaveBeenCalled();
     // read once, then cached: a deployment's keys never change
