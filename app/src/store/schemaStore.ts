@@ -27,9 +27,21 @@ export interface Connection {
   isDemo?: boolean;
   /** True when served by the Mako Local Agent on this machine. */
   isLocal?: boolean;
+  /** Who may write where through governed writes (app actions, workflows). */
+  writeGrants?: WriteGrant[];
   displayName: string;
   hostKey: string;
   hostName: string;
+}
+
+export interface WriteGrant {
+  schema: string;
+  /** A table name, or "*" for the whole schema. */
+  table: string;
+  /** role:member|admin|owner, user:<id>, or workflows. */
+  principal: string;
+  grantedBy?: string;
+  grantedAt?: string;
 }
 
 /** Tree node for databases, datasets, schemas, tables, etc. */
@@ -202,6 +214,12 @@ interface SchemaState {
   deleteConnection: (
     workspaceId: string,
     connectionId: string,
+  ) => Promise<void>;
+  /** Replace a connection's write grants (owners/admins). */
+  setWriteGrants: (
+    workspaceId: string,
+    connectionId: string,
+    grants: Array<Pick<WriteGrant, "schema" | "table" | "principal">>,
   ) => Promise<void>;
   testConnection: (
     workspaceId: string,
@@ -755,6 +773,27 @@ export const useSchemaStore = create<SchemaState>()(
           // Refresh connections list
           await get().refreshConnections(workspaceId);
         }
+      },
+
+      setWriteGrants: async (workspaceId, connectionId, grants) => {
+        const res = await api.PUT(
+          "/api/workspaces/{workspaceId}/databases/{id}/write-grants",
+          {
+            params: { path: { workspaceId, id: connectionId } },
+            body: { grants },
+          },
+        );
+        if (!res.data?.success) {
+          const err = res.error as { error?: string } | undefined;
+          throw new Error(err?.error || "Failed to save write access");
+        }
+        const saved = res.data.data;
+        set(s => {
+          const conn = s.connections[workspaceId]?.find(
+            c => c.id === connectionId,
+          );
+          if (conn) conn.writeGrants = saved;
+        });
       },
 
       testConnection: async (workspaceId, payload, options) => {

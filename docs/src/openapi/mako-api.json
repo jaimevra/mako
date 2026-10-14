@@ -5769,6 +5769,153 @@
         "operationId": "post_api_workspaces_workspaceId_databases_test_connection"
       }
     },
+    "/api/workspaces/{workspaceId}/databases/{id}/write-grants": {
+      "put": {
+        "tags": [
+          "Databases"
+        ],
+        "summary": "Replace the write grants on a database connection",
+        "security": [
+          {
+            "cookieAuth": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "workspaceId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grants": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "schema": {
+                          "type": "string"
+                        },
+                        "table": {
+                          "type": "string"
+                        },
+                        "principal": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "schema",
+                        "table",
+                        "principal"
+                      ]
+                    },
+                    "maxItems": 200
+                  }
+                },
+                "required": [
+                  "grants"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connection's write grants after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "schema": {
+                            "type": "string"
+                          },
+                          "table": {
+                            "type": "string"
+                          },
+                          "principal": {
+                            "type": "string"
+                          },
+                          "grantedBy": {
+                            "type": "string"
+                          },
+                          "grantedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "schema",
+                          "table",
+                          "principal",
+                          "grantedBy",
+                          "grantedAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "put_api_workspaces_workspaceId_databases_id_write_grants"
+      }
+    },
     "/api/workspaces/{workspaceId}/databases/{id}/test": {
       "post": {
         "tags": [

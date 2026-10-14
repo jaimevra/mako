@@ -768,6 +768,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspaceId}/databases/{id}/write-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the write grants on a database connection */
+        put: operations["put_api_workspaces_workspaceId_databases_id_write_grants"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspaceId}/databases/{id}/test": {
         parameters: {
             query?: never;
@@ -9084,6 +9101,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenericJsonResponse"] & (Record<string, never> | null);
+                };
+            };
+            /** @description Invalid request */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    put_api_workspaces_workspaceId_databases_id_write_grants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    grants: {
+                        schema: string;
+                        table: string;
+                        principal: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description The connection's write grants after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        success: true;
+                        data: {
+                            schema: string;
+                            table: string;
+                            principal: string;
+                            grantedBy: string;
+                            grantedAt: string;
+                        }[];
+                    };
                 };
             };
             /** @description Invalid request */

@@ -399,7 +399,7 @@ export function createConnectorTools(workspaceId: string) {
           const database = await DatabaseConnection.findOne({
             _id: new Types.ObjectId(connectionId),
             workspaceId: new Types.ObjectId(workspaceId),
-          }).select("_id name type connection allowAgentWrites");
+          }).select("_id name type connection allowAgentWrites writeGrants");
           if (!database) return { error: CONNECTION_NOT_FOUND };
           const db = database as unknown as {
             _id: Types.ObjectId;
@@ -407,12 +407,23 @@ export function createConnectorTools(workspaceId: string) {
             type: string;
             connection?: Record<string, unknown>;
             allowAgentWrites?: boolean;
+            writeGrants?: Array<{
+              schema: string;
+              table: string;
+              principal: string;
+            }>;
           };
           return {
             ...summarizeConnectionForListing(db),
             kind: "database",
             connector: db.type,
             allowAgentWrites: db.allowAgentWrites === true,
+            // Where governed writes (app actions, workflow writes) may land;
+            // everything else on this connection is read-only for them.
+            writeGrants: (db.writeGrants ?? []).map(g => ({
+              target: `${g.schema}.${g.table}`,
+              principal: g.principal,
+            })),
             next: "list_databases / list_tables / inspect_table describe its schema; sql_execute_query queries it; a flow file references this id as destination.connection_id.",
           };
         } catch (error) {

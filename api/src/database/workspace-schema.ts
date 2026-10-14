@@ -306,10 +306,26 @@ export interface IDatabaseConnection extends Document {
    * access is unaffected. Set it on connections created for agent writes.
    */
   allowAgentWrites?: boolean;
+  /**
+   * Who may write where through governed writes (app actions, workflow
+   * writes). Independent of allowAgentWrites, and never consulted by
+   * consoles or the in-product agent. See services/write-grants.ts.
+   */
+  writeGrants?: IWriteGrant[];
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
   lastConnectedAt?: Date;
+}
+
+export interface IWriteGrant {
+  schema: string;
+  /** A table name, or "*" for the whole schema. */
+  table: string;
+  /** role:member|admin|owner, user:<id>, or workflows. */
+  principal: string;
+  grantedBy: string;
+  grantedAt: Date;
 }
 
 /** @deprecated Use IDatabaseConnection instead */
@@ -1613,6 +1629,21 @@ const DatabaseConnectionSchema = new Schema<IDatabaseConnection>(
     allowAgentWrites: {
       type: Boolean,
       default: false,
+    },
+    writeGrants: {
+      type: [
+        new Schema(
+          {
+            schema: { type: String, required: true },
+            table: { type: String, required: true },
+            principal: { type: String, required: true },
+            grantedBy: { type: String, required: true },
+            grantedAt: { type: Date, required: true },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
     },
     createdBy: {
       type: String,

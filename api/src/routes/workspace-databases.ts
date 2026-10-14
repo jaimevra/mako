@@ -10,9 +10,15 @@ import {
 import {
   DatabaseConnection,
   IDatabaseConnection,
+  IWriteGrant,
   Flow,
   SavedConsole,
+  WorkspaceMember,
 } from "../database/workspace-schema";
+import {
+  parseWriteGrantPrincipal,
+  writeGrantProblem,
+} from "../services/write-grants";
 import { databaseConnectionService } from "../services/database-connection.service";
 import { recordConnectionVerification } from "../services/connection-verification.service";
 import {
@@ -289,6 +295,16 @@ function getDemoDatabaseConfig() {
 
 export const workspaceDatabaseRoutes = createRouter();
 
+function serializeWriteGrant(g: IWriteGrant) {
+  return {
+    schema: g.schema,
+    table: g.table,
+    principal: g.principal,
+    grantedBy: g.grantedBy,
+    grantedAt: new Date(g.grantedAt).toISOString(),
+  };
+}
+
 // Create demo database for workspace (onboarding)
 workspaceDatabaseRoutes.openapi(
   createRoute({
@@ -455,6 +471,7 @@ workspaceDatabaseRoutes.openapi(
           lastConnectedAt: db.lastConnectedAt,
           isClusterMode, // true when connection can access multiple databases
           isDemo: db.isDemo || false, // true if this is a demo database
+          writeGrants: (db.writeGrants ?? []).map(serializeWriteGrant),
           // Helper fields for easier access (connection object removed for security)
           displayName: db.name || conn.database || "Unknown Database",
           hostKey,
@@ -940,6 +957,147 @@ workspaceDatabaseRoutes.openapi(
         500,
       );
     }
+  },
+);
+
+// Replace a connection's write grants (owners/admins). See
+// services/write-grants.ts: grants gate only governed writes (app actions,
+// workflow writes), never consoles, the agent or allowAgentWrites keys.
+const WriteGrantInput = z.object({
+  schema: z.string(),
+  table: z.string(),
+  principal: z.string(),
+});
+const WriteGrantOutput = WriteGrantInput.extend({
+  grantedBy: z.string(),
+  grantedAt: z.string(),
+});
+
+workspaceDatabaseRoutes.openapi(
+  createRoute({
+    method: "put",
+    path: "/{id}/write-grants",
+    tags: ["Databases"],
+    summary: "Replace the write grants on a database connection",
+    security: AUTH_SECURITY,
+    middleware: [
+      unifiedAuthMiddleware,
+      requireWorkspace,
+      requireWorkspaceRole(["owner", "admin"]),
+    ] as const,
+    request: {
+      params: z.object({
+        workspaceId: z
+          .string()
+          .openapi({ param: { name: "workspaceId", in: "path" } }),
+        id: z.string().openapi({ param: { name: "id", in: "path" } }),
+      }),
+      body: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: z.object({ grants: z.array(WriteGrantInput).max(200) }),
+          },
+        },
+      },
+    },
+    responses: {
+      ...OPEN_RESPONSES,
+      200: {
+        description: "The connection's write grants after the change",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.literal(true),
+              data: z.array(WriteGrantOutput),
+            }),
+          },
+        },
+      },
+    },
+  }),
+  async c => {
+    const workspace = c.get("workspace");
+    const user = c.get("user");
+    const { id } = c.req.valid("param");
+    const { grants } = c.req.valid("json");
+
+    if (!Types.ObjectId.isValid(id)) {
+      return c.json({ success: false, error: "Invalid database ID" }, 400);
+    }
+    const database = await DatabaseConnection.findOne({
+      _id: new Types.ObjectId(id),
+      workspaceId: workspace._id,
+    });
+    if (!database) {
+      return c.json({ success: false, error: "Database not found" }, 404);
+    }
+
+    for (const grant of grants) {
+      const problem = writeGrantProblem(grant);
+      if (problem) return c.json({ success: false, error: problem }, 400);
+    }
+    // A user grant must name someone who can write at all.
+    const userIds = grants
+      .map(g => parseWriteGrantPrincipal(g.principal))
+      .flatMap(p => (p?.kind === "user" ? [p.userId] : []));
+    if (userIds.length > 0) {
+      const members = await WorkspaceMember.find({
+        workspaceId: workspace._id,
+        userId: { $in: userIds },
+      }).select("userId role");
+      const writers = new Set(
+        members.filter(m => m.role !== "viewer").map(m => m.userId),
+      );
+      const outsider = userIds.find(u => !writers.has(u));
+      if (outsider) {
+        return c.json(
+          {
+            success: false,
+            error:
+              `user:${outsider} is not a workspace member who can write ` +
+              "(viewers never write).",
+          },
+          400,
+        );
+      }
+    }
+
+    // Keep who granted what, and when, for grants that did not change.
+    const key = (g: { schema: string; table: string; principal: string }) =>
+      `${g.schema.toLowerCase()}\u0000${g.table.toLowerCase()}\u0000${g.principal}`;
+    const previous = new Map(
+      (database.writeGrants ?? []).map(g => [key(g), g] as const),
+    );
+    const next = new Map<string, IWriteGrant>();
+    for (const g of grants) {
+      next.set(
+        key(g),
+        previous.get(key(g)) ?? {
+          schema: g.schema,
+          table: g.table,
+          principal: g.principal,
+          grantedBy: user?.id ?? "unknown",
+          grantedAt: new Date(),
+        },
+      );
+    }
+    database.writeGrants = [...next.values()];
+    await database.save();
+
+    logger.info("Write grants replaced", {
+      workspaceId: workspace._id.toString(),
+      connectionId: id,
+      userId: user?.id,
+      count: database.writeGrants.length,
+    });
+    return c.json(
+      {
+        success: true as const,
+        data: database.writeGrants.map(serializeWriteGrant),
+      },
+      200,
+    );
   },
 );
 

@@ -33,6 +33,7 @@ import {
   Binary as BinaryIcon,
   ListOrdered as IndexIcon,
   Zap as TriggerIcon,
+  PencilLine as WritableIcon,
 } from "lucide-react";
 import { useExplorerStore } from "../store";
 import { useWorkspace } from "../contexts/workspace-context";
@@ -47,6 +48,12 @@ import ResourceTree, {
 } from "./ResourceTree";
 import ExplorerShell from "./ExplorerShell";
 import { useConfirm } from "./ConfirmDialog";
+import WriteAccessDialog from "./WriteAccessDialog";
+import {
+  grantTargetForNode,
+  isWritable,
+  type GrantTarget,
+} from "../lib/write-grants";
 
 export interface CollectionInfo {
   name: string;
@@ -183,6 +190,12 @@ function DatabaseExplorer({
   const toggleNode = useExplorerStore(s => s.toggleNode);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [writeAccess, setWriteAccess] = useState<{
+    connectionId: string;
+    target: GrantTarget;
+  } | null>(null);
+  const canManageWrites =
+    currentWorkspace?.role === "owner" || currentWorkspace?.role === "admin";
   const [editingDatabaseId, setEditingDatabaseId] = useState<
     string | undefined
   >(undefined);
@@ -391,6 +404,21 @@ function DatabaseExplorer({
     [nodeInfoById, loading],
   );
 
+  const connectionById = useMemo(
+    () => new Map(databases.map(db => [db.id, db])),
+    [databases],
+  );
+
+  const grantTargetOf = useCallback(
+    (info: DbNodeInfo): GrantTarget | null => {
+      if (info.type !== "node") return null;
+      const db = connectionById.get(info.connectionId);
+      if (!db || db.isLocal) return null;
+      return grantTargetForNode(db.type, info.node.kind, info.node.metadata);
+    },
+    [connectionById],
+  );
+
   const getItemIcon = useCallback(
     (node: ResourceTreeNode, ctx?: { isExpanded: boolean }) => {
       const info = nodeInfoById.get(node.id);
@@ -460,7 +488,25 @@ function DatabaseExplorer({
   const getRightAdornment = useCallback(
     (node: ResourceTreeNode) => {
       const info = nodeInfoById.get(node.id);
-      if (!info || info.type !== "node") return null;
+      if (!info) return null;
+
+      // Where governed writes (app actions, workflows) may land.
+      const grants = connectionById.get(info.connectionId)?.writeGrants;
+      const target = grantTargetOf(info);
+      if (
+        grants?.length &&
+        (info.type === "connection" || (target && isWritable(grants, target)))
+      ) {
+        return (
+          <Tooltip title="Writable by app actions and workflows">
+            <Box sx={{ display: "flex", color: "text.secondary" }}>
+              <WritableIcon size={14} strokeWidth={1.75} />
+            </Box>
+          </Tooltip>
+        );
+      }
+
+      if (info.type !== "node") return null;
       const { kind, metadata } = info.node;
 
       let text: string | null;
@@ -512,7 +558,7 @@ function DatabaseExplorer({
         </Typography>
       );
     },
-    [nodeInfoById],
+    [nodeInfoById, connectionById, grantTargetOf],
   );
 
   const getContextMenuItems = useCallback(
@@ -578,13 +624,31 @@ function DatabaseExplorer({
 
       // For node (table / collection / view / folder / etc.)
       const { node: treeNode, connectionId } = info;
+      const target = canManageWrites ? grantTargetOf(info) : null;
+      const writeAccessItem = target
+        ? [
+            <MenuItem
+              key="write-access"
+              onClick={() => {
+                helpers.closeMenu();
+                setWriteAccess({ connectionId, target });
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 26 }}>
+                <WritableIcon size={16} strokeWidth={1.5} />
+              </ListItemIcon>
+              Write access…
+            </MenuItem>,
+          ]
+        : [];
       const isLeafCollection =
         !treeNode.hasChildren &&
         (treeNode.kind === "collection" || treeNode.kind === "table");
       if (!isLeafCollection) {
-        return []; // no menu
+        return writeAccessItem;
       }
       return [
+        ...writeAccessItem,
         <MenuItem
           key="drop-collection"
           onClick={() => {
@@ -606,7 +670,14 @@ function DatabaseExplorer({
         </MenuItem>,
       ];
     },
-    [nodeInfoById, currentWorkspace, deleteConnection, confirm],
+    [
+      nodeInfoById,
+      currentWorkspace,
+      deleteConnection,
+      confirm,
+      canManageWrites,
+      grantTargetOf,
+    ],
   );
 
   const connectionTypeById = useMemo(() => {
@@ -742,6 +813,10 @@ function DatabaseExplorer({
     );
   }
 
+  const writeAccessConnection = writeAccess
+    ? connectionById.get(writeAccess.connectionId)
+    : undefined;
+
   const actions = (
     <>
       <Tooltip title="Add new database">
@@ -847,6 +922,15 @@ function DatabaseExplorer({
         onSuccess={handleDatabaseCreated}
         databaseId={editingDatabaseId}
       />
+
+      {writeAccess && writeAccessConnection && (
+        <WriteAccessDialog
+          open
+          onClose={() => setWriteAccess(null)}
+          connection={writeAccessConnection}
+          target={writeAccess.target}
+        />
+      )}
     </>
   );
 }
