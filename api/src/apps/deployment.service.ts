@@ -378,6 +378,87 @@ async function isBindingArtifactCurrent(
 }
 
 /**
+ * A deployment's binding index: every binding's artifact key by name, as of
+ * the deployment commit. Written once when the deployment's bindings are made
+ * ready, next to its build.
+ *
+ * Serving reads it instead of the repository. Without it, each
+ * `__data/<name>.parquet` request resolves the key by reading
+ * `bindings/<name>.sql` at the deployed sha, and on an instance that has
+ * never seen that commit this means first cloning or fetching the workspace
+ * repository: tens of seconds before the first table of a freshly published
+ * app, or one opened on a new instance, even starts to download. The keys of
+ * a deployment never change (it is immutable, its artifacts are
+ * content-addressed), so the index is also cached for the life of the process.
+ */
+export const DEPLOYMENT_BINDING_INDEX = "__data/bindings.json";
+
+async function writeDeploymentBindingIndex(
+  projectId: string,
+  sha: string,
+  bindings: AppBinding[],
+): Promise<void> {
+  const keys = Object.fromEntries(
+    bindings.map(binding => [binding.name, bindingArtifactKey(binding)]),
+  );
+  try {
+    await getDashboardArtifactStore().putBuffer(
+      Buffer.from(JSON.stringify(keys)),
+      deploymentKey(projectId, sha, DEPLOYMENT_BINDING_INDEX),
+      "application/json",
+    );
+    bindingIndexCache.set(`${projectId}:${sha}`, keys);
+  } catch (error) {
+    // Serving falls back to reading the bindings from the repository.
+    logger.warn("Apps deployment binding index not written", {
+      projectId,
+      sha,
+      error,
+    });
+  }
+}
+
+/** Positive results only: an index written later (a rollback) must be seen. */
+const bindingIndexCache = new Map<string, Record<string, string>>();
+const BINDING_INDEX_CACHE_SIZE = 500;
+
+/** The deployment's binding keys by name, or null when it predates the index. */
+async function deploymentBindingIndex(
+  projectId: string,
+  sha: string,
+): Promise<Record<string, string> | null> {
+  const cacheKey = `${projectId}:${sha}`;
+  const cached = bindingIndexCache.get(cacheKey);
+  if (cached) return cached;
+  const asset = await existingDeploymentAsset(
+    projectId,
+    sha,
+    DEPLOYMENT_BINDING_INDEX,
+  );
+  const stream = asset ? await asset.store.openReadStream(asset.key) : null;
+  if (!stream) return null;
+  let keys: Record<string, string>;
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    keys = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch (error) {
+    logger.warn("Apps deployment binding index unreadable", {
+      projectId,
+      sha,
+      error,
+    });
+    return null;
+  }
+  if (bindingIndexCache.size >= BINDING_INDEX_CACHE_SIZE) {
+    const oldest = bindingIndexCache.keys().next().value;
+    if (oldest !== undefined) bindingIndexCache.delete(oldest);
+  }
+  bindingIndexCache.set(cacheKey, keys);
+  return keys;
+}
+
+/**
  * Make the data contract of a deployment ready before it becomes live.
  *
  * Binding definitions are read at the exact deployment commit, never from a
@@ -450,6 +531,8 @@ export async function ensureDeploymentBindings(
     });
     readiness.materialized.push(binding.name);
   }
+
+  await writeDeploymentBindingIndex(projectId, sha, bindings);
 
   logger.info("Apps deployment bindings ready", {
     projectId,
@@ -704,13 +787,18 @@ export async function serveDeploymentFile(input: {
   // dev server writes this file next to its staged parquet; published serving
   // derives it from the repo's bindings so published apps get tables too.
   if (assetPath === "__data/index.json") {
-    const project = await AppProject.findById(projectId);
+    const index = await deploymentBindingIndex(projectId, sha);
+    const project = index ? null : await AppProject.findById(projectId);
     // AT the deployed commit — see readSource's `at`. Tolerant, like the
     // per-binding data path: a malformed neighbour must not 500 the table
     // index that every healthy binding's registration depends on.
-    const names = project
-      ? (await readBindingsTolerant(project, "", sha)).bindings.map(b => b.name)
-      : [];
+    const names = index
+      ? Object.keys(index)
+      : project
+        ? (await readBindingsTolerant(project, "", sha)).bindings.map(
+            b => b.name,
+          )
+        : [];
     return new Response(JSON.stringify(names), {
       status: 200,
       headers: { "Content-Type": "application/json", "Cache-Control": cache },
@@ -726,10 +814,17 @@ export async function serveDeploymentFile(input: {
     // `apps/bindings/<connectionId>/<definitionHash>.parquet`. The old
     // `apps/<projectId>/<name>.parquet` key here was a scheme nothing
     // writes: published apps could never see their data (§13.19).
-    const project = await AppProject.findById(projectId);
-    const key = project
-      ? await bindingArtifactKeyByName(project, dataMatch[1], "", sha)
-      : null;
+    // The deployment's binding index when it has one (no repository read);
+    // a name it does not list is no healthy binding at this commit.
+    const index = await deploymentBindingIndex(projectId, sha);
+    const project = index ? null : await AppProject.findById(projectId);
+    const key = index
+      ? Object.hasOwn(index, dataMatch[1])
+        ? index[dataMatch[1]]
+        : null
+      : project
+        ? await bindingArtifactKeyByName(project, dataMatch[1], "", sha)
+        : null;
     if (!key) return null;
     const store = await artifactStoreForRead(key);
     if (!store) return null;

@@ -77,6 +77,7 @@ vi.mock("./box", () => ({
 }));
 
 import {
+  DEPLOYMENT_BINDING_INDEX,
   deployBuild,
   deploymentExists,
   deploymentKey,
@@ -85,6 +86,7 @@ import {
   serveDeploymentFile,
 } from "./deployment.service";
 import {
+  bindingArtifactKeyByName,
   materializeAppBinding,
   readBindingsTolerant,
   type AppBinding,
@@ -192,6 +194,86 @@ describe("published deployment artifact source", () => {
     expect(await anonymous?.json()).toBeNull();
     // Never a store read: identity is not an artifact.
     expect(stores.primary.exists).not.toHaveBeenCalled();
+  });
+});
+
+describe("deployment binding index", () => {
+  const projectId = "6a9411eb4c8b33609a65e665";
+  const project = { _id: { toString: () => projectId } } as never;
+
+  beforeEach(() => {
+    stores.primary = mockStore([]);
+    stores.source = undefined;
+    stores.skipped = [];
+    stores.bindings = [
+      {
+        name: "sales",
+        connectionId: "warehouse",
+        materialization: "parquet",
+        code: "select 1",
+        sql: "select 1",
+      },
+    ];
+    vi.clearAllMocks();
+  });
+
+  it("is written next to the deployment once its bindings are ready", async () => {
+    const sha = "1111111111111111111111111111111111111111";
+    await ensureDeploymentBindings(project, sha);
+
+    expect(stores.primary!.putBuffer).toHaveBeenCalledWith(
+      Buffer.from(
+        JSON.stringify({ sales: "apps/bindings/warehouse/sales.parquet" }),
+      ),
+      deploymentKey(projectId, sha, DEPLOYMENT_BINDING_INDEX),
+      "application/json",
+    );
+  });
+
+  it("serves binding data and the table list without reading the repository", async () => {
+    const sha = "2222222222222222222222222222222222222222";
+    const indexKey = deploymentKey(projectId, sha, DEPLOYMENT_BINDING_INDEX);
+    const bindingKey = "apps/bindings/warehouse/sales.parquet";
+    const store = mockStore([indexKey, bindingKey]);
+    store.openReadStream = vi.fn(async key =>
+      key === indexKey
+        ? Readable.from([JSON.stringify({ sales: bindingKey })])
+        : null,
+    );
+    stores.primary = store;
+
+    const data = await serveDeploymentFile({
+      projectId,
+      sha,
+      assetPath: "__data/sales.parquet",
+    });
+    expect(await data?.text()).toBe(`false:${bindingKey}`);
+
+    const names = await serveDeploymentFile({
+      projectId,
+      sha,
+      assetPath: "__data/index.json",
+    });
+    expect(await names?.json()).toEqual(["sales"]);
+
+    // not a binding at this commit, nor a key of Object.prototype
+    for (const name of ["other", "constructor"]) {
+      const missing = await serveDeploymentFile({
+        projectId,
+        sha,
+        assetPath: `__data/${name}.parquet`,
+      });
+      expect(missing).toBeNull();
+    }
+
+    expect(bindingArtifactKeyByName).not.toHaveBeenCalled();
+    expect(readBindingsTolerant).not.toHaveBeenCalled();
+    // read once, then cached: a deployment's keys never change
+    expect(
+      vi
+        .mocked(store.openReadStream)
+        .mock.calls.filter(([k]) => k === indexKey),
+    ).toHaveLength(1);
   });
 });
 
