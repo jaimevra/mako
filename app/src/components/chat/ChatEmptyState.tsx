@@ -11,8 +11,9 @@
  */
 
 import React from "react";
-import { Box, ButtonBase, Chip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { ArrowUpRight, Sparkles } from "lucide-react";
+import { Button } from "../ui/button";
 
 const ASK_SUGGESTIONS = [
   "What tables are in my database?",
@@ -120,86 +121,32 @@ export const ChatEmptyState = React.memo(function ChatEmptyState({
           </Box>
         </Box>
 
-        {isMobile ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 1,
-              justifyContent: "center",
-              maxWidth: 440,
-            }}
-          >
-            {suggestions.map(suggestion => (
-              <Chip
-                key={suggestion}
-                label={suggestion}
-                clickable
-                variant="outlined"
-                disabled={disabled}
-                onClick={() => onSelect(suggestion)}
-                sx={{
-                  height: "auto",
-                  py: 0.75,
-                  "& .MuiChip-label": {
-                    whiteSpace: "normal",
-                    display: "block",
-                    textAlign: "left",
-                  },
-                }}
-              />
-            ))}
-          </Box>
-        ) : (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.75,
-              width: "100%",
-              maxWidth: 380,
-            }}
-          >
-            {suggestions.map(suggestion => (
-              <ButtonBase
-                key={suggestion}
-                disabled={disabled}
-                onClick={() => onSelect(suggestion)}
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 1,
-                  width: "100%",
-                  px: 1.5,
-                  py: 1,
-                  borderRadius: "8px",
-                  textAlign: "left",
-                  fontSize: "13px",
-                  color: "var(--bui-ink)",
-                  backgroundColor: "var(--bui-surface)",
-                  boxShadow: "var(--bui-shadow-hairline)",
-                  transition: "background-color 120ms ease-out",
-                  "&:hover": { backgroundColor: "var(--bui-hover-2)" },
-                  "&.Mui-disabled": { opacity: 0.5 },
-                }}
-              >
-                <Box component="span">{suggestion}</Box>
-                <Box
-                  component="span"
-                  aria-hidden
-                  sx={{
-                    display: "flex",
-                    color: "var(--bui-ink-3)",
-                    flexShrink: 0,
-                  }}
-                >
-                  <ArrowUpRight size={14} />
-                </Box>
-              </ButtonBase>
-            ))}
-          </Box>
-        )}
+        <div
+          className={
+            isMobile
+              ? "flex w-full max-w-md flex-wrap justify-center gap-2"
+              : "flex w-full max-w-sm flex-col gap-2"
+          }
+        >
+          {suggestions.map(suggestion => (
+            <Button
+              key={suggestion}
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => onSelect(suggestion)}
+              className={
+                isMobile
+                  ? "h-auto whitespace-normal rounded-full px-3 py-2 text-left"
+                  : "h-auto justify-between whitespace-normal px-3 py-2 text-left"
+              }
+            >
+              <span>{suggestion}</span>
+              {!isMobile && <ArrowUpRight aria-hidden="true" />}
+            </Button>
+          ))}
+        </div>
       </Box>
     </Box>
   );
