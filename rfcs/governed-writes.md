@@ -18,7 +18,6 @@ same function and the same checks.
 -- actions/set_quota.sql
 -- connection: bigquery_write
 -- writes: mako_app.quotas
--- allow: editor
 
 MERGE mako_app.quotas q
 USING (SELECT :rep_id AS rep_id, :quarter AS quarter, :amount AS amount) s
@@ -32,15 +31,28 @@ WHEN NOT MATCHED THEN INSERT (rep_id, quarter, amount, updated_by, updated_at)
 The caller supplies only `:param` values. `{{viewer.*}}` is filled in by the
 server and can't be forged. The statement itself is reviewed code.
 
-## Three layers of "who may write where"
+## Who may write where
 
-| Layer | Decided by | Where | Mechanism |
-|---|---|---|---|
-| Which tables | workspace admin | connection settings | `writableTargets` allowlist (new); the DB's own `GRANT` as a backstop |
-| Which rows / columns | the author | the statement | `WHERE … = {{viewer.id}}`, column list in the SQL |
-| Who may call it | the author | `-- allow:` | app role (apps); the workflow runtime (workflows) |
+One rule, in one place: **a connection carries an allowlist of writable
+targets.** A target is a dataset/schema (`mako_app.*`) or a table
+(`analytics.ticket_labels`). Anything not listed is read-only, whatever the
+credential can do. The list lives on the connection in Mongo next to
+`allowAgentWrites`, is changed by workspace admins only, and never touches git.
 
-No new permission language. The admin lists targets, the SQL does the rest.
+Who may call a write is nothing new:
+
+| Caller | Who | Decided where |
+|---|---|---|
+| App action | the app's **editors** (per-app ACL) | app access settings, as today |
+| Workflow | the workflow runtime | deploying the workflow, as today |
+
+Viewers and anonymous public-share visitors never write. Row rules
+(`WHERE rep_id = {{viewer.id}}`) are part of the statement, not a permission:
+they can only narrow what the allowlist already permits.
+
+Not a policy language. If a rule with conditions is ever needed ("managers,
+for reps in their team"), that is a new RFC; the allowlist is shaped as
+(target, principal) so it can be migrated without redesign.
 
 ## Changes, by size
 
@@ -69,8 +81,7 @@ Checks, in order, each failing with a message that says why and how to fix it:
 4. every table in a write position of the statement is the declared target
    (sanity check via the existing SQL parser; the declaration is the contract,
    not the parse)
-5. actor is allowed: app role satisfies `-- allow:`, or actor is the
-   workflow runtime
+5. actor is allowed: an editor of the app, or the workflow runtime
 6. bind `:params` as driver parameters (never string-interpolated), fill
    `{{viewer.*}}` server-side
 7. run through the existing driver with `readOnly: false`
@@ -97,14 +108,30 @@ already accept.
 - The worker key gains the `query:write` scope; it is already read-only unless
   the connection opts in, and now also unless the target is allowlisted.
 
+## UI: the allowlist lives in the database tree
+
+`allowAgentWrites` has no UI today (API-only, `routes/workspace-databases.ts`).
+This RFC adds the first one, in the tree where the tables already are:
+
+- **Badge.** A small pencil mark after a connection with writes on, and after
+  each dataset/schema or table in its allowlist. Read-only rows look as today.
+- **Right-click a dataset or table (admins):** "Allow writes here" /
+  "Revoke writes". That is the editor. The first grant turns
+  `allowAgentWrites` on; revoking the last turns it off.
+- **Connection dialog:** a "Writes" section listing the targets as chips with
+  a remove ×, for review in one place. Non-admins see it, can't change it.
+- **Agent:** `list_connections` / `inspect_connection` return the allowlist,
+  so the agent knows where it may write before drafting an action or a
+  workflow; a refusal names the list.
+
 ## Explicitly not in this RFC
 
 - **Table creation / migration.** The customer (or the agent, via a console on
   a write-flagged connection) creates tables. Mako writes into tables that exist.
 - **Column-level grants in Mako.** Columns are decided in the statement; the DB
   can add column grants if wanted.
-- **A policy language** (Cedar, OPA). Revisit only when a rule can't be
-  expressed as `-- allow:` plus a `WHERE`.
+- **A policy language** (Cedar, OPA) and per-target principals. Revisit only
+  when "app editors" / "workflow runtime" is not enough.
 - **Writes from public share links.**
 - **A Mako-managed default database.** Pure BYOD; a workspace without a
   writable connection can't write.
@@ -117,6 +144,6 @@ already accept.
    `mako_app.ticket_labels`; re-runs don't duplicate.
 3. A statement targeting a table outside `writableTargets` is refused before
    it reaches the database, with a message naming the allowlist.
-4. A viewer without the `-- allow:` role gets 403; the UI can read the
-   action's `allow` to hide the control.
+4. An app viewer (not editor) gets 403 on any action; the SDK exposes
+   `viewer.app.role` so the UI can hide the control.
 5. A read-only app and every existing binding behave exactly as before.
