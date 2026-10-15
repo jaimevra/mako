@@ -15,6 +15,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: [
+      "src/apps/sharing-routes.test.ts",
       "src/apps/worktree.service.test.ts",
       "src/apps/workspace-repo.test.ts",
       "src/apps/workspace-prompt.test.ts",

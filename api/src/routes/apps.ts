@@ -217,15 +217,17 @@ appsRoutes.use("*", async (c: AuthenticatedContext, next) => {
     } else if (user) {
       // A stranger from a trusted domain joins here — this is the request
       // their first click on a published app's link makes (apps.md §28).
-      const hasAccess =
-        (await workspaceService.hasAccess(workspaceId, user.id)) ||
-        (await ensureAutoJoin(workspaceId, user)) !== null;
-      if (!hasAccess) {
+      const member =
+        (await workspaceService.getMember(workspaceId, user.id)) ??
+        (await ensureAutoJoin(workspaceId, user));
+      if (!member) {
         return c.json(
           { success: false, error: "Access denied to workspace" },
           403,
         );
       }
+      // Shared sharing handlers read the role from context for admin access.
+      c.set("memberRole", member.role);
     } else {
       return c.json({ success: false, error: "Unauthorized" }, 401);
     }
