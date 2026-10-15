@@ -1,6 +1,8 @@
 name: Frontend tests
 
-# The frontend suite, on frontend pull requests, and nothing else.
+# Frontend unit tests are required by the master branch ruleset. Run them on
+# every pull request so API-only changes do not wait for a check that path
+# filters prevent from starting.
 #
 # api-contract.yml is the only other workflow that runs tests on a pull
 # request, and it is a heavy job: the api tsx chain, agent-tools, the
@@ -26,11 +28,6 @@ on:
       - master
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - "app/src/**"
-      - "app/package.json"
-      - "app/vite.config.ts"
-      - ".github/workflows/frontend-tests.yml"
 
 jobs:
   frontend:
