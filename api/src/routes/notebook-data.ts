@@ -10,6 +10,7 @@
  * standard session/workspace-API-key credential, so the endpoint is usable from
  * both a sandboxed kernel and normal programmatic clients.
  */
+import { accessDenial, usableConnections } from "../access/connection-access";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context, Next } from "hono";
 import { Types } from "mongoose";
@@ -128,11 +129,14 @@ notebookDataRoutes.openapi(
   }),
   async c => {
     const workspace = c.get("workspace") as { _id: unknown };
-    const rows = await DatabaseConnection.find({
-      workspaceId: new Types.ObjectId(String(workspace._id)),
-    })
-      .select("_id name type")
-      .lean();
+    const rows = await usableConnections(
+      await DatabaseConnection.find({
+        workspaceId: new Types.ObjectId(String(workspace._id)),
+      })
+        .select("_id name type access")
+        .lean(),
+      { workspaceId: String(workspace._id), userId: c.get("user")?.id },
+    );
     const data = rows.map(r => ({
       id: String(r._id),
       name: (r as { name?: string }).name ?? "",
@@ -207,6 +211,12 @@ notebookDataRoutes.openapi(
           404,
         );
       }
+      const denial = await accessDenial(database, {
+        workspaceId: String(workspace._id),
+        userId: c.get("user")?.id,
+        need: "read",
+      });
+      if (denial) return c.json({ success: false, error: denial }, 403);
 
       // Notebook reads are SQL-only; the read-only guard + row-limit wrapper
       // are SQL constructs. (Mongo/KV sources are out of scope for this path.)

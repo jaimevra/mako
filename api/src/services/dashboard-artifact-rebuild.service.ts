@@ -1,3 +1,4 @@
+import { asSystemConnection } from "../access/connection-access";
 import crypto from "crypto";
 import { Types } from "mongoose";
 import { Dashboard, DatabaseConnection } from "../database/workspace-schema";
@@ -134,7 +135,9 @@ export async function rebuildDashboardArtifacts(
     ds =>
       // Live sources stream on read and have no artifact to build.
       ds.materialization !== "live" &&
-      (input.dataSourceIds?.length ? input.dataSourceIds.includes(ds.id) : true),
+      (input.dataSourceIds?.length
+        ? input.dataSourceIds.includes(ds.id)
+        : true),
   );
 
   const results: RebuildDashboardArtifactsResult["results"] = [];
@@ -283,7 +286,10 @@ export async function rebuildDashboardArtifacts(
           );
         }
 
-        const database = await DatabaseConnection.findById(connectionId);
+        // A background refresh of a dashboard someone already built: system.
+        const database = asSystemConnection(
+          await DatabaseConnection.findById(connectionId),
+        );
         if (!database) {
           throw new Error(`Database connection not found for ${dataSource.id}`);
         }

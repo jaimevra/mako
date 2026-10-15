@@ -12,6 +12,7 @@ import {
   IDatabaseConnection,
   Flow,
   SavedConsole,
+  type ConnectionAccessLevel,
 } from "../database/workspace-schema";
 import { databaseConnectionService } from "../services/database-connection.service";
 import { recordConnectionVerification } from "../services/connection-verification.service";
@@ -22,6 +23,15 @@ import {
   QueryStatus,
 } from "../services/query-execution.service";
 import { Types } from "mongoose";
+import type { Context } from "hono";
+import {
+  accessDenial,
+  canManageConnectionAccess,
+  connectionLevel,
+  isRestricted,
+  usableConnections,
+  userPrincipal,
+} from "../access/connection-access";
 import { loggers } from "../logging";
 import { ConsoleManager } from "../utils/console-manager";
 import {
@@ -43,7 +53,7 @@ const consoleManager = new ConsoleManager();
 
 type WorkspaceDatabaseRouteError = {
   response: { success: false; error: string };
-  status: 400 | 404;
+  status: 400 | 403 | 404;
 };
 
 type WorkspaceDatabaseResult =
@@ -63,9 +73,39 @@ function isWorkspaceMongoDbRouteError(
   return "response" in result;
 }
 
+/**
+ * The access gate for a connection a route loaded
+ * (access/connection-access.ts): why the caller may not use it at `need`, or
+ * null when they may (the connection is then marked so its queries run).
+ */
+async function connectionDenial(
+  c: Context,
+  database: IDatabaseConnection,
+  need: ConnectionAccessLevel,
+): Promise<string | null> {
+  return accessDenial(database, {
+    workspaceId: database.workspaceId,
+    userId: c.get("user")?.id,
+    memberRole: c.get("memberRole"),
+    need,
+  });
+}
+
+/** `connectionDenial` as a 403 response, for routes that return one. */
+async function denyConnection(
+  c: Context,
+  database: IDatabaseConnection,
+  need: ConnectionAccessLevel,
+): Promise<Response | null> {
+  const denial = await connectionDenial(c, database, need);
+  return denial ? c.json({ success: false, error: denial }, 403) : null;
+}
+
 async function getWorkspaceDatabase(
+  c: Context,
   workspaceId: Types.ObjectId,
   databaseId: string,
+  need: ConnectionAccessLevel,
 ): Promise<WorkspaceDatabaseResult> {
   if (!Types.ObjectId.isValid(databaseId)) {
     return {
@@ -96,14 +136,24 @@ async function getWorkspaceDatabase(
     };
   }
 
+  const denial = await connectionDenial(c, database, need);
+  if (denial) {
+    return {
+      response: { success: false, error: denial },
+      status: 403 as const,
+    };
+  }
+
   return { database };
 }
 
 async function getWorkspaceMongoDb(
+  c: Context,
   workspaceId: Types.ObjectId,
   databaseId: string,
+  need: ConnectionAccessLevel,
 ): Promise<WorkspaceMongoDbResult> {
-  const result = await getWorkspaceDatabase(workspaceId, databaseId);
+  const result = await getWorkspaceDatabase(c, workspaceId, databaseId, need);
   if (isWorkspaceDatabaseRouteError(result)) return result;
 
   const connection = await databaseConnectionService.getConnection(
@@ -411,9 +461,17 @@ workspaceDatabaseRoutes.openapi(
     try {
       const workspace = c.get("workspace");
 
-      const databases = await DatabaseConnection.find({
-        workspaceId: workspace._id,
-      }).sort({ createdAt: -1 });
+      // Restricted connections the caller may not use are not listed.
+      const databases = await usableConnections(
+        await DatabaseConnection.find({
+          workspaceId: workspace._id,
+        }).sort({ createdAt: -1 }),
+        {
+          workspaceId: workspace._id,
+          userId: c.get("user")?.id,
+          memberRole: c.get("memberRole"),
+        },
+      );
 
       // Transform to API response format without connection details for security
       const transformedDatabases = databases.map((db: IDatabaseConnection) => {
@@ -459,6 +517,8 @@ workspaceDatabaseRoutes.openapi(
           displayName: db.name || conn.database || "Unknown Database",
           hostKey,
           hostName,
+          // Only the people on its list can use it (shown with a lock).
+          restricted: isRestricted(db),
         };
       });
 
@@ -522,6 +582,8 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       const conn: any = database.connection || {};
       const isClusterMode = !conn.database;
@@ -615,6 +677,12 @@ workspaceDatabaseRoutes.openapi(
           _id: new Types.ObjectId(body.connectionId),
           workspaceId: c.get("workspace")._id,
         });
+        // Testing an edit with the saved secrets is an edit: on a restricted
+        // connection, managers only.
+        if (saved && isRestricted(saved)) {
+          const denied = await denyConnection(c, saved, "manage");
+          if (denied) return denied;
+        }
         if (saved) {
           const previous =
             (saved.toObject({ getters: true }) as any).connection || {};
@@ -846,6 +914,12 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(
+        c,
+        database,
+        isRestricted(database) ? "manage" : "write",
+      );
+      if (denied) return denied;
 
       const verifyBeforeSave = body.verifyBeforeSave === true;
 
@@ -943,6 +1017,187 @@ workspaceDatabaseRoutes.openapi(
   },
 );
 
+// Who may use a connection (access/connection-access.ts). Reading the list
+// takes the right to use the connection; changing it, its managers.
+const accessParams = z.object({
+  workspaceId: z
+    .string()
+    .openapi({ param: { name: "workspaceId", in: "path" } }),
+  id: z.string().openapi({ param: { name: "id", in: "path" } }),
+});
+
+const AccessEntrySchema = z.object({
+  principal: z
+    .string()
+    .regex(/^user:[A-Za-z0-9_-]+$/)
+    .openapi({ example: "user:6846e6a01b05af0948070582" }),
+  level: z.enum(["read", "write", "manage"]),
+});
+
+workspaceDatabaseRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/{id}/access",
+    tags: ["Databases"],
+    summary: "Who may use this connection",
+    security: AUTH_SECURITY,
+    middleware: [unifiedAuthMiddleware, requireWorkspace] as const,
+    request: { params: accessParams },
+    responses: { ...OPEN_RESPONSES },
+  }),
+  async c => {
+    const workspace = c.get("workspace");
+    const databaseId = c.req.param("id");
+    if (!Types.ObjectId.isValid(databaseId)) {
+      return c.json({ success: false, error: "Invalid database ID" }, 400);
+    }
+    const database = await DatabaseConnection.findOne({
+      _id: new Types.ObjectId(databaseId),
+      workspaceId: workspace._id,
+    });
+    if (!database) {
+      return c.json({ success: false, error: "Database not found" }, 404);
+    }
+    const denied = await denyConnection(c, database, "read");
+    if (denied) return denied;
+    const userId = c.get("user")?.id;
+    const memberRole = c.get("memberRole");
+    return c.json({
+      success: true,
+      data: {
+        restricted: isRestricted(database),
+        entries: (database.access?.entries ?? []).map(e => ({
+          principal: e.principal,
+          level: e.level,
+        })),
+        level: connectionLevel(database, userId, memberRole),
+        canManage: canManageConnectionAccess(database, userId, memberRole),
+        updatedBy: database.access?.updatedBy ?? null,
+        updatedAt: database.access?.updatedAt ?? null,
+      },
+    });
+  },
+);
+
+workspaceDatabaseRoutes.openapi(
+  createRoute({
+    method: "put",
+    path: "/{id}/access",
+    tags: ["Databases"],
+    summary: "Change who may use this connection",
+    security: AUTH_SECURITY,
+    middleware: [unifiedAuthMiddleware, requireWorkspace] as const,
+    request: {
+      params: accessParams,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              restricted: z.boolean(),
+              entries: z.array(AccessEntrySchema).max(500),
+            }),
+          },
+        },
+      },
+    },
+    responses: { ...OPEN_RESPONSES },
+  }),
+  async c => {
+    const workspace = c.get("workspace");
+    const databaseId = c.req.param("id");
+    const user = c.get("user");
+    const memberRole = c.get("memberRole");
+    // A person decides who sees data, in the app: never an API key, MCP
+    // client or agent, whatever it is asked.
+    if (c.get("authType") !== "session" || !user?.id) {
+      return c.json(
+        { success: false, error: "Access can only be changed in the app" },
+        403,
+      );
+    }
+    if (!Types.ObjectId.isValid(databaseId)) {
+      return c.json({ success: false, error: "Invalid database ID" }, 400);
+    }
+    const database = await DatabaseConnection.findOne({
+      _id: new Types.ObjectId(databaseId),
+      workspaceId: workspace._id,
+    });
+    if (!database) {
+      return c.json({ success: false, error: "Database not found" }, 404);
+    }
+    if (!canManageConnectionAccess(database, user.id, memberRole)) {
+      return c.json(
+        {
+          success: false,
+          error: isRestricted(database)
+            ? "Only this connection's managers can change who uses it"
+            : "Only the workspace owner and admins can restrict a connection",
+        },
+        403,
+      );
+    }
+
+    const body = c.req.valid("json");
+    // Every principal must be a member of this workspace.
+    const members = await workspaceService.getMembers(String(workspace._id));
+    const memberIds = new Set(members.map(m => String(m.userId)));
+    const entries = new Map<string, "read" | "write" | "manage">();
+    for (const entry of body.entries) {
+      const id = entry.principal.slice("user:".length);
+      if (!memberIds.has(id)) {
+        return c.json(
+          {
+            success: false,
+            error: `${entry.principal} is not a member of this workspace`,
+          },
+          400,
+        );
+      }
+      entries.set(entry.principal, entry.level);
+    }
+    // Whoever restricts a connection manages it, so nobody restricts one
+    // away from themselves; the owner manages every connection anyway.
+    if (body.restricted && memberRole !== "owner") {
+      entries.set(userPrincipal(user.id), "manage");
+    }
+
+    const now = new Date();
+    database.access = {
+      restricted: body.restricted,
+      entries: [...entries].map(([principal, level]) => ({
+        principal,
+        level,
+        addedBy:
+          database.access?.entries?.find(e => e.principal === principal)
+            ?.addedBy ?? user.id,
+        addedAt:
+          database.access?.entries?.find(e => e.principal === principal)
+            ?.addedAt ?? now,
+      })),
+      updatedBy: user.id,
+      updatedAt: now,
+    };
+    await database.save();
+    logger.info("Connection access changed", {
+      workspaceId: String(workspace._id),
+      databaseId,
+      userId: user.id,
+      restricted: body.restricted,
+      entries: database.access.entries.length,
+    });
+    return c.json({
+      success: true,
+      data: {
+        restricted: body.restricted,
+        entries: database.access.entries.map(e => ({
+          principal: e.principal,
+          level: e.level,
+        })),
+      },
+    });
+  },
+);
+
 // Delete database
 workspaceDatabaseRoutes.openapi(
   createRoute({
@@ -990,6 +1245,17 @@ workspaceDatabaseRoutes.openapi(
           },
           409,
         );
+      }
+
+      // Deleting a restricted connection is for its managers, not every
+      // admin: otherwise it could be deleted and recreated without its list.
+      const existing = await DatabaseConnection.findOne({
+        _id: new Types.ObjectId(databaseId),
+        workspaceId: workspace._id,
+      });
+      if (existing && isRestricted(existing)) {
+        const denied = await denyConnection(c, existing, "manage");
+        if (denied) return denied;
       }
 
       const result = await DatabaseConnection.deleteOne({
@@ -1066,6 +1332,8 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       const startedAt = Date.now();
       const result = await databaseConnectionService.testConnection(database);
@@ -1156,6 +1424,8 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       if (!body.query) {
         return c.json({ success: false, error: "Query is required" }, 400);
@@ -1218,6 +1488,8 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       if (database.type === "mongodb") {
         const connection =
@@ -1321,7 +1593,12 @@ workspaceDatabaseRoutes.openapi(
         );
       }
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        c,
+        workspace._id,
+        databaseId,
+        "write",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1409,6 +1686,8 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       if (database.type !== "mongodb") {
         return c.json(
@@ -1501,7 +1780,12 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const collectionName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        c,
+        workspace._id,
+        databaseId,
+        "read",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1584,7 +1868,12 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const collectionName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        c,
+        workspace._id,
+        databaseId,
+        "write",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1661,6 +1950,8 @@ workspaceDatabaseRoutes.openapi(
       if (!database) {
         return c.json({ success: false, error: "Database not found" }, 404);
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       if (database.type === "mongodb") {
         const connection =
@@ -1752,7 +2043,12 @@ workspaceDatabaseRoutes.openapi(
         );
       }
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        c,
+        workspace._id,
+        databaseId,
+        "write",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1838,7 +2134,12 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const viewName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        c,
+        workspace._id,
+        databaseId,
+        "read",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1917,7 +2218,12 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const viewName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        c,
+        workspace._id,
+        databaseId,
+        "write",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -2059,6 +2365,8 @@ workspaceExecuteRoutes.openapi(
           404,
         );
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       const executableQuery = buildExecutableQuery(
         effectiveQueryDefinition,
@@ -2414,6 +2722,8 @@ workspaceExecuteRoutes.openapi(
           404,
         );
       }
+      const denied = await denyConnection(c, database, "read");
+      if (denied) return denied;
 
       const executableQuery = buildExecutableQuery(
         queryDefinition,

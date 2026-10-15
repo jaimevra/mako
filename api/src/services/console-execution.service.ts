@@ -10,6 +10,7 @@
  * survive detached agent sessions) and publishes console.run.completed on
  * the workspace realtime channel.
  */
+import { accessDenial } from "../access/connection-access";
 import { Types } from "mongoose";
 import {
   SavedConsole,
@@ -187,6 +188,14 @@ async function resolveConsoleForRun(
       savedConsole,
     };
   }
+  // Whoever runs the console must be allowed to use its connection
+  // (access/connection-access.ts); a scheduled run acts as its owner.
+  const denial = await accessDenial(database, {
+    workspaceId,
+    userId: input.userId,
+    need: "read",
+  });
+  if (denial) return { ok: false, error: denial, savedConsole };
 
   return { ok: true, savedConsole, database };
 }
@@ -495,25 +504,21 @@ export async function startDetachedConsoleRun(
     // of capping at the interactive 5-minute default.
     bigQueryJobMaxWaitMs: QUERY_HARD_MAX_EXECUTION_MS,
   })
-    .catch(
-      (error): ExecuteSavedConsoleResult => ({
-        success: false,
-        rows: [],
-        rowCount: 0,
-        fields: null,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Detached console run failed",
-        durationMs: Date.now() - startTime,
-        status: "error",
-        console: {
-          id: savedConsole._id.toString(),
-          name: savedConsole.name,
-          language: savedConsole.language,
-        },
-      }),
-    )
+    .catch((error): ExecuteSavedConsoleResult => ({
+      success: false,
+      rows: [],
+      rowCount: 0,
+      fields: null,
+      error:
+        error instanceof Error ? error.message : "Detached console run failed",
+      durationMs: Date.now() - startTime,
+      status: "error",
+      console: {
+        id: savedConsole._id.toString(),
+        name: savedConsole.name,
+        language: savedConsole.language,
+      },
+    }))
     .finally(() => {
       clearTimeout(hardCapTimer);
       databaseConnectionService.releaseDetachedExecution(executionId);

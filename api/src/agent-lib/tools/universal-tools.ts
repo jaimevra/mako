@@ -6,6 +6,7 @@
  * client via the onToolCall callback.
  */
 
+import { usableConnections } from "../../access/connection-access";
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -145,14 +146,17 @@ export async function listAllConnectionsImpl(
     kind === "source"
       ? []
       : (
-          await DatabaseConnection.find({
-            workspaceId: wsId,
-            type: {
-              $in: Array.from(
-                ALL_SUPPORTED_TYPES,
-              ) as IDatabaseConnection["type"][],
-            },
-          }).sort({ name: 1 })
+          await usableConnections(
+            await DatabaseConnection.find({
+              workspaceId: wsId,
+              type: {
+                $in: Array.from(
+                  ALL_SUPPORTED_TYPES,
+                ) as IDatabaseConnection["type"][],
+              },
+            }).sort({ name: 1 }),
+            { workspaceId, userId: undefined },
+          )
         ).map(db => ({
           ...summarizeConnectionForListing(
             db as unknown as Parameters<

@@ -4,6 +4,7 @@
  * Uses agent registry for multi-agent support
  */
 
+import { usableConnections } from "../access/connection-access";
 import {
   readWorkspacePromptFile,
   readWorkspaceSelfDirectiveFile,
@@ -671,9 +672,12 @@ agentRoutes.openapi(
     }
 
     // Get workspace database connections for context (include sqlDialect for prompt enrichment)
-    const workspaceDatabases = await DatabaseConnection.find({
-      workspaceId: new ObjectId(workspaceId),
-    }).select({ type: 1, name: 1, sqlDialect: 1 });
+    const workspaceDatabases = await usableConnections(
+      await DatabaseConnection.find({
+        workspaceId: new ObjectId(workspaceId),
+      }).select({ type: 1, name: 1, sqlDialect: 1, access: 1 }),
+      { workspaceId, userId: undefined },
+    );
 
     const databaseTypeMap = new Map<string, string>();
     const databaseNameMap = new Map<string, string>();

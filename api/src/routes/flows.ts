@@ -1,3 +1,4 @@
+import { accessDenial } from "../access/connection-access";
 import { createRoute, z } from "@hono/zod-openapi";
 import { findInWorkspace } from "./lib/load-resource";
 import {
@@ -646,6 +647,37 @@ async function assertOwnerOrAdmin(
 // GET /api/workspaces/:workspaceId/flows - List all flows
 // Git at main is the definition; Mongo is overlay (runtime / SHA / webhook).
 // No GitHub binding → 200 empty list, not 412. Leftover local git is ignored.
+
+/**
+ * Why `userId` may not use a flow's source (read) or destination (write)
+ * connection, or null. A flow runs as the system, so it is checked when a
+ * person sets it up or changes it.
+ */
+async function flowConnectionsDenial(
+  workspaceId: string,
+  userId: string | undefined,
+  ids: { source?: unknown; destination?: unknown },
+): Promise<string | null> {
+  for (const [id, need] of [
+    [ids.source, "read"],
+    [ids.destination, "write"],
+  ] as const) {
+    if (!id || !Types.ObjectId.isValid(String(id))) continue;
+    const connection = await DatabaseConnection.findOne({
+      _id: new Types.ObjectId(String(id)),
+      workspaceId: new Types.ObjectId(workspaceId),
+    }).select("access workspaceId");
+    if (!connection) continue;
+    const denial = await accessDenial(connection, {
+      workspaceId,
+      userId,
+      need,
+    });
+    if (denial) return denial;
+  }
+  return null;
+}
+
 flowRoutes.openapi(
   createRoute({
     method: "get",
@@ -902,6 +934,14 @@ flowRoutes.openapi(
             404,
           );
         }
+        const sourceDenial = await accessDenial(sourceDb, {
+          workspaceId,
+          userId: c.get("user")?.id,
+          need: "read",
+        });
+        if (sourceDenial) {
+          return c.json({ success: false, error: sourceDenial }, 403);
+        }
       } else {
         // Connector source validation (default)
         if (!body.dataSourceId) {
@@ -945,6 +985,14 @@ flowRoutes.openapi(
             404,
           );
         }
+        const destDenial = await accessDenial(destDb, {
+          workspaceId,
+          userId: c.get("user")?.id,
+          need: "write",
+        });
+        if (destDenial) {
+          return c.json({ success: false, error: destDenial }, 403);
+        }
 
         // Use the table destination connection as the destinationDatabaseId
         destinationDatabaseId = new Types.ObjectId(
@@ -963,6 +1011,14 @@ flowRoutes.openapi(
             { success: false, error: "Destination database not found" },
             404,
           );
+        }
+        const destDenial = await accessDenial(database, {
+          workspaceId,
+          userId: c.get("user")?.id,
+          need: "write",
+        });
+        if (destDenial) {
+          return c.json({ success: false, error: destDenial }, 403);
         }
 
         destinationDatabaseId = new Types.ObjectId(body.destinationDatabaseId);
@@ -1373,6 +1429,25 @@ flowRoutes.openapi(
 
       if (!flow) {
         return c.json({ success: false, error: "Flow not found" }, 404);
+      }
+      // Whoever edits a flow must be able to use what it reads and writes
+      // (access/connection-access.ts): a flow cannot borrow access.
+      const flowDenial = await flowConnectionsDenial(
+        workspaceId,
+        c.get("user")?.id,
+        {
+          source:
+            body.databaseSource?.connectionId ??
+            (flow as any).databaseSource?.connectionId,
+          destination:
+            body.tableDestination?.connectionId ??
+            body.destinationDatabaseId ??
+            flow.tableDestination?.connectionId ??
+            flow.destinationDatabaseId,
+        },
+      );
+      if (flowDenial) {
+        return c.json({ success: false, error: flowDenial }, 403);
       }
 
       // Update common fields. Under the unified trigger model any flow may
@@ -2448,6 +2523,14 @@ flowRoutes.openapi(
           flow.tableDestination.connectionId,
         );
         if (destination) {
+          const resetDenial = await accessDenial(destination, {
+            workspaceId,
+            userId: c.get("user")?.id,
+            need: "write",
+          });
+          if (resetDenial) {
+            return c.json({ success: false, error: resetDenial }, 403);
+          }
           const driver = databaseRegistry.getDriver(destination.type);
           if (driver?.dropTable) {
             const schema = flow.tableDestination.schema;
@@ -2664,6 +2747,14 @@ flowRoutes.openapi(
         );
       }
       const destinationDoc = destinationRaw.toObject();
+      const columnDenial = await accessDenial(destinationDoc, {
+        workspaceId,
+        userId: c.get("user")?.id,
+        need: "write",
+      });
+      if (columnDenial) {
+        return c.json({ success: false, error: columnDenial }, 403);
+      }
 
       const destinationType = String(destinationDoc.type || "").toLowerCase();
       const schema = flow.tableDestination.schema;
@@ -4033,6 +4124,15 @@ flowRoutes.openapi(
         );
       }
 
+      const healthDenial = await accessDenial(destination, {
+        workspaceId,
+        userId: c.get("user")?.id,
+        need: "read",
+      });
+      if (healthDenial) {
+        return c.json({ success: false, error: healthDenial }, 403);
+      }
+
       if (destination.type !== "bigquery") {
         return c.json(
           {
@@ -4221,6 +4321,14 @@ flowRoutes.openapi(
       const destination = destinationDoc?.toObject();
       if (!destination) {
         return c.json({ success: true, data: {} });
+      }
+      const countsDenial = await accessDenial(destination, {
+        workspaceId,
+        userId: c.get("user")?.id,
+        need: "read",
+      });
+      if (countsDenial) {
+        return c.json({ success: false, error: countsDenial }, 403);
       }
 
       const { entities: configuredEntities } = resolveConfiguredEntities(
@@ -5097,6 +5205,14 @@ flowRoutes.openapi(
           404,
         );
       }
+      const queryDenial = await accessDenial(connection, {
+        workspaceId: connection.workspaceId,
+        userId: c.get("user")?.id,
+        need: "read",
+      });
+      if (queryDenial) {
+        return c.json({ success: false, error: queryDenial }, 403);
+      }
 
       // Validate the query
       const result = await validateQuery(connection, query, database);
@@ -5195,6 +5311,14 @@ flowRoutes.openapi(
           { success: false, error: "Database connection not found" },
           404,
         );
+      }
+      const queryDenial = await accessDenial(connection, {
+        workspaceId: connection.workspaceId,
+        userId: c.get("user")?.id,
+        need: "read",
+      });
+      if (queryDenial) {
+        return c.json({ success: false, error: queryDenial }, 403);
       }
 
       // Run dry run

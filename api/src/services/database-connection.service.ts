@@ -1,3 +1,4 @@
+import { assertMayQuery } from "../access/connection-access";
 import { createClient } from "@clickhouse/client";
 import { MongoClient, Db, MongoClientOptions, ClientSession } from "mongodb";
 import { Client as PgClient, Pool as PgPool } from "pg";
@@ -532,6 +533,11 @@ export class DatabaseConnectionService {
     options?: QueryExecuteOptions,
   ): Promise<QueryResult> {
     try {
+      // Second check, after the gate where the connection was obtained
+      // (access/connection-access.ts): a restricted connection runs only if
+      // it came through that gate, and read-only when the grant is `read`.
+      const readOnly = assertMayQuery(database, options?.readOnly);
+      if (readOnly !== options?.readOnly) options = { ...options, readOnly };
       if (options?.readOnly) {
         if (typeof query !== "string") {
           return {
@@ -934,6 +940,8 @@ export class DatabaseConnectionService {
    * Get database connection
    */
   async getConnection(database: IDatabaseConnection): Promise<any> {
+    // A raw client reads like a query does: the same check as executeQuery.
+    assertMayQuery(database, undefined);
     const key = database._id.toString();
 
     // For MongoDB, use advanced pooling

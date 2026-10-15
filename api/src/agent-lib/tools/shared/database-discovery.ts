@@ -5,6 +5,10 @@
  * These handle listing connections, databases, tables, and table inspection.
  */
 
+import {
+  authorizeConnection,
+  usableConnections,
+} from "../../../access/connection-access";
 import { z } from "zod";
 import {
   DatabaseConnection,
@@ -83,6 +87,12 @@ async function fetchDatabase(
   if (!database) {
     throw new Error("Database connection not found or access denied");
   }
+  // Throws when the person acting may not use it (access/connection-access.ts).
+  await authorizeConnection(database, {
+    workspaceId,
+    userId: undefined,
+    need: "read",
+  });
 
   const allowedTypes = options.includeNoSQL
     ? ALL_SUPPORTED_TYPES
@@ -128,10 +138,13 @@ export async function listConnectionsImpl(
       ? ALL_SQL_TYPES
       : ALL_SUPPORTED_TYPES;
 
-  const databases = await DatabaseConnection.find({
-    workspaceId: workspaceObjectId,
-    type: { $in: Array.from(allowedTypes) as IDatabaseConnection["type"][] },
-  }).sort({ name: 1 });
+  const databases = await usableConnections(
+    await DatabaseConnection.find({
+      workspaceId: workspaceObjectId,
+      type: { $in: Array.from(allowedTypes) as IDatabaseConnection["type"][] },
+    }).sort({ name: 1 }),
+    { workspaceId, userId: undefined },
+  );
 
   return databases.map(db => {
     const connection: Record<string, unknown> =

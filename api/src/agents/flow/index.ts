@@ -9,6 +9,7 @@
  * as the single source of truth for field names and context injection.
  */
 
+import { accessDenial } from "../../access/connection-access";
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -278,6 +279,12 @@ export function createFlowTools(
           if (!connection) {
             return { success: false, error: "Connection not found" };
           }
+          const denial = await accessDenial(connection, {
+            workspaceId,
+            userId: undefined,
+            need: "read",
+          });
+          if (denial) return { success: false, error: denial };
 
           const { executionId, signal, release } = registerAgentExecution(
             toolExecutionContext,
@@ -341,6 +348,12 @@ export function createFlowTools(
           if (!connection) {
             return { success: false, error: "Connection not found" };
           }
+          const denial = await accessDenial(connection, {
+            workspaceId,
+            userId: undefined,
+            need: "read",
+          });
+          if (denial) return { success: false, error: denial };
 
           let safeQuery = query;
           const upperQuery = query.toUpperCase().trim();

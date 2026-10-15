@@ -7,6 +7,7 @@
  * connection decryption, and command allowlisting.
  */
 
+import { asSystemConnection } from "../access/connection-access";
 import { Types } from "mongoose";
 import {
   DatabaseConnection,
@@ -87,10 +88,14 @@ export async function loadDbtProjectSnapshot(params: {
     );
   }
 
-  const connectionDoc = await DatabaseConnection.findOne({
-    _id: environment.connectionId,
-    workspaceId: project.workspaceId,
-  });
+  // dbt runs with the connection's credentials; rules do not apply to it
+  // (rfcs/data-source-access.md, out of scope).
+  const connectionDoc = asSystemConnection(
+    await DatabaseConnection.findOne({
+      _id: environment.connectionId,
+      workspaceId: project.workspaceId,
+    }),
+  );
   if (!connectionDoc) {
     throw new Error(
       `Connection for environment "${envName}" not found or access denied`,
@@ -144,9 +149,8 @@ export async function loadDbtDeferState(project: {
   const key = project.lastProdManifestKey;
   if (!key) return undefined;
   try {
-    const { getDashboardArtifactStore } = await import(
-      "../services/dashboard-artifact-store.service"
-    );
+    const { getDashboardArtifactStore } =
+      await import("../services/dashboard-artifact-store.service");
     const stream = await getDashboardArtifactStore().openReadStream(key);
     if (!stream) return undefined;
     const chunks: Buffer[] = [];

@@ -9,6 +9,7 @@
  *
  * Spread AFTER `clientNotebookTools` in the unified factory so these win.
  */
+import { accessDenial } from "../../access/connection-access";
 import { scheduleNotebookCheckpoint } from "../../notebooks/notebook-git.service";
 import { tool } from "ai";
 import { z } from "zod";
@@ -596,6 +597,12 @@ export function createNotebookServerTools({
             error: "Data source not found in this workspace.",
           };
         }
+        const denial = await accessDenial(database, {
+          workspaceId,
+          userId: undefined,
+          need: "read",
+        });
+        if (denial) return { success: false, error: denial };
 
         const started = Date.now();
         const result = await databaseConnectionService.executeQuery(

@@ -20,6 +20,7 @@ import {
   Plus as AddIcon,
   Trash2 as DeleteIcon,
   Settings as SettingsIcon,
+  Lock as LockIcon,
   Layers as LayersIcon,
   Columns3 as ColumnIcon,
   KeyRound as KeyIcon,
@@ -37,6 +38,7 @@ import {
 import { useExplorerStore } from "../store";
 import { useWorkspace } from "../contexts/workspace-context";
 import CreateDatabaseDialog from "./CreateDatabaseDialog";
+import ConnectionAccessDialog from "./ConnectionAccessDialog";
 import { useSchemaStore, Connection, TreeNode } from "../store/schemaStore";
 import { useLocalAgentStore } from "../store/localAgentStore";
 import { useDatabaseCatalogStore } from "../store/databaseCatalogStore";
@@ -154,6 +156,10 @@ function DatabaseExplorer({
     () => (currentWorkspace ? connections[currentWorkspace.id] || [] : []),
     [currentWorkspace, connections],
   );
+  const restrictedIds = useMemo(
+    () => new Set(databases.filter(d => d.restricted).map(d => d.id)),
+    [databases],
+  );
 
   const isLoadingConnections = currentWorkspace
     ? !!loading[`connections:${currentWorkspace.id}`]
@@ -183,6 +189,10 @@ function DatabaseExplorer({
   const toggleNode = useExplorerStore(s => s.toggleNode);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [accessFor, setAccessFor] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [editingDatabaseId, setEditingDatabaseId] = useState<
     string | undefined
   >(undefined);
@@ -460,6 +470,15 @@ function DatabaseExplorer({
   const getRightAdornment = useCallback(
     (node: ResourceTreeNode) => {
       const info = nodeInfoById.get(node.id);
+      if (info?.type === "connection") {
+        return restrictedIds.has(info.connectionId) ? (
+          <LockIcon
+            size={12}
+            strokeWidth={1.5}
+            aria-label="Only people listed can use it"
+          />
+        ) : null;
+      }
       if (!info || info.type !== "node") return null;
       const { kind, metadata } = info.node;
 
@@ -512,7 +531,7 @@ function DatabaseExplorer({
         </Typography>
       );
     },
-    [nodeInfoById],
+    [nodeInfoById, restrictedIds],
   );
 
   const getContextMenuItems = useCallback(
@@ -537,6 +556,18 @@ function DatabaseExplorer({
               <SettingsIcon size={16} strokeWidth={1.5} />
             </ListItemIcon>
             Edit connection
+          </MenuItem>,
+          <MenuItem
+            key="connection-access"
+            onClick={() => {
+              helpers.closeMenu();
+              setAccessFor({ id: info.connectionId, name: info.displayName });
+            }}
+          >
+            <ListItemIcon sx={{ minWidth: 26 }}>
+              <LockIcon size={16} strokeWidth={1.5} />
+            </ListItemIcon>
+            Who can use it
           </MenuItem>,
           <MenuItem
             key="delete-database"
@@ -847,6 +878,15 @@ function DatabaseExplorer({
         onSuccess={handleDatabaseCreated}
         databaseId={editingDatabaseId}
       />
+
+      {accessFor && (
+        <ConnectionAccessDialog
+          open
+          connectionId={accessFor.id}
+          connectionName={accessFor.name}
+          onClose={() => setAccessFor(null)}
+        />
+      )}
     </>
   );
 }

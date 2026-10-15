@@ -13,6 +13,19 @@ import {
 // ============================================================================
 
 /** Database connection/server */
+export type ConnectionAccessLevel = "read" | "write" | "manage";
+export interface ConnectionAccessEntry {
+  principal: string;
+  level: ConnectionAccessLevel;
+}
+export interface ConnectionAccess {
+  restricted: boolean;
+  entries: ConnectionAccessEntry[];
+  /** The caller's own level; null when they may not use it. */
+  level: ConnectionAccessLevel | null;
+  canManage: boolean;
+}
+
 export interface Connection {
   id: string;
   connectionId?: string;
@@ -27,6 +40,8 @@ export interface Connection {
   isDemo?: boolean;
   /** True when served by the Mako Local Agent on this machine. */
   isLocal?: boolean;
+  /** Only the people on its access list can use it. */
+  restricted?: boolean;
   displayName: string;
   hostKey: string;
   hostName: string;
@@ -184,6 +199,17 @@ interface SchemaState {
 
   // === Refresh Methods (force re-fetch) ===
   refreshConnections: (workspaceId: string) => Promise<Connection[]>;
+  /** Who may use a connection (rfcs/data-source-access.md). */
+  getConnectionAccess: (
+    workspaceId: string,
+    connectionId: string,
+  ) => Promise<ConnectionAccess>;
+  /** Change who may use a connection; refreshes the list (lock icons). */
+  setConnectionAccess: (
+    workspaceId: string,
+    connectionId: string,
+    access: { restricted: boolean; entries: ConnectionAccessEntry[] },
+  ) => Promise<void>;
   refreshTreeRoot: (
     workspaceId: string,
     connectionId: string,
@@ -755,6 +781,31 @@ export const useSchemaStore = create<SchemaState>()(
           // Refresh connections list
           await get().refreshConnections(workspaceId);
         }
+      },
+
+      getConnectionAccess: async (workspaceId, connectionId) => {
+        const res = unwrapBody(
+          await api.GET("/api/workspaces/{workspaceId}/databases/{id}/access", {
+            params: { path: { workspaceId, id: connectionId } },
+          }),
+        ) as { success: boolean; data?: ConnectionAccess; error?: string };
+        if (!res.success || !res.data) {
+          throw new Error(
+            res.error ?? "Couldn't load who can use this connection.",
+          );
+        }
+        return res.data;
+      },
+
+      setConnectionAccess: async (workspaceId, connectionId, access) => {
+        const res = unwrapBody(
+          await api.PUT("/api/workspaces/{workspaceId}/databases/{id}/access", {
+            params: { path: { workspaceId, id: connectionId } },
+            body: access,
+          }),
+        ) as { success: boolean; error?: string };
+        if (!res.success) throw new Error(res.error ?? "Couldn't save.");
+        await get().refreshConnections(workspaceId);
       },
 
       testConnection: async (workspaceId, payload, options) => {

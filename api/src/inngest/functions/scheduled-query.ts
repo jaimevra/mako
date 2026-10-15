@@ -1,3 +1,4 @@
+import { authorizeConnection } from "../../access/connection-access";
 import { Types } from "mongoose";
 import {
   claimScheduledRun,
@@ -149,6 +150,13 @@ export const scheduledQueryExecutorFunction = inngest.createFunction(
         const connection = connectionMongooseDoc.toObject({
           getters: true,
         }) as IDatabaseConnection;
+        // A schedule runs as the console's owner: once they lose access to a
+        // restricted connection, their schedule stops reading it.
+        await authorizeConnection(connection, {
+          workspaceId,
+          userId: savedConsole.createdBy,
+          need: "read",
+        });
 
         return {
           savedConsole,

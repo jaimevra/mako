@@ -306,10 +306,35 @@ export interface IDatabaseConnection extends Document {
    * access is unaffected. Set it on connections created for agent writes.
    */
   allowAgentWrites?: boolean;
+  /**
+   * Who may use this connection (rfcs/data-source-access.md). Absent or not
+   * restricted: everyone in the workspace, as before. Restricted: only the
+   * workspace owner and the principals listed, at their level. Enforced by
+   * `access/connection-access.ts`, the one way to obtain a connection.
+   */
+  access?: IConnectionAccess;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
   lastConnectedAt?: Date;
+}
+
+/** What a principal may do with a restricted connection. */
+export type ConnectionAccessLevel = "read" | "write" | "manage";
+
+export interface IConnectionAccessEntry {
+  /** `user:<id>` today; `app:`, `workflow:` and `group:` fit the same field. */
+  principal: string;
+  level: ConnectionAccessLevel;
+  addedBy?: string;
+  addedAt?: Date;
+}
+
+export interface IConnectionAccess {
+  restricted: boolean;
+  entries: IConnectionAccessEntry[];
+  updatedBy?: string;
+  updatedAt?: Date;
 }
 
 /** @deprecated Use IDatabaseConnection instead */
@@ -1613,6 +1638,35 @@ const DatabaseConnectionSchema = new Schema<IDatabaseConnection>(
     allowAgentWrites: {
       type: Boolean,
       default: false,
+    },
+    access: {
+      type: new Schema<IConnectionAccess>(
+        {
+          restricted: { type: Boolean, default: false },
+          entries: {
+            type: [
+              new Schema<IConnectionAccessEntry>(
+                {
+                  principal: { type: String, required: true },
+                  level: {
+                    type: String,
+                    enum: ["read", "write", "manage"],
+                    required: true,
+                  },
+                  addedBy: { type: String },
+                  addedAt: { type: Date },
+                },
+                { _id: false },
+              ),
+            ],
+            default: [],
+          },
+          updatedBy: { type: String },
+          updatedAt: { type: Date },
+        },
+        { _id: false },
+      ),
+      default: undefined,
     },
     createdBy: {
       type: String,

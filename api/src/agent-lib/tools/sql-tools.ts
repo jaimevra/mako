@@ -3,6 +3,10 @@
  * Supports PostgreSQL, MySQL, BigQuery, SQLite, and Cloudflare D1 with a single tool surface.
  */
 
+import {
+  authorizeConnection,
+  usableConnections,
+} from "../../access/connection-access";
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -79,7 +83,11 @@ const appendLimitIfMissing = (sql: string): string => {
 };
 
 // Fetch and validate database connection
-const fetchSqlDatabase = async (connectionId: string, workspaceId: string) => {
+const fetchSqlDatabase = async (
+  connectionId: string,
+  workspaceId: string,
+  userId?: string,
+) => {
   const connectionObjectId = ensureValidObjectId(connectionId, "connectionId");
   const workspaceObjectId = ensureValidObjectId(workspaceId, "workspaceId");
 
@@ -91,6 +99,8 @@ const fetchSqlDatabase = async (connectionId: string, workspaceId: string) => {
   if (!database) {
     throw new Error("Database connection not found or access denied");
   }
+  // Throws when the person acting may not use it (access/connection-access.ts).
+  await authorizeConnection(database, { workspaceId, userId, need: "read" });
 
   if (!ALL_SQL_TYPES.has(database.type)) {
     throw new Error(
@@ -154,12 +164,15 @@ const executeQuerySchema = z.object({
 async function listSqlConnectionsImpl(workspaceId: string) {
   const workspaceObjectId = ensureValidObjectId(workspaceId, "workspaceId");
 
-  const databases = await DatabaseConnection.find({
-    workspaceId: workspaceObjectId,
-    type: {
-      $in: Array.from(ALL_SQL_TYPES) as IDatabaseConnection["type"][],
-    },
-  }).sort({ name: 1 });
+  const databases = await usableConnections(
+    await DatabaseConnection.find({
+      workspaceId: workspaceObjectId,
+      type: {
+        $in: Array.from(ALL_SQL_TYPES) as IDatabaseConnection["type"][],
+      },
+    }).sort({ name: 1 }),
+    { workspaceId, userId: undefined },
+  );
 
   return databases.map(db => {
     const connection: Record<string, unknown> =
@@ -936,7 +949,7 @@ async function executeQueryImpl(
     if (accessError) throw new Error(accessError);
   }
 
-  const database = await fetchSqlDatabase(connectionId, workspaceId);
+  const database = await fetchSqlDatabase(connectionId, workspaceId, userId);
   const dialect = getDialect(database.type);
   const effectiveAccess = effectiveSqlQueryAccess(queryAccess, database);
   if (queryAccess === "write-opt-in" && effectiveAccess === "read") {

@@ -1,3 +1,4 @@
+import { accessDenial } from "../access/connection-access";
 import { createRoute, z } from "@hono/zod-openapi";
 import { workspaceResourceLoader } from "./lib/load-resource";
 import type { Context } from "hono";
@@ -2302,6 +2303,12 @@ consoleRoutes.openapi(
             404,
           );
         }
+        const denial = await accessDenial(database, {
+          workspaceId: access.workspaceId,
+          userId: user?.id,
+          need: "read",
+        });
+        if (denial) return c.json({ success: false, error: denial }, 403);
       }
 
       // Execute the query based on language
@@ -2615,6 +2622,12 @@ consoleRoutes.openapi(
           404,
         );
       }
+      const denial = await accessDenial(database, {
+        workspaceId,
+        userId: c.get("user")?.id,
+        need: "read",
+      });
+      if (denial) return c.json({ success: false, error: denial }, 403);
 
       const startTime = Date.now();
 

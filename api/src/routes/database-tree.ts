@@ -1,3 +1,4 @@
+import { accessDenial } from "../access/connection-access";
 import { createRoute, z } from "@hono/zod-openapi";
 import { unifiedAuthMiddleware } from "../auth/unified-auth.middleware";
 import { requireWorkspace } from "../middleware/workspace.middleware";
@@ -52,6 +53,13 @@ databaseTreeRoutes.openapi(
     if (!database) {
       return c.json({ success: false, error: "Database not found" }, 404);
     }
+    const denial = await accessDenial(database, {
+      workspaceId: workspace._id,
+      userId: c.get("user")?.id,
+      memberRole: c.get("memberRole"),
+      need: "read",
+    });
+    if (denial) return c.json({ success: false, error: denial }, 403);
     const driver = databaseRegistry.getDriver(database.type);
     if (!driver) {
       return c.json({ success: false, error: "Driver not found" }, 404);
@@ -105,6 +113,13 @@ databaseTreeRoutes.openapi(
     if (!database) {
       return c.json({ success: false, error: "Database not found" }, 404);
     }
+    const denial = await accessDenial(database, {
+      workspaceId: workspace._id,
+      userId: c.get("user")?.id,
+      memberRole: c.get("memberRole"),
+      need: "read",
+    });
+    if (denial) return c.json({ success: false, error: denial }, 403);
     const driver = databaseRegistry.getDriver(database.type);
     if (!driver) {
       return c.json({ success: false, error: "Driver not found" }, 404);
@@ -253,6 +268,18 @@ databaseTreeRoutes.openapi(
       return c.json({ success: false, error: "Database not found" }, 404);
     }
 
+    const denial = await accessDenial(database, {
+      workspaceId: workspace._id,
+
+      userId: c.get("user")?.id,
+
+      memberRole: c.get("memberRole"),
+
+      need: "read",
+    });
+
+    if (denial) return c.json({ success: false, error: denial }, 403);
+
     const driver = databaseRegistry.getDriver(database.type);
     if (!driver) {
       return c.json({ success: false, error: "Driver not found" }, 404);
@@ -316,6 +343,18 @@ databaseTreeRoutes.openapi(
     if (!database) {
       return c.json({ success: false, error: "Database not found" }, 404);
     }
+
+    const denial = await accessDenial(database, {
+      workspaceId: workspace._id,
+
+      userId: c.get("user")?.id,
+
+      memberRole: c.get("memberRole"),
+
+      need: "read",
+    });
+
+    if (denial) return c.json({ success: false, error: denial }, 403);
 
     const driver = databaseRegistry.getDriver(database.type);
     if (!driver) {
@@ -414,6 +453,18 @@ databaseTreeRoutes.openapi(
     if (!dbConnection) {
       return c.json({ success: false, error: "Database not found" }, 404);
     }
+
+    const denial = await accessDenial(dbConnection, {
+      workspaceId: workspace._id,
+
+      userId: c.get("user")?.id,
+
+      memberRole: c.get("memberRole"),
+
+      need: "read",
+    });
+
+    if (denial) return c.json({ success: false, error: denial }, 403);
 
     const driver = databaseRegistry.getDriver(dbConnection.type);
     if (!driver) {

@@ -3,6 +3,10 @@
  * Using plain tool definitions to avoid complex type inference
  */
 
+import {
+  authorizeConnection,
+  usableConnections,
+} from "../../access/connection-access";
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -64,9 +68,12 @@ async function listMongoConnectionsImpl(workspaceId: string) {
   if (!Types.ObjectId.isValid(workspaceId)) {
     throw new Error("Invalid workspace ID");
   }
-  const databases = await DatabaseConnection.find({
-    workspaceId: new Types.ObjectId(workspaceId),
-  }).sort({ name: 1 });
+  const databases = await usableConnections(
+    await DatabaseConnection.find({
+      workspaceId: new Types.ObjectId(workspaceId),
+    }).sort({ name: 1 }),
+    { workspaceId, userId: undefined },
+  );
 
   return databases
     .filter(db => db.type === "mongodb")
@@ -108,6 +115,11 @@ export async function listMongoDatabasesImpl(
       workspaceId: new Types.ObjectId(workspaceId),
     });
     if (!database) throw new Error("Connection not found or access denied");
+    await authorizeConnection(database, {
+      workspaceId,
+      userId: undefined,
+      need: "read",
+    });
     if (database.type !== "mongodb") {
       throw new Error(
         "Database listing only supported for MongoDB connections",
@@ -160,6 +172,11 @@ export async function listMongoCollectionsImpl(
       workspaceId: new Types.ObjectId(workspaceId),
     });
     if (!database) throw new Error("Connection not found or access denied");
+    await authorizeConnection(database, {
+      workspaceId,
+      userId: undefined,
+      need: "read",
+    });
     if (database.type !== "mongodb") {
       throw new Error(
         "Collection listing only supported for MongoDB databases",
@@ -206,6 +223,11 @@ export async function inspectMongoCollectionImpl(
     workspaceId: new Types.ObjectId(workspaceId),
   });
   if (!database) throw new Error("Connection not found or access denied");
+  await authorizeConnection(database, {
+    workspaceId,
+    userId: undefined,
+    need: "read",
+  });
   if (database.type !== "mongodb") {
     throw new Error(
       "Collection inspection only supported for MongoDB databases",
@@ -300,6 +322,11 @@ async function executeQueryImpl(
     workspaceId: new Types.ObjectId(workspaceId),
   });
   if (!database) throw new Error("Connection not found or access denied");
+  await authorizeConnection(database, {
+    workspaceId,
+    userId: undefined,
+    need: "read",
+  });
 
   const { executionId, signal, release } = registerAgentExecution(
     toolExecutionContext,

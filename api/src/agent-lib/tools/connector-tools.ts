@@ -27,6 +27,7 @@
  * never a value. Every result is built field-by-field: an allowlist, never a
  * spread of the document, because a spread inherits every field added later.
  */
+import { accessDenial } from "../../access/connection-access";
 import { tool } from "ai";
 import { Types } from "mongoose";
 import { z } from "zod";
@@ -399,8 +400,14 @@ export function createConnectorTools(workspaceId: string) {
           const database = await DatabaseConnection.findOne({
             _id: new Types.ObjectId(connectionId),
             workspaceId: new Types.ObjectId(workspaceId),
-          }).select("_id name type connection allowAgentWrites");
+          }).select("_id name type connection allowAgentWrites access");
           if (!database) return { error: CONNECTION_NOT_FOUND };
+          const denial = await accessDenial(database, {
+            workspaceId,
+            userId: undefined,
+            need: "read",
+          });
+          if (denial) return { error: denial };
           const db = database as unknown as {
             _id: Types.ObjectId;
             name: string;
