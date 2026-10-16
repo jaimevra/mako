@@ -68,6 +68,7 @@ import {
 } from "../sync-cdc/adapters/registry";
 import {
   connectorFlowCdcError,
+  isWebhookFlow,
   resolveDefaultSyncEngine,
 } from "../services/flow-triggers.service";
 import { AUTH_SECURITY, OPEN_RESPONSES, createRouter } from "../openapi/core";
@@ -684,7 +685,7 @@ flowRoutes.openapi(
       const requestBaseUrl = getRequestBaseUrl(c);
       const normalizedFlows = plains.map(flow => {
         const projected = projectFlowListItem(flow);
-        if (projected.type !== "webhook" || !projected._id) {
+        if (!isWebhookFlow(projected as never) || !projected._id) {
           return projected;
         }
         const endpoint = generateWebhookEndpoint(
@@ -1302,7 +1303,7 @@ flowRoutes.openapi(
       await attachFlowLookups(workspaceId, [flow], {
         includeSourceConfig: true,
       });
-      if (flow.type === "webhook") {
+      if (isWebhookFlow(flow as never)) {
         const webhookConfig = {
           ...((flow.webhookConfig as Record<string, unknown> | undefined) ??
             {}),
@@ -1379,6 +1380,7 @@ flowRoutes.openapi(
       // Entities before this edit: a change re-targets the provider-side
       // webhook subscription after save (see flow-webhook-subscription).
       const entitySignatureBefore = flow ? flowEntitySignature(flow) : "";
+      const webhookOnBefore = flow ? isWebhookFlow(flow) : false;
 
       if (!flow) {
         return c.json({ success: false, error: "Flow not found" }, 404);
@@ -1654,8 +1656,27 @@ flowRoutes.openapi(
         };
       }
 
+      // Switching webhooks on gives any flow its inbound URL, minted once with
+      // the same formula as a webhook flow's. Polling is untouched: webhooks
+      // only add speed on top of it.
+      if (
+        flow.type !== "webhook" &&
+        body.webhookConfig?.enabled === true &&
+        !flow.webhookConfig?.endpoint
+      ) {
+        flow.webhookConfig = {
+          ...((flow.webhookConfig as unknown as Record<string, unknown>) ?? {}),
+          endpoint: generateWebhookEndpoint(
+            workspaceId as string,
+            flow._id.toString(),
+            getRequestBaseUrl(c),
+          ),
+          enabled: true,
+        } as typeof flow.webhookConfig;
+      }
+
       // Update webhook-specific fields
-      if (flow.type === "webhook" && flow.webhookConfig) {
+      if (isWebhookFlow(flow) && flow.webhookConfig) {
         flow.webhookConfig.endpoint = generateWebhookEndpoint(
           workspaceId as string,
           flow._id.toString(),
@@ -1683,16 +1704,20 @@ flowRoutes.openapi(
       await flow.save();
 
       // Enabling or disabling an entity changes which provider events the
-      // flow needs. Best-effort: a provider failure surfaces as a warning,
-      // never as a failed save.
+      // flow needs, and switching webhooks on needs a subscription at all
+      // (adopted by URL, created only when none exists). Best-effort: a
+      // provider failure surfaces as a warning, never as a failed save, and
+      // polling carries on.
       if (
-        flow.type === "webhook" &&
-        flowEntitySignature(flow) !== entitySignatureBefore
+        isWebhookFlow(flow) &&
+        (flowEntitySignature(flow) !== entitySignatureBefore ||
+          !webhookOnBefore ||
+          !flow.webhookConfig?.secret)
       ) {
         const webhookSync = await syncFlowWebhookSubscription(flow);
         if (webhookSync.status === "failed") {
           syncConfigWarnings.push(
-            `Saved, but the provider webhook subscription could not be updated for the new entities: ${webhookSync.error}. Re-provision the webhook from the Triggers step.`,
+            `Saved, but the provider webhook subscription could not be set up: ${webhookSync.error}. The flow keeps polling; fix the cause and save again, or re-provision from the Triggers step.`,
           );
         } else if (webhookSync.status === "not_found") {
           syncConfigWarnings.push(
@@ -3131,15 +3156,6 @@ flowRoutes.openapi(
       const flow = await findFlow(workspaceId, flowId);
       if (!flow) {
         return c.json({ success: false, error: "Flow not found" }, 404);
-      }
-      if (flow.type !== "webhook") {
-        return c.json(
-          {
-            success: false,
-            error: "Webhook provisioning requires webhook flow",
-          },
-          400,
-        );
       }
       if (!flow.dataSourceId) {
         return c.json(
@@ -4785,10 +4801,9 @@ flowRoutes.openapi(
       const flow = await Flow.findOne({
         _id: new Types.ObjectId(flowId),
         workspaceId: new Types.ObjectId(workspaceId),
-        type: "webhook",
       });
 
-      if (!flow) {
+      if (!flow || !isWebhookFlow(flow)) {
         return c.json({ success: false, error: "Webhook flow not found" }, 404);
       }
 

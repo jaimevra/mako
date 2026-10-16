@@ -35,6 +35,7 @@ import { loadYaml } from "../utils/yaml";
 // be exercised without booting the git/mongo stack.
 import type { IFlow } from "../database/workspace-schema";
 import { slugifyName } from "../utils/slugify";
+import { isWebhookFlow } from "./flow-triggers.service";
 
 export const FLOWS_DIR = "flows";
 
@@ -261,7 +262,9 @@ export function serializeFlowFile(flow: FlowFile): string {
         : {}),
     };
   }
-  if (flow.type === "webhook") {
+  // A scheduled flow with webhooks on carries the stanza too; a flow that
+  // never had webhooks switched on writes none, so its file does not change.
+  if (flow.type === "webhook" || flow.webhookEnabled !== undefined) {
     doc.webhook = {
       enabled: flow.webhookEnabled !== false,
       ...(flow.webhookProviderId
@@ -540,14 +543,12 @@ export function flowToFile(flow: IFlow): FlowFile {
         : null,
     // Never the endpoint (inbound URL identity) or the secret (a
     // credential); the provider subscription id is neither.
-    webhookEnabled:
-      flow.type === "webhook"
-        ? flow.webhookConfig?.enabled !== false
-        : undefined,
-    webhookProviderId:
-      flow.type === "webhook"
-        ? flow.webhookConfig?.providerWebhookId || undefined
-        : undefined,
+    webhookEnabled: isWebhookFlow(flow)
+      ? flow.webhookConfig?.enabled !== false
+      : undefined,
+    webhookProviderId: isWebhookFlow(flow)
+      ? flow.webhookConfig?.providerWebhookId || undefined
+      : undefined,
     sync: {
       mode: flow.syncMode,
       writeMode: flow.writeMode,

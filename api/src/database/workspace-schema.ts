@@ -1054,6 +1054,11 @@ export interface IFlow extends Document {
      */
     providerWebhookId?: string;
     lastReceivedAt?: Date;
+    /**
+     * Why the provider refused the last automatic provisioning (on save).
+     * Cleared on success. Polling carries on regardless.
+     */
+    provisionError?: { message: string; at: Date } | null;
     totalReceived: number;
     enabled: boolean;
   };
@@ -2535,6 +2540,10 @@ const FlowSchema = new Schema<IFlow>(
         type: String,
       },
       lastReceivedAt: Date,
+      provisionError: {
+        message: String,
+        at: Date,
+      },
       totalReceived: {
         type: Number,
         default: 0,

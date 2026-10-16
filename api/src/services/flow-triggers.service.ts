@@ -61,6 +61,18 @@ export function hasWebhookTrigger(flow: FlowTriggerFields): boolean {
   );
 }
 
+/**
+ * Whether the flow takes inbound webhook deliveries. A flow created as
+ * `type: "webhook"` keeps exactly the behaviour it always had (its URL was
+ * minted at creation and providers already POST to it). Any other flow takes
+ * them once its webhook trigger is on: an endpoint minted when webhooks were
+ * switched on, and `enabled`. `type` no longer decides alone, so a scheduled
+ * flow keeps polling and gets webhooks on top.
+ */
+export function isWebhookFlow(flow: FlowTriggerFields): boolean {
+  return flow.type === "webhook" || hasWebhookTrigger(flow);
+}
+
 export function hasReconcileTrigger(flow: FlowTriggerFields): boolean {
   return (
     flow.backfillSchedule?.enabled === true &&
@@ -86,9 +98,8 @@ export function hasAnyTrigger(flow: FlowTriggerFields): boolean {
  * trigger is its sole freshness source; anything with a poll schedule is
  * "scheduled" so legacy consumers keep working.
  *
- * IMPORTANT: this value must never be persisted onto an existing webhook
- * flow's `type` — the inbound webhook receiver hard-filters `type: "webhook"`,
- * so rewriting a hybrid flow's type would 404 its webhook endpoint.
+ * Never persist it onto a flow's `type`: `type` is what keeps an existing
+ * webhook flow taking deliveries (see `isWebhookFlow`).
  */
 export function deriveFlowType(
   flow: FlowTriggerFields,
