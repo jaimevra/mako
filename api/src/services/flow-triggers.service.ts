@@ -97,24 +97,39 @@ export function deriveFlowType(
   return triggers.webhook && !triggers.schedule ? "webhook" : "scheduled";
 }
 
+export const LEGACY_ENGINE_REMOVED =
+  "The legacy sync engine has been removed: connector flows run on CDC and need a table destination with a CDC adapter";
+
 /**
- * Engine default for newly created flows. Webhook flows are always CDC (the
- * legacy real-time webhook pipeline has been decommissioned). Connector
- * flows targeting a CDC-capable table destination default to CDC; everything
- * else stays on the legacy engine until the full sunset.
+ * Engine for a flow. CDC is the only engine for connector flows (the legacy
+ * engine has been removed); a connector flow that cannot run on CDC is
+ * refused where it is created (`connectorFlowCdcError`). Database-source
+ * flows (query -> table) have their own write path and keep the "legacy"
+ * label, which nothing reads for them.
  */
 export function resolveDefaultSyncEngine(params: {
-  flowType: "scheduled" | "webhook";
+  sourceType: "connector" | "database";
+}): "cdc" | "legacy" {
+  return params.sourceType === "database" ? "legacy" : "cdc";
+}
+
+/**
+ * Why a connector flow cannot be created or saved, or null when it can: CDC
+ * needs a table destination whose database has a CDC adapter.
+ */
+export function connectorFlowCdcError(params: {
   sourceType: "connector" | "database";
   hasTableDestination: boolean;
   destinationSupportsCdc: boolean;
-}): "cdc" | "legacy" {
-  if (params.flowType === "webhook") return "cdc";
-  return params.sourceType === "connector" &&
-    params.hasTableDestination &&
-    params.destinationSupportsCdc
-    ? "cdc"
-    : "legacy";
+}): string | null {
+  if (params.sourceType === "database") return null;
+  if (!params.hasTableDestination) {
+    return `${LEGACY_ENGINE_REMOVED}: this flow has no table destination`;
+  }
+  if (!params.destinationSupportsCdc) {
+    return `${LEGACY_ENGINE_REMOVED}: the destination database has no CDC adapter`;
+  }
+  return null;
 }
 
 /**

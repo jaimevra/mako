@@ -592,7 +592,13 @@ function applyDefinition(doc: IFlow, file: FlowFile): string | null {
 
   doc.syncMode = file.sync.mode as IFlow["syncMode"];
   doc.writeMode = file.sync.writeMode as IFlow["writeMode"];
-  doc.syncEngine = file.sync.engine as IFlow["syncEngine"];
+  // CDC is the only engine for connector flows: a file saying otherwise (or
+  // nothing) still yields CDC, so a flow can never be born on the removed
+  // legacy engine from a file.
+  doc.syncEngine =
+    doc.sourceType === "database"
+      ? (file.sync.engine as IFlow["syncEngine"])
+      : "cdc";
   doc.deleteMode = file.sync.deleteMode as IFlow["deleteMode"];
   if (file.sync.batchSize !== undefined) doc.batchSize = file.sync.batchSize;
 
@@ -690,8 +696,7 @@ export function hydrateFlowRow(
   const error = (
     doc as unknown as {
       validateSync: () =>
-        | { errors?: Record<string, { message?: string }> }
-        | undefined;
+        { errors?: Record<string, { message?: string }> } | undefined;
     }
   ).validateSync();
   const errors = error?.errors ?? {};

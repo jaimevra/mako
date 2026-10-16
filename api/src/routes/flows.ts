@@ -66,7 +66,10 @@ import {
   hasCdcDestinationAdapter,
   supportedCdcWriteModes,
 } from "../sync-cdc/adapters/registry";
-import { resolveDefaultSyncEngine } from "../services/flow-triggers.service";
+import {
+  connectorFlowCdcError,
+  resolveDefaultSyncEngine,
+} from "../services/flow-triggers.service";
 import { AUTH_SECURITY, OPEN_RESPONSES, createRouter } from "../openapi/core";
 import { connectorRegistry } from "../connectors/registry";
 import {
@@ -978,6 +981,16 @@ flowRoutes.openapi(
         );
       }
 
+      // CDC is the only engine for connector flows: refuse one it cannot run.
+      const cdcError = connectorFlowCdcError({
+        sourceType,
+        hasTableDestination: Boolean(body.tableDestination?.connectionId),
+        destinationSupportsCdc: hasCdcDestinationAdapter(destinationType),
+      });
+      if (cdcError) {
+        return c.json({ success: false, error: cdcError }, 400);
+      }
+
       // Create flow with type-specific configuration
       const flowData: any = {
         workspaceId: new Types.ObjectId(workspaceId),
@@ -990,16 +1003,8 @@ flowRoutes.openapi(
             ? body.destinationDatabaseName.trim()
             : undefined,
         syncMode: body.syncMode || "full",
-        // Webhook flows run exclusively on the CDC engine (the legacy real-time
-        // webhook pipeline has been decommissioned). Connector flows targeting
-        // a CDC-capable table destination default to CDC too; everything else
-        // keeps the legacy engine until the full sunset.
-        syncEngine: resolveDefaultSyncEngine({
-          flowType,
-          sourceType,
-          hasTableDestination: Boolean(body.tableDestination?.connectionId),
-          destinationSupportsCdc: hasCdcDestinationAdapter(destinationType),
-        }),
+        // CDC for every connector flow (the legacy engine has been removed).
+        syncEngine: resolveDefaultSyncEngine({ sourceType }),
         writeMode: body.writeMode || "append_dedup",
         syncStateUpdatedAt: new Date(),
         enabled: true,
@@ -2074,9 +2079,14 @@ flowRoutes.openapi(
 
       const body = await c.req.json();
       const syncEngine = body?.syncEngine;
-      if (syncEngine !== "legacy" && syncEngine !== "cdc") {
+      // CDC is the only engine: the legacy engine has been removed.
+      if (syncEngine !== "cdc") {
         return c.json(
-          { success: false, error: "syncEngine must be 'legacy' or 'cdc'" },
+          {
+            success: false,
+            error:
+              "syncEngine must be 'cdc': the legacy sync engine has been removed",
+          },
           400,
         );
       }
@@ -2086,35 +2096,13 @@ flowRoutes.openapi(
         return c.json({ success: false, error: "Flow not found" }, 404);
       }
 
-      // The legacy real-time webhook pipeline has been decommissioned —
-      // webhook flows must run on the CDC engine.
-      if (flow.type === "webhook" && syncEngine === "legacy") {
-        return c.json(
-          {
-            success: false,
-            error:
-              "Webhook flows must use the CDC engine — the legacy webhook engine has been removed",
-          },
-          400,
-        );
-      }
-
       flow.syncEngine = syncEngine;
-      if (syncEngine === "legacy") {
-        flow.streamState = "idle";
-        flow.syncStateUpdatedAt = new Date();
-        flow.syncStateMeta = {
-          lastEvent: "ENGINE_SWITCH",
-          lastReason: "Switched to legacy engine",
-        };
-      } else {
-        flow.streamState = flow.streamState || "idle";
-        flow.syncStateUpdatedAt = new Date();
-        flow.syncStateMeta = {
-          lastEvent: "ENGINE_SWITCH",
-          lastReason: "Switched to cdc engine",
-        };
-      }
+      flow.streamState = flow.streamState || "idle";
+      flow.syncStateUpdatedAt = new Date();
+      flow.syncStateMeta = {
+        lastEvent: "ENGINE_SWITCH",
+        lastReason: "Switched to cdc engine",
+      };
       {
         const failed = await commitFlowFileOrFail(c, flow, c.get("user")?.id);
         if (failed) return failed;

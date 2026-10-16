@@ -2572,10 +2572,13 @@ const FlowSchema = new Schema<IFlow>(
       enum: ["append_dedup", "append", "overwrite"],
       default: "append_dedup",
     },
+    // CDC is the only engine for connector flows (the legacy engine has
+    // been removed). "legacy" remains only as the label of database-source
+    // flows, which have their own write path.
     syncEngine: {
       type: String,
       enum: ["legacy", "cdc"],
-      default: "legacy",
+      default: "cdc",
       required: true,
     },
     syncState: {
