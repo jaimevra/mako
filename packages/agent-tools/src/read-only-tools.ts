@@ -53,6 +53,10 @@ export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   // dry-run, which shares its decision function with the reconciler and
   // performs none of its writes.
   "check_flow_files",
+  // Syncs: list, definition, per-entity status (flow-sync-tools.ts).
+  "flow_list",
+  "flow_read",
+  "flow_status",
   // Flow form reads + query validation/explanation (read-only by design)
   "get_form_state",
   "list_flow_tabs",
