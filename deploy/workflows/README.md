@@ -39,7 +39,11 @@ on the direct endpoint, so the tables are created in `public`, the engine logs
 - a Hatchet tenant and API token, saved on the workspace
 - Secret `wf-<prefix><workspaceId>`: the worker's Mako API key
 - Deployment `wf-<prefix><workspaceId>`: one replica of the runtime image.
-  Created once, replaced only for a new image.
+  Created once, replaced only for a new image or a new key. The image is
+  tagged `runtime-<git tree of runtime/>`; the app deploy names that tag in
+  `WORKFLOWS_RUNTIME_IMAGE` (`resolve-runtime-image.sh`), and the API moves
+  every worker to it when it starts. A `:latest` name would never change, so
+  workers would keep the image they first pulled.
 
 ## Sandbox runs
 

@@ -83,6 +83,39 @@ async function main() {
     await deployWorkflowsFromRepo(ws, "owner");
     assert.equal((await slots())?.live?.sha, onMain);
 
+    // A static worker's key made before a scope existed gains it on the next
+    // deploy, as a pod's does: the worker writes as its workflow only with
+    // workflows:runtime and query:write.
+    const { hashApiKey } = await import("../auth/api-key.middleware");
+    const staticKey = "revops_static_worker_key_tests_only";
+    await Workspace.updateOne(
+      { _id: id },
+      {
+        $push: {
+          apiKeys: {
+            _id: new Types.ObjectId(),
+            name: "Workflows worker",
+            keyHash: hashApiKey(staticKey),
+            prefix: staticKey.slice(0, 14),
+            scopes: ["mcp", "query:read"],
+            createdAt: new Date(),
+            createdBy: "owner",
+          },
+        },
+      },
+    );
+    process.env.WORKFLOWS_WORKER_KEY = staticKey;
+    await deployWorkflowsFromRepo(ws);
+    delete process.env.WORKFLOWS_WORKER_KEY;
+    const workerKey = (
+      await Workspace.findById(id).select("apiKeys").lean()
+    )?.apiKeys?.find(k => k.name === "Workflows worker");
+    assert.deepEqual(workerKey?.scopes, [
+      "mcp",
+      "query:write",
+      "workflows:runtime",
+    ]);
+
     // A commit elsewhere in the repository leaves the slot alone: the worker
     // is pointed at a new commit only when `workflows/` changed.
     await commit("main", "main", { "README.md": "changed\n" });

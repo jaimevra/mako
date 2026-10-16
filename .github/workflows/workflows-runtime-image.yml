@@ -3,8 +3,9 @@ name: Build & publish workflows runtime image
 # Builds the workflows runtime image (deploy/workflows/runtime): the Hatchet
 # worker that runs workspace workflows/. Publishes to the dev + prod Artifact
 # Registries. PRs publish to dev only; master + manual runs publish to both.
-# Worker pods move to a new image on their workspace's next deploy
-# (WORKFLOWS_RUNTIME_IMAGE on the API).
+# Each image is also tagged `runtime-<git tree of deploy/workflows/runtime>`:
+# deploy-app.yml points the API's WORKFLOWS_RUNTIME_IMAGE at that tag, and the
+# API moves worker pods to it when it starts (api/src/workflows/kube.ts).
 on:
   push:
     branches: [master]
@@ -26,7 +27,9 @@ permissions:
 
 concurrency:
   group: workflows-runtime-image-${{ github.ref }}
-  cancel-in-progress: true
+  # On master a cancelled build would leave its runtime tag unpublished, and
+  # the app deploy waiting for it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-publish:
@@ -54,11 +57,13 @@ jobs:
           PROD_CONFIG: ${{ vars.GCP_PROD_DEPLOY_CONFIG }}
         run: |
           SHA=$(git rev-parse --short HEAD)
+          TREE=$(git rev-parse HEAD:deploy/workflows/runtime)
           DEV="${GCP_REGION}-docker.pkg.dev/${{ vars.GCP_DEV_PROJECT_ID }}/${{ vars.GCP_DEV_ARTIFACT_REPOSITORY }}/${IMAGE_NAME}"
           PROD_PROJECT=$(echo "${PROD_CONFIG}" | jq -er '.project_id')
           PROD_REPO=$(echo "${PROD_CONFIG}" | jq -er '.artifact_repository')
           PROD="${GCP_REGION}-docker.pkg.dev/${PROD_PROJECT}/${PROD_REPO}/${IMAGE_NAME}"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "runtime=runtime-${TREE}" >> "$GITHUB_OUTPUT"
           echo "dev=${DEV}" >> "$GITHUB_OUTPUT"
           echo "prod=${PROD}" >> "$GITHUB_OUTPUT"
           echo "Dev registry:  ${DEV}"
@@ -76,7 +81,7 @@ jobs:
       # own preview. Prod is published from master and manual runs only.
       - name: Publish to dev registry
         run: |
-          for TAG in "${{ steps.reg.outputs.sha }}" latest; do
+          for TAG in "${{ steps.reg.outputs.sha }}" "${{ steps.reg.outputs.runtime }}" latest; do
             docker tag runtime:${{ steps.reg.outputs.sha }} ${{ steps.reg.outputs.dev }}:${TAG}
             docker push ${{ steps.reg.outputs.dev }}:${TAG}
           done
@@ -84,7 +89,7 @@ jobs:
       - name: Publish to prod registry
         if: github.event_name != 'pull_request'
         run: |
-          for TAG in "${{ steps.reg.outputs.sha }}" latest; do
+          for TAG in "${{ steps.reg.outputs.sha }}" "${{ steps.reg.outputs.runtime }}" latest; do
             docker tag runtime:${{ steps.reg.outputs.sha }} ${{ steps.reg.outputs.prod }}:${TAG}
             docker push ${{ steps.reg.outputs.prod }}:${TAG}
           done
@@ -94,8 +99,8 @@ jobs:
         run: |
           {
             echo "### Workflows runtime image published :whale:"
-            echo "- \`${{ steps.reg.outputs.dev }}:${{ steps.reg.outputs.sha }}\` (+ \`:latest\`)"
-            echo "- \`${{ steps.reg.outputs.prod }}:${{ steps.reg.outputs.sha }}\` (+ \`:latest\`)"
+            echo "- \`${{ steps.reg.outputs.dev }}:${{ steps.reg.outputs.runtime }}\` (+ \`:${{ steps.reg.outputs.sha }}\`, \`:latest\`)"
+            echo "- \`${{ steps.reg.outputs.prod }}:${{ steps.reg.outputs.runtime }}\` (+ \`:${{ steps.reg.outputs.sha }}\`, \`:latest\`)"
             echo ""
-            echo "Point \`WORKFLOWS_RUNTIME_IMAGE\` at the new tag; worker pods move to it on their workspace's next deploy."
+            echo "The app deploy points \`WORKFLOWS_RUNTIME_IMAGE\` at the runtime tag; worker pods move to it when the API starts."
           } >> "$GITHUB_STEP_SUMMARY"

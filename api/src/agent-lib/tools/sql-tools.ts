@@ -3,7 +3,11 @@
  * Supports PostgreSQL, MySQL, BigQuery, SQLite, and Cloudflare D1 with a single tool surface.
  */
 
-import { actingPrincipal } from "../../access/connection-writes";
+import {
+  actingPrincipal,
+  notAWriterRefusal,
+  recordWrite,
+} from "../../access/connection-writes";
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -902,8 +906,8 @@ function compactQueryFields(fields: unknown): unknown {
 
 /**
  * Resolve "write-opt-in" (the query:write scope) against one connection:
- * write only where a workspace admin set allowAgentWrites, read everywhere
- * else. A plain "read" key can never be upgraded by the connection flag.
+ * write where the acting person or workflow is on its writers list (or a
+ * workspace admin set allowAgentWrites), read everywhere else. A plain "read" key can never be upgraded by the connection flag.
  * Exported for tests.
  */
 export function effectiveSqlQueryAccess(
@@ -951,15 +955,13 @@ async function executeQueryImpl(
   const dialect = getDialect(database.type);
   const effectiveAccess = effectiveSqlQueryAccess(queryAccess, database);
   if (queryAccess === "write-opt-in" && effectiveAccess === "read") {
-    const accessError = sqlReadOnlyAccessError(query);
-    if (accessError) {
-      // Agents relay this verbatim, so the error is the docs: say why AND
-      // how to fix it.
-      throw new Error(
-        `${accessError} This API key has the query:write scope, but this ` +
-          "connection has not opted into agent writes — a workspace admin " +
-          "must enable allowAgentWrites on the connection first.",
-      );
+    if (sqlReadOnlyAccessError(query)) {
+      // The key may write, the connection's writers list decides who: say
+      // who Mako saw, and record the refusal so the Access tab offers Allow.
+      // Agents relay this verbatim, so the error is the docs.
+      const principal = actingPrincipal();
+      if (principal) recordWrite(database, principal, query, false);
+      throw new Error(notAWriterRefusal(principal, database.name));
     }
   }
 
