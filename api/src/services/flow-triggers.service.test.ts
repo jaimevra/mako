@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   buildScheduledFlowSelection,
+  connectorFlowCdcError,
   deriveFlowType,
   deriveTriggerSet,
   hasAnyTrigger,
@@ -99,55 +100,48 @@ function testNoTriggers() {
 }
 
 function testDefaultSyncEngine() {
-  // Webhook flows are always CDC.
+  // CDC is the only engine for connector flows.
+  assert.equal(resolveDefaultSyncEngine({ sourceType: "connector" }), "cdc");
+  // Database (SQL query) sources keep their own write path and label.
+  assert.equal(resolveDefaultSyncEngine({ sourceType: "database" }), "legacy");
+}
+
+function testConnectorFlowCdcError() {
+  // A connector flow CDC can run: no error.
   assert.equal(
-    resolveDefaultSyncEngine({
-      flowType: "webhook",
+    connectorFlowCdcError({
       sourceType: "connector",
       hasTableDestination: true,
       destinationSupportsCdc: true,
     }),
-    "cdc",
+    null,
   );
-  // Connector flows to CDC-capable table destinations default to CDC.
-  assert.equal(
-    resolveDefaultSyncEngine({
-      flowType: "scheduled",
-      sourceType: "connector",
-      hasTableDestination: true,
-      destinationSupportsCdc: true,
-    }),
-    "cdc",
-  );
-  // Non-CDC destination stays legacy.
-  assert.equal(
-    resolveDefaultSyncEngine({
-      flowType: "scheduled",
-      sourceType: "connector",
-      hasTableDestination: true,
-      destinationSupportsCdc: false,
-    }),
-    "legacy",
-  );
-  // Mongo collection destination (no tableDestination) stays legacy.
-  assert.equal(
-    resolveDefaultSyncEngine({
-      flowType: "scheduled",
+  // No table destination (the old Mongo-collection legacy path): refused.
+  assert.match(
+    connectorFlowCdcError({
       sourceType: "connector",
       hasTableDestination: false,
       destinationSupportsCdc: true,
-    }),
-    "legacy",
+    }) ?? "",
+    /legacy sync engine has been removed/,
   );
-  // Database (SQL query) sources keep the legacy DB-sync path.
-  assert.equal(
-    resolveDefaultSyncEngine({
-      flowType: "scheduled",
-      sourceType: "database",
+  // Destination without a CDC adapter: refused.
+  assert.match(
+    connectorFlowCdcError({
+      sourceType: "connector",
       hasTableDestination: true,
-      destinationSupportsCdc: true,
+      destinationSupportsCdc: false,
+    }) ?? "",
+    /no CDC adapter/,
+  );
+  // Database sources are not engine flows.
+  assert.equal(
+    connectorFlowCdcError({
+      sourceType: "database",
+      hasTableDestination: false,
+      destinationSupportsCdc: false,
     }),
-    "legacy",
+    null,
   );
 }
 
@@ -171,6 +165,7 @@ function main() {
   testHybridFlowIsScheduledForBackCompat();
   testNoTriggers();
   testDefaultSyncEngine();
+  testConnectorFlowCdcError();
   testScheduledFlowSelection();
   // eslint-disable-next-line no-console
   console.log("flow-triggers.service tests passed");
