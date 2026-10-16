@@ -5,6 +5,8 @@
 import assert from "node:assert/strict";
 import {
   actingPrincipal,
+  asSystem,
+  checkConnectionWrite,
   inReadOnlyTransaction,
   ownResult,
   decideWrite,
@@ -215,4 +217,49 @@ requestContextStorage.run(
   () => assert.equal(actingPrincipal(), "workflow:crm-chat-issues"),
 );
 
-console.log("connection writes tests passed");
+// --- A request that identifies no one ---------------------------------------
+
+async function unidentified() {
+  const connection = {
+    _id: "64b000000000000000000001",
+    workspaceId: "64b000000000000000000002",
+    name: "warehouse",
+    type: "postgresql",
+    writers: [{ principal: "user:marc" }],
+  } as never;
+  const write = "DELETE FROM finance.invoices";
+  const anonymous = {
+    requestId: "r",
+    method: "POST",
+    path: "/api/some/public/route",
+    startTime: 0,
+  };
+  // No request at all (a script, startup): Mako's own.
+  assert.deepEqual(await checkConnectionWrite(connection, write), {});
+  // A request naming no one: its write is refused; its read runs as before.
+  await requestContextStorage.run(anonymous, async () => {
+    const check = await checkConnectionWrite(connection, write);
+    assert.match(check.refused ?? "", /could not tell who is writing/);
+    assert.deepEqual(
+      await checkConnectionWrite(connection, "SELECT * FROM t"),
+      {},
+    );
+    // Marked as Mako's own (an Inngest function, a flow's destination).
+    assert.deepEqual(
+      await asSystem(() => checkConnectionWrite(connection, write)),
+      {},
+    );
+  });
+  // Marked as Mako's own inside a person's request: the person is dropped.
+  await requestContextStorage.run({ ...anonymous, userId: "eve" }, () =>
+    asSystem(async () => assert.equal(actingPrincipal(), undefined)),
+  );
+}
+
+void unidentified().then(
+  () => console.log("connection writes tests passed"),
+  error => {
+    console.error(error);
+    process.exitCode = 1;
+  },
+);

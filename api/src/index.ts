@@ -29,6 +29,7 @@ import mongoose from "mongoose";
 import { databaseConnectionService } from "./services/database-connection.service";
 import { sshTunnelManager } from "./services/ssh-tunnel.service";
 import { loggers, loggingMiddleware } from "./logging";
+import { asSystem } from "./access/connection-writes";
 import { checkPubSubBackendHealth } from "./services/pubsub.service";
 import { warmPricingCache } from "./services/gateway-pricing.service";
 import { warmCatalog } from "./services/model-catalog.service";
@@ -219,10 +220,13 @@ app.get(
   }),
 );
 
-// Inngest endpoint
+// Inngest endpoint. Its functions (syncs, flows, dbt, CDC) are Mako's own
+// work: their writes are not a person's (access/connection-writes.ts). A
+// scheduled console still writes as its owner, named by the function.
 app.on(
   ["GET", "PUT", "POST"],
   "/api/inngest",
+  (_c, next) => asSystem(next),
   serveInngest({
     client: inngest,
     functions: getFunctions(),

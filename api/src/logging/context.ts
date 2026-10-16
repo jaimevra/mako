@@ -33,6 +33,12 @@ export interface RequestContext {
    * it writes as no one, not as the person who deployed it.
    */
   workflowWorker?: boolean;
+  /**
+   * Mako's own work, not a person's or a workflow's: an Inngest function (a
+   * sync, a flow run, dbt), a flow writing its own destination. Its writes
+   * are not checked against writers lists (access/connection-writes.ts).
+   */
+  system?: boolean;
   /** Workspace ID if in workspace context */
   workspaceId?: string;
   /** HTTP method */
