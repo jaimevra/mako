@@ -957,10 +957,14 @@ const writersParams = z.object({
   id: z.string().openapi({ param: { name: "id", in: "path" } }),
 });
 
+/** A principal that can be put on a writers list. */
+const LISTABLE_PRINCIPAL =
+  /^(user:[A-Za-z0-9_-]+|workflow:[A-Za-z0-9][A-Za-z0-9_-]{0,99})$/;
+
 const WriterSchema = z.object({
   principal: z
     .string()
-    .regex(/^(user:[A-Za-z0-9_-]+|workflow:[A-Za-z0-9][A-Za-z0-9_-]{0,99})$/)
+    .regex(LISTABLE_PRINCIPAL)
     .openapi({ example: "workflow:crm-chat-issues" }),
   where: z
     .string()
@@ -1034,19 +1038,23 @@ workspaceDatabaseRoutes.openapi(
           addedAt: w.addedAt ?? null,
         })),
         canEdit: memberRole === "owner" || memberRole === "admin",
-        recent: recent.map(r => {
-          const targets = r.targets.filter((t): t is string => !!t);
-          return {
-            principal: r._id,
-            count: r.count,
-            lastAt: r.lastAt,
-            targets: targets.slice(0, 5),
-            // Against the list as it is now, not as it was then.
-            uncovered: targets
-              .filter(t => !covers(database.writers, r._id, t))
-              .slice(0, 5),
-          };
-        }),
+        // Only who could be allowed: the worker writing as no workflow
+        // cannot be listed.
+        recent: recent
+          .filter(r => LISTABLE_PRINCIPAL.test(r._id))
+          .map(r => {
+            const targets = r.targets.filter((t): t is string => !!t);
+            return {
+              principal: r._id,
+              count: r.count,
+              lastAt: r.lastAt,
+              targets: targets.slice(0, 5),
+              // Against the list as it is now, not as it was then.
+              uncovered: targets
+                .filter(t => !covers(database.writers, r._id, t))
+                .slice(0, 5),
+            };
+          }),
       },
     });
   },

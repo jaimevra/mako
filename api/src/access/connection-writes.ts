@@ -146,6 +146,9 @@ function fits(where: string, target: WriteTarget): boolean {
 // Who is writing, and may they?
 // ---------------------------------------------------------------------------
 
+/** The principal of the workflow worker when it names no deployed workflow. */
+export const WORKFLOW_WORKER = "worker:workflows";
+
 /**
  * Who is acting: given explicitly (a scheduled console runs as its owner),
  * or the workflow or person of the request being served. Nobody for work
@@ -155,6 +158,8 @@ export function actingPrincipal(explicit?: string): string | undefined {
   if (explicit) return explicit;
   const context = getRequestContext();
   if (context?.workflow) return `workflow:${context.workflow}`;
+  // The worker's key naming no deployed workflow: never on a writers list.
+  if (context?.workflowWorker) return WORKFLOW_WORKER;
   if (context?.userId) return `user:${context.userId}`;
   return undefined;
 }

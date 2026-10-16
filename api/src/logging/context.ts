@@ -28,6 +28,11 @@ export interface RequestContext {
    * person who deployed it, when writing (access/connection-writes.ts).
    */
   workflow?: string;
+  /**
+   * The deployed workflow worker's key, without a deployed workflow's name:
+   * it writes as no one, not as the person who deployed it.
+   */
+  workflowWorker?: boolean;
   /** Workspace ID if in workspace context */
   workspaceId?: string;
   /** HTTP method */
@@ -294,6 +299,11 @@ export function enrichContextWithUser(userId: string): void {
 export function enrichContextWithWorkflow(workflow: string): void {
   const context = requestContextStorage.getStore();
   if (context) context.workflow = workflow;
+}
+
+export function enrichContextWithWorkflowWorker(): void {
+  const context = requestContextStorage.getStore();
+  if (context) context.workflowWorker = true;
 }
 
 export function enrichContextWithWorkspace(workspaceId: string): void {

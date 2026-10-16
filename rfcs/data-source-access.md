@@ -36,10 +36,15 @@ One function, `checkConnectionWrite`, at the entry of `executeQuery`,
 `executePreviewQuery` and `executeStreamingQuery` (once per query):
 
 1. **Who is acting**: an explicit actor (a scheduled console runs as its
-   owner), else the workflow of the request (the worker's own key names it
-   with `X-Mako-Workflow`), else the signed-in person or API key owner. No
-   one for work no request started (syncs, flows, CDC, dbt): the system's,
-   never checked.
+   owner), else the workflow of the request, else the signed-in person or
+   API key owner. No one for work no request started (syncs, flows, CDC,
+   dbt): the system's, never checked.
+   Workflow code can read the key it runs with, so `X-Mako-Workflow` is
+   trusted only from the deployed worker's key (this environment's
+   `Workflows worker` key) and only for a workflow deployed from main. A
+   sandbox run's key acts as the person testing, whatever it sends, and is
+   removed when the run ends. The worker naming no deployed workflow acts as
+   `worker:workflows`, which no list can hold: never as whoever deployed it.
 2. **Is it a write**: in memory, with the existing read-only classifier
    (`checkPreviewQuerySafety`, plus SHOW, DESCRIBE, EXPLAIN), with no lookup.
    A read returns here, marked to run read-only where the engine allows
@@ -85,6 +90,11 @@ cover, with **Allow** for each, so whoever is refused is added in one click.
   or not at all.
 - dbt, syncs and flows are not concerned. App bindings only read (MongoDB
   and KV included).
+
+- Deployed workflows share one worker process and key, so one deployed
+  workflow's code could send another's name. Reaching main takes an admin,
+  who can edit writers lists anyway; review workflow code for it. Closing it
+  needs a process (and key) per workflow.
 
 ## Later, without changing the model
 
