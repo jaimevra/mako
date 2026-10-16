@@ -228,7 +228,8 @@ jobs:
       KERNEL_GKE_CA_CERT: ${{ vars.DEV_KERNEL_GKE_CA_CERT }}
       # Workflows (deploy/workflows): previews share the dev Hatchet and
       # cluster, so each PR prefixes its tenants and worker Deployments.
-      WORKFLOWS_RUNTIME_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_DEV_PROJECT_ID }}/${{ vars.GCP_DEV_ARTIFACT_REPOSITORY }}/workflows-runtime:latest
+      # The image's tag is resolved before the deploy (resolve-runtime-image.sh).
+      WORKFLOWS_RUNTIME_REPOSITORY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_DEV_PROJECT_ID }}/${{ vars.GCP_DEV_ARTIFACT_REPOSITORY }}/workflows-runtime
       WORKFLOWS_NAME_PREFIX: pr-${{ needs.detect-changes.outputs.pr_number }}-
       HATCHET_API_URL: ${{ vars.DEV_HATCHET_API_URL }}
       BILLING_ENABLED: "true"
@@ -589,6 +590,14 @@ jobs:
             echo "db_url=${{ secrets.STAGING_DATABASE_URL }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve workflows runtime image
+        run: |
+          # Tagged by the runtime's content, so the API moves worker pods to
+          # it when it starts; `:latest` never changes, so they never would.
+          IMAGE=$(deploy/workflows/resolve-runtime-image.sh "${WORKFLOWS_RUNTIME_REPOSITORY}")
+          echo "WORKFLOWS_RUNTIME_IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "Workflows runtime image: ${IMAGE}"
+
       - name: Deploy to Cloud Run
         id: deploy
         env:
@@ -914,7 +923,8 @@ jobs:
       KERNEL_GKE_CA_CERT: ${{ vars.KERNEL_GKE_CA_CERT }}
       # Workflows (deploy/workflows): the prod Hatchet behind its internal load
       # balancer, and the runtime image the prod registry publishes from master.
-      WORKFLOWS_RUNTIME_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ fromJSON(vars.GCP_PROD_DEPLOY_CONFIG).project_id }}/${{ fromJSON(vars.GCP_PROD_DEPLOY_CONFIG).artifact_repository }}/workflows-runtime:latest
+      # The image's tag is resolved before the deploy (resolve-runtime-image.sh).
+      WORKFLOWS_RUNTIME_REPOSITORY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ fromJSON(vars.GCP_PROD_DEPLOY_CONFIG).project_id }}/${{ fromJSON(vars.GCP_PROD_DEPLOY_CONFIG).artifact_repository }}/workflows-runtime
       HATCHET_API_URL: ${{ vars.PROD_HATCHET_API_URL }}
       BILLING_ENABLED: "true"
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
@@ -1036,6 +1046,14 @@ jobs:
           cache-to: type=registry,ref=${{ steps.image.outputs.cache_uri }},mode=max
           provenance: false
           sbom: false
+
+      - name: Resolve workflows runtime image
+        run: |
+          # Tagged by the runtime's content, so the API moves worker pods to
+          # it when it starts; `:latest` never changes, so they never would.
+          IMAGE=$(deploy/workflows/resolve-runtime-image.sh "${WORKFLOWS_RUNTIME_REPOSITORY}")
+          echo "WORKFLOWS_RUNTIME_IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "Workflows runtime image: ${IMAGE}"
 
       - name: Resolve existing Cloud Run URL
         id: cloud-run-before

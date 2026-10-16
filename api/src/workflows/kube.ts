@@ -144,7 +144,8 @@ function deploymentBody(workspaceId: string): V1Deployment {
             {
               name: "worker",
               image: runtimeImage(),
-              // Previews run `:latest`; a digest check per pod start is cheap.
+              // A tag can be published again (a rebuilt runtime, `:latest`
+              // as a fallback); a digest check per pod start is cheap.
               imagePullPolicy: "Always",
               env: [
                 { name: "MAKO_URL", value: makoUrl() },
@@ -178,6 +179,45 @@ function deploymentBody(workspaceId: string): V1Deployment {
   };
 }
 
+/** The image a worker Deployment runs. */
+function workerImage(deployment: V1Deployment): string | undefined {
+  return deployment.spec?.template?.spec?.containers?.[0]?.image;
+}
+
+type AppsClient = Awaited<ReturnType<typeof gkeClients>>["apps"];
+
+/**
+ * Replace `existing` with the current body, which starts new pods: the image
+ * is the API's, and the stamp changes the pod template even when it is not.
+ */
+async function replaceWorker(
+  apps: AppsClient,
+  workspaceId: string,
+  existing: V1Deployment,
+  reason: string,
+): Promise<void> {
+  const body = deploymentBody(workspaceId);
+  body.metadata = {
+    ...body.metadata,
+    resourceVersion: existing.metadata?.resourceVersion,
+  };
+  // A changed pod template is what makes Kubernetes start new pods.
+  body.spec!.template.metadata!.annotations = {
+    "mako.ai/restarted": new Date().toISOString(),
+  };
+  await apps.replaceNamespacedDeployment({
+    name: workerName(workspaceId),
+    namespace: NAMESPACE,
+    body,
+  });
+  logger.info("Replaced workflow worker", {
+    workspaceId,
+    from: workerImage(existing),
+    to: runtimeImage(),
+    reason,
+  });
+}
+
 /**
  * Make sure the workspace's worker pod exists and runs the current runtime
  * image. An existing Deployment is replaced, which starts new pods, only
@@ -189,7 +229,6 @@ export async function ensureWorkerDeployment(
 ): Promise<void> {
   const { apps } = await gkeClients();
   const name = workerName(workspaceId);
-  const body = deploymentBody(workspaceId);
   let existing: V1Deployment;
   try {
     existing = await apps.readNamespacedDeployment({
@@ -198,20 +237,63 @@ export async function ensureWorkerDeployment(
     });
   } catch (error) {
     if (!isNotFound(error)) throw error;
-    await apps.createNamespacedDeployment({ namespace: NAMESPACE, body });
+    await apps.createNamespacedDeployment({
+      namespace: NAMESPACE,
+      body: deploymentBody(workspaceId),
+    });
     logger.info("Created workflow worker", { workspaceId });
     return;
   }
-  const image = existing.spec?.template?.spec?.containers?.[0]?.image;
-  if (image === runtimeImage() && !restart) return;
-  body.metadata = {
-    ...body.metadata,
-    resourceVersion: existing.metadata?.resourceVersion,
-  };
-  // A changed pod template is what makes Kubernetes start new pods.
-  body.spec!.template.metadata!.annotations = {
-    "mako.ai/restarted": new Date().toISOString(),
-  };
-  await apps.replaceNamespacedDeployment({ name, namespace: NAMESPACE, body });
-  logger.info("Replaced workflow worker", { workspaceId, image, restart });
+  if (workerImage(existing) === runtimeImage() && !restart) return;
+  await replaceWorker(
+    apps,
+    workspaceId,
+    existing,
+    restart ? "new credential" : "new runtime image",
+  );
+}
+
+/** This environment's workers: previews by their label, the rest without. */
+export function workerSelector(): string {
+  const env = resourceLabels("")[ENV_LABEL];
+  return [
+    `app.kubernetes.io/name=${POD_NAME_LABEL}`,
+    env ? `${ENV_LABEL}=${env}` : `!${ENV_LABEL}`,
+  ].join(",");
+}
+
+/**
+ * Move every worker of this environment to the runtime image this API names.
+ * Run when the API starts: a deploy may name a new image
+ * (WORKFLOWS_RUNTIME_IMAGE, tagged by the runtime's content), and a worker
+ * otherwise moves only on its workspace's next push. Instances starting
+ * together race; the one that loses the replace (409) leaves it to the
+ * winner. Returns the workspaces moved.
+ */
+export async function rollWorkersToRuntimeImage(
+  apps?: AppsClient,
+): Promise<string[]> {
+  const client = apps ?? (await gkeClients()).apps;
+  const image = runtimeImage();
+  if (!image) return [];
+  const { items } = await client.listNamespacedDeployment({
+    namespace: NAMESPACE,
+    labelSelector: workerSelector(),
+  });
+  const moved: string[] = [];
+  for (const deployment of items) {
+    const workspaceId = deployment.metadata?.labels?.[WORKSPACE_LABEL];
+    if (!workspaceId || workerImage(deployment) === image) continue;
+    try {
+      await replaceWorker(client, workspaceId, deployment, "API started");
+      moved.push(workspaceId);
+    } catch (error) {
+      if ((error as { code?: number } | null)?.code === 409) continue;
+      logger.warn("Could not move a workflow worker to the new image", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return moved;
 }

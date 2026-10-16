@@ -116,6 +116,18 @@ async function ensureWorker(
   workspaceId: string,
   userId: string,
 ): Promise<void> {
+  const workspace = await Workspace.findById(workspaceId)
+    .select("apiKeys.name")
+    .lean();
+  const hasKey = workspace?.apiKeys?.some(k => k.name === workerKeyName());
+  // A key made before a scope existed keeps working; it just gains the
+  // scopes (idempotent, every deploy, either provider).
+  if (hasKey) {
+    await Workspace.updateOne(
+      { _id: new Types.ObjectId(workspaceId), "apiKeys.name": workerKeyName() },
+      { $set: { "apiKeys.$.scopes": WORKER_KEY_SCOPES } },
+    );
+  }
   if (!isGkeWorkerConfigured()) {
     const key = process.env.WORKFLOWS_WORKER_KEY;
     if (!key?.startsWith("revops_")) {
@@ -132,18 +144,6 @@ async function ensureWorker(
   // this environment's key on the workspace, and the pod's Secret. Either
   // missing (a first deploy, a database restored from before the worker, a
   // new cluster) means a new key written to both, replacing what the pod held.
-  const workspace = await Workspace.findById(workspaceId)
-    .select("apiKeys.name")
-    .lean();
-  const hasKey = workspace?.apiKeys?.some(k => k.name === workerKeyName());
-  // A key made before workflows could write keeps working; it just gains
-  // the scope (idempotent, every deploy).
-  if (hasKey) {
-    await Workspace.updateOne(
-      { _id: new Types.ObjectId(workspaceId), "apiKeys.name": workerKeyName() },
-      { $set: { "apiKeys.$.scopes": WORKER_KEY_SCOPES } },
-    );
-  }
   const rotate = !hasKey || !(await workerSecretExists(workspaceId));
   if (rotate) {
     const { key } = generateApiKey();
