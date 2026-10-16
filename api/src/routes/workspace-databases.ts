@@ -1,4 +1,5 @@
 import {
+  checkConnectionWrite,
   covers,
   principalsOutsideWorkspace,
 } from "../access/connection-writes";
@@ -48,7 +49,7 @@ const consoleManager = new ConsoleManager();
 
 type WorkspaceDatabaseRouteError = {
   response: { success: false; error: string };
-  status: 400 | 404;
+  status: 400 | 403 | 404;
 };
 
 type WorkspaceDatabaseResult =
@@ -104,12 +105,30 @@ async function getWorkspaceDatabase(
   return { database };
 }
 
+/**
+ * The MongoDB database behind a connection. `write` names the change a
+ * route is about to make with the raw client (createCollection,
+ * dropCollection): it is checked against the connection's writers list
+ * first, as a query would be (access/connection-writes.ts).
+ */
 async function getWorkspaceMongoDb(
   workspaceId: Types.ObjectId,
   databaseId: string,
+  write?: string,
 ): Promise<WorkspaceMongoDbResult> {
   const result = await getWorkspaceDatabase(workspaceId, databaseId);
   if (isWorkspaceDatabaseRouteError(result)) return result;
+  if (write) {
+    const check = await checkConnectionWrite(result.database, {
+      operation: write,
+    });
+    if (check.refused) {
+      return {
+        response: { success: false, error: check.refused },
+        status: 403 as const,
+      };
+    }
+  }
 
   const connection = await databaseConnectionService.getConnection(
     result.database,
@@ -1522,7 +1541,11 @@ workspaceDatabaseRoutes.openapi(
         );
       }
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "createCollection",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1785,7 +1808,11 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const collectionName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "dropCollection",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1953,7 +1980,11 @@ workspaceDatabaseRoutes.openapi(
         );
       }
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "createView",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -2118,7 +2149,11 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const viewName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "dropView",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }

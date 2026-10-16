@@ -62,7 +62,12 @@ One function, `checkConnectionWrite`, at the entry of `executeQuery`,
    saying what to do.
 
 A flow writing to its own destination from a route a person called (dataset
-on create, CDC resets) runs as Mako (`asSystem`), like its syncs.
+on create, CDC resets, resync, recover) runs as Mako (`asSystem`), like its
+syncs; so does every Inngest function (`/api/inngest`). Inside a request,
+a write by no identified person or workflow is refused unless it runs as
+Mako; work outside any request (scripts, startup) is Mako's. Routes that
+change a MongoDB connection with the raw client (create or drop a
+collection or view) run the same check first.
 
 For agents and API keys, being on the list is also the connection's
 `query:write` opt-in for that principal only, next to `allowAgentWrites`.

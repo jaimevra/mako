@@ -322,6 +322,40 @@ async function main() {
       ["user:nobody"],
     );
 
+    // MongoDB routes that change collections with the raw client are
+    // checked like queries: refused before connecting for anyone unlisted,
+    // the owner included.
+    const mongoDb = await DatabaseConnection.create({
+      workspaceId: ws,
+      name: "Events",
+      type: "mongodb",
+      connection: { connectionString: "mongodb://127.0.0.1:1", database: "x" },
+      createdBy: "owner",
+      writers: [{ principal: "user:anna" }],
+    });
+    const mongoBase = `/api/workspaces/${ws}/databases/${mongoDb._id}`;
+    for (const [method, path, body] of [
+      ["DELETE", `${mongoBase}/collections/events`, undefined],
+      ["POST", `${mongoBase}/collections`, { name: "events" }],
+      ["DELETE", `${mongoBase}/views/daily`, undefined],
+      [
+        "POST",
+        `${mongoBase}/views`,
+        { name: "daily", viewOn: "events", pipeline: [] },
+      ],
+    ] as const) {
+      for (const p of ["marc", "owner"] as const) {
+        // As in production, where every request has a context.
+        const res = await requestContextStorage.run(
+          { requestId: "t", method, path, startTime: 0 },
+          () => call(p, method, path, body),
+        );
+        assert.equal(res.status, 403, `${p} ${method} ${path}`);
+        const { error } = (await res.json()) as { error: string };
+        assert.match(error, REFUSED);
+      }
+    }
+
     console.log("connection writes route tests passed");
   } finally {
     await mongoose.disconnect();
