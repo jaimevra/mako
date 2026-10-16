@@ -367,6 +367,12 @@ Git-backed React apps built inside the workspace ([Apps](/apps/)). Private apps 
 | `POST`   | `/api/workspaces/:wid/apps/:id/public-share`                  | Manage the anonymous public link (also `PATCH`/`DELETE`)   |
 | `GET`    | `/api/workspaces/:wid/apps/:id/sandbox`                       | Sandbox status (also `POST …/sandbox/recycle`)             |
 | `GET`    | `/api/workspaces/:wid/apps/:id/viewer`                        | Resolve the caller's viewer identity (what `useViewer()` sees): id, email, workspace role, app role. Editors may pass `?as=<email>` to preview another member's resolution |
+| `PATCH`  | `/api/workspaces/:wid/apps/:id/chat`                          | Turn "chat with this app" on or off for live-link viewers (`{ enabled }`; owner or workspace admin). See [Chat with an app](/apps/#chat-with-an-app) |
+| `GET`    | `/api/workspaces/:wid/apps/:id/chats`                         | List the caller's chats with the published app (50 most recent) |
+
+## Workflows (preview)
+
+Workflows are TypeScript files in the workspace repo's `workflows/` folder, deployed from `main` and run by Hatchet. Routes live under `/api/workspaces/:wid/workflows`: `GET /` (deployed workflows, schedules, recent runs), `GET /runs/:id`, `GET /files`, `POST /:name/run` (`{ input, sandbox? }`) and `PUT /:name/triggers` (activate, add or remove a webhook). See [Workflows](/workflows/#api) for details.
 
 ## Notebooks
 

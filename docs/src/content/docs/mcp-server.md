@@ -57,7 +57,7 @@ long periods of inactivity. Access tokens last 8 hours and clients renew them
 automatically with a rotating refresh token that has no expiry. You can revoke
 a connection from your workspace settings.
 
-Under the hood this is standard OAuth 2.1 for MCP: RFC 9728 protected-resource discovery, dynamic client registration, PKCE, and rotating refresh tokens. Every grant carries `mcp query:read warehouse:write connections:write`, whatever the client requests; workspace roles decide what a viewer can do.
+Under the hood this is standard OAuth 2.1 for MCP: RFC 9728 protected-resource discovery, dynamic client registration, PKCE, and rotating refresh tokens. Every grant carries `mcp query:read warehouse:write connections:write workflows:run`, whatever the client requests; workspace roles decide what a viewer can do.
 
 ## Headless / CI: API keys
 
