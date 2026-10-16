@@ -6,6 +6,8 @@
  * decides. In-memory Mongo; only the BigQuery driver is stubbed, so a write
  * that passes the check "succeeds" without a warehouse.
  *
+ * Needs the runtime's packages: npm install --prefix deploy/workflows/runtime
+ *
  * Run with: pnpm --filter api exec tsx src/workflows/worker-identity.db.test.ts
  */
 import assert from "node:assert/strict";
