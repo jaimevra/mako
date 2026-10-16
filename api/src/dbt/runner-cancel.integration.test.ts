@@ -67,8 +67,9 @@ describe("runDbt cancellation", () => {
       commandTimeoutMs: 2_000,
       onLog: line => {
         logs.push(line.line);
-        if (line.line.includes("fake dbt started"))
+        if (line.line.includes("fake dbt started")) {
           controller.abort("test cancel");
+        }
       },
     });
 
@@ -103,8 +104,9 @@ describe("runDbt cancellation", () => {
       commandTimeoutMs: 2_000,
       onLog: line => {
         logs.push(line.line);
-        if (line.line.includes("ignoring sigterm"))
+        if (line.line.includes("ignoring sigterm")) {
           controller.abort("test cancel");
+        }
       },
     });
 
