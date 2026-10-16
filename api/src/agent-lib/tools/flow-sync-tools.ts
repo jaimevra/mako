@@ -30,7 +30,12 @@ import {
 } from "../../database/workspace-schema";
 import { flowToFile } from "../../services/flow-config-files";
 import { commitFlowFile } from "../../services/flow-config.service";
-import { deriveTriggerSet } from "../../services/flow-triggers.service";
+import {
+  deriveTriggerSet,
+  isWebhookFlow,
+} from "../../services/flow-triggers.service";
+import { syncFlowWebhookSubscription } from "../../services/flow-webhook-subscription.service";
+import { generateWebhookEndpoint } from "../../utils/webhook.utils";
 import { workspaceService } from "../../services/workspace.service";
 import { cdcBackfillService } from "../../sync-cdc/backfill";
 
@@ -301,7 +306,7 @@ export function createFlowSyncTools({
 
     flow_update: tool({
       description:
-        'Change what starts a sync — only the three trigger controls: `poll` (a cron, or "off"), `webhook` ("on" / "off"; only a sync that already has a webhook endpoint), `resync` (a cron for the periodic full re-read, or "off"). Writes flows/<slug>.yml on main, then saves. Owner or admin.',
+        'Change what starts a sync — only the three trigger controls: `poll` (a cron, or "off"), `webhook` ("on" / "off"; on gives the sync its webhook URL and installs or adopts the provider subscription where the connector can; polling keeps running), `resync` (a cron for the periodic full re-read, or "off"). Writes flows/<slug>.yml on main, then saves. Owner or admin.',
       inputSchema: z.object({
         flow: flowRef,
         poll: z.string().optional().describe('Cron for polling, or "off"'),
@@ -354,15 +359,25 @@ export function createFlowSyncTools({
                 : flow.schedule?.timezone,
             };
           }
-          // PUT /flows/:id: a webhook trigger exists only on a flow created
-          // with an endpoint; this tool never mints one.
+          // PUT /flows/:id: switching webhooks on gives any flow its inbound
+          // URL (same formula, minted once); polling is untouched.
+          const webhookOnBefore = isWebhookFlow(flow);
           if (webhook !== undefined) {
-            if (flow.type !== "webhook" || !flow.webhookConfig) {
-              return failure(
-                "This sync has no webhook endpoint (it was created without one), so webhooks cannot be switched here yet.",
-              );
+            if (webhook === "on" && !flow.webhookConfig?.endpoint) {
+              flow.webhookConfig = {
+                ...((flow.webhookConfig as unknown as Record<
+                  string,
+                  unknown
+                >) ?? {}),
+                endpoint: generateWebhookEndpoint(
+                  workspaceId,
+                  flow._id.toString(),
+                ),
+                enabled: true,
+              } as typeof flow.webhookConfig;
+            } else if (flow.webhookConfig) {
+              flow.webhookConfig.enabled = webhook === "on";
             }
-            flow.webhookConfig.enabled = webhook === "on";
           }
           // POST …/backfill-schedule
           if (resync !== undefined) {
@@ -393,10 +408,26 @@ export function createFlowSyncTools({
             { $unset: { definitionInvalid: 1 } },
           );
           await flow.save();
+          // As PUT: webhooks newly on need a provider subscription (adopted by
+          // URL, created only when none exists). Best-effort: polling carries on.
+          let warning: string | undefined;
+          if (
+            isWebhookFlow(flow) &&
+            (!webhookOnBefore || !flow.webhookConfig?.secret)
+          ) {
+            const sync = await syncFlowWebhookSubscription(flow);
+            if (sync.status === "failed") {
+              warning = `Saved, but the provider webhook subscription could not be set up: ${sync.error}. The sync keeps polling.`;
+            } else if (sync.status === "not_found") {
+              warning =
+                "Saved, but no provider webhook subscription points at this sync's URL; re-provision it from the Triggers step.";
+            }
+          }
           return {
             success: true,
             id: flow._id.toString(),
             triggers: triggersOf(flow),
+            ...(warning ? { warning } : {}),
           };
         } catch (error) {
           return failure(error);
