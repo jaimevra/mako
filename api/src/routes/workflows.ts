@@ -332,6 +332,15 @@ const GATEWAY_BASE_URL = (
   process.env.AI_GATEWAY_BASE_URL || "https://ai-gateway.vercel.sh/v1/ai"
 ).replace(/\/+$/, "");
 
+// Decision models are served only by the gateway's v4 API (the base
+// `@ai-sdk/gateway` v4 uses), and only to clients that state the gateway
+// protocol version. A custom base without a version is left as it is.
+const DECISION_GATEWAY_BASE_URL = GATEWAY_BASE_URL.replace(
+  /\/v\d+\/ai$/,
+  "/v4/ai",
+);
+const GATEWAY_PROTOCOL_VERSION = "0.0.1";
+
 type Worker = { workspaceId: string; userId: string };
 
 // Mako's own auth resolves the key; a session or a key without the worker's
@@ -419,74 +428,113 @@ workflowRuntimeRoutes.post(
 
 // Model calls from a step go through Mako to the AI gateway: the worker holds
 // no provider key, and the call is checked against the workspace's plan and
-// counted in its usage like a chat turn. Language models only, not streamed:
-// that is the one gateway call this route knows how to count.
+// counted in its usage like a chat turn. Only the gateway calls this file
+// knows how to count are forwarded: unstreamed language models, and decision
+// models (e.g. TypeSafe's `typesafe-ai/jev`).
+async function forwardToGateway(
+  c: Context,
+  { workspaceId, userId }: Worker,
+  kind: "language-model" | "decision-model",
+  modelId: string,
+): Promise<Response> {
+  const limits = await checkBillingLimits(workspaceId, modelId);
+  if (!limits.allowed) {
+    return c.json(
+      { error: limits.error?.message ?? "Usage limit reached" },
+      (limits.statusCode ?? 402) as 402,
+    );
+  }
+  const headers = new Headers({
+    Authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY ?? ""}`,
+  });
+  c.req.raw.headers.forEach((value, name) => {
+    // The gateway's own protocol headers and the content type, nothing else.
+    if (name === "content-type" || name.startsWith("ai-")) {
+      headers.set(name, value);
+    }
+  });
+  const startedAt = Date.now();
+  const decision = kind === "decision-model";
+  if (decision && !headers.has("ai-gateway-protocol-version")) {
+    // `@ai-sdk/gateway` sends it; a plain fetch from a step does not.
+    headers.set("ai-gateway-protocol-version", GATEWAY_PROTOCOL_VERSION);
+  }
+  const base = decision ? DECISION_GATEWAY_BASE_URL : GATEWAY_BASE_URL;
+  const res = await fetch(`${base}/${kind}`, {
+    method: "POST",
+    headers,
+    body: await c.req.arrayBuffer(),
+  }).catch(() => {
+    throw new HatchetError("The AI gateway is unreachable", 502);
+  });
+  const body = await res.text();
+  if (res.ok) {
+    // A language model reports `{ total }` per side, a decision model a number.
+    const tokens = (value: unknown): number =>
+      typeof value === "number"
+        ? value
+        : ((value as { total?: number } | undefined)?.total ?? 0);
+    let usage: { inputTokens?: unknown; outputTokens?: unknown } = {};
+    let gatewayCost: unknown;
+    try {
+      const result = JSON.parse(body) as {
+        usage?: typeof usage;
+        providerMetadata?: { gateway?: { cost?: unknown } };
+      };
+      usage = result.usage ?? {};
+      gatewayCost = result.providerMetadata?.gateway?.cost;
+    } catch {
+      // Not a model result: nothing to count.
+    }
+    const inputTokens = tokens(usage.inputTokens);
+    const outputTokens = tokens(usage.outputTokens);
+    // Mako's price list has no decision models; the gateway says what the
+    // call cost, so a decision is billed at that.
+    const costUsd = decision ? Number(gatewayCost) : NaN;
+    void trackUsage({
+      workspaceId,
+      userId,
+      invocationType: "workflow",
+      modelId,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      durationMs: Date.now() - startedAt,
+      ...(Number.isFinite(costUsd) ? { costUsd } : {}),
+    });
+  }
+  return new Response(body, {
+    status: res.status,
+    headers: {
+      "Content-Type": res.headers.get("Content-Type") ?? "application/json",
+    },
+  });
+}
+
 workflowRuntimeRoutes.post(
   "/ai/language-model",
-  asWorker(async (c, { workspaceId, userId }) => {
-    const modelId = c.req.header("ai-language-model-id") ?? "";
+  asWorker(async (c, worker) => {
     if (c.req.header("ai-language-model-streaming") === "true") {
       return c.json(
         { error: "Streaming is not available in a step; use generateText." },
         400,
       );
     }
-    const limits = await checkBillingLimits(workspaceId, modelId);
-    if (!limits.allowed) {
-      return c.json(
-        { error: limits.error?.message ?? "Usage limit reached" },
-        (limits.statusCode ?? 402) as 402,
-      );
-    }
-    const headers = new Headers({
-      Authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY ?? ""}`,
-    });
-    c.req.raw.headers.forEach((value, name) => {
-      // The gateway's own protocol headers and the content type, nothing else.
-      if (name === "content-type" || name.startsWith("ai-")) {
-        headers.set(name, value);
-      }
-    });
-    const startedAt = Date.now();
-    const res = await fetch(`${GATEWAY_BASE_URL}/language-model`, {
-      method: "POST",
-      headers,
-      body: await c.req.arrayBuffer(),
-    }).catch(() => {
-      throw new HatchetError("The AI gateway is unreachable", 502);
-    });
-    const body = await res.text();
-    if (res.ok) {
-      const tokens = (value: unknown): number =>
-        typeof value === "number"
-          ? value
-          : ((value as { total?: number } | undefined)?.total ?? 0);
-      let usage: { inputTokens?: unknown; outputTokens?: unknown } = {};
-      try {
-        usage = (JSON.parse(body) as { usage?: typeof usage }).usage ?? {};
-      } catch {
-        // Not a generation result: nothing to count.
-      }
-      const inputTokens = tokens(usage.inputTokens);
-      const outputTokens = tokens(usage.outputTokens);
-      void trackUsage({
-        workspaceId,
-        userId,
-        invocationType: "workflow",
-        modelId,
-        inputTokens,
-        outputTokens,
-        totalTokens: inputTokens + outputTokens,
-        durationMs: Date.now() - startedAt,
-      });
-    }
-    return new Response(body, {
-      status: res.status,
-      headers: {
-        "Content-Type": res.headers.get("Content-Type") ?? "application/json",
-      },
-    });
+    const modelId = c.req.header("ai-language-model-id") ?? "";
+    return forwardToGateway(c, worker, "language-model", modelId);
   }),
+);
+
+workflowRuntimeRoutes.post(
+  "/ai/decision-model",
+  asWorker(async (c, worker) =>
+    forwardToGateway(
+      c,
+      worker,
+      "decision-model",
+      c.req.header("ai-model-id") ?? "",
+    ),
+  ),
 );
 
 // Mako's own agent for a step (lib/mako `agent()`): a goal in, the answer and
