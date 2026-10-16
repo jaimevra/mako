@@ -236,4 +236,55 @@ describe("workflowId as the tools' target", () => {
     const onMain = await runGit(["-C", repoDir, "show", `main:${file}`]);
     expect(onMain.stdout).toContain("Scores leads");
   }, 120_000);
+
+  it("edit_file takes oldString/newString or Claude Code's old_string/new_string", async () => {
+    const tools = (await toolsFor(ADMIN)) as unknown as Record<
+      string,
+      Tools[string] & { inputSchema: z.ZodType }
+    >;
+    const target = { workflowId: "edit-aliases" };
+    // Through the schema, as the MCP bridge and the agent call it.
+    const edit = async (name: string, args: object) => {
+      const parsed = tools[name].inputSchema.safeParse(args);
+      if (!parsed.success) return { parsed };
+      return { parsed, result: await call(tools, name, parsed.data as object) };
+    };
+    const write = await call(tools, "workflow_write_file", {
+      ...target,
+      path: "workflow.ts",
+      contents: "const a = 1;\nconst b = 2;\n",
+    });
+    expect(write.success, write.error).toBe(true);
+
+    const snake = await edit("workflow_edit_file", {
+      ...target,
+      path: "workflow.ts",
+      old_string: "const a = 1;",
+      new_string: "const a = 10;",
+    });
+    expect(snake.result?.success, snake.result?.error).toBe(true);
+
+    const camel = await edit("workflow_edit_file", {
+      ...target,
+      path: "workflow.ts",
+      oldString: "const b = 2;",
+      newString: "const b = 20;",
+    });
+    expect(camel.result?.success, camel.result?.error).toBe(true);
+
+    const read = await call(tools, "workflow_read_file", {
+      ...target,
+      path: "workflow.ts",
+      withLineNumbers: false,
+    });
+    expect(read.contents).toBe("const a = 10;\nconst b = 20;");
+
+    const neither = await edit("app_edit_file", {
+      appId: "x",
+      path: "workflow.ts",
+    });
+    expect(neither.parsed.success).toBe(false);
+    expect(neither.parsed.error?.message).toContain("oldString is required");
+    expect(neither.parsed.error?.message).toContain("newString is required");
+  });
 });

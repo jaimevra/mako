@@ -341,6 +341,23 @@ const DECISION_GATEWAY_BASE_URL = GATEWAY_BASE_URL.replace(
 );
 const GATEWAY_PROTOCOL_VERSION = "0.0.1";
 
+/**
+ * Where a language-model call goes. The gateway answers in the shape of the
+ * spec version its path names: `/v1/ai` returns flat token counts
+ * (`inputTokens: 13`), `/v3/ai` the per-side objects (`inputTokens:
+ * { total: 13 }`) that ai@6 reads. `@ai-sdk/gateway` passes the gateway's
+ * result through untouched, so a v3 client sent to `/v1/ai` read every
+ * call's usage as 0 tokens. Follow the version the client states; a client
+ * that states none (a plain fetch) keeps the configured base.
+ */
+export function languageModelGatewayBase(
+  specificationVersion: string | undefined,
+): string {
+  const version = Number(specificationVersion);
+  if (!Number.isInteger(version) || version < 3) return GATEWAY_BASE_URL;
+  return GATEWAY_BASE_URL.replace(/\/v\d+\/ai$/, `/v${version}/ai`);
+}
+
 type Worker = { workspaceId: string; userId: string };
 
 // Mako's own auth resolves the key; a session or a key without the worker's
@@ -459,7 +476,11 @@ async function forwardToGateway(
     // `@ai-sdk/gateway` sends it; a plain fetch from a step does not.
     headers.set("ai-gateway-protocol-version", GATEWAY_PROTOCOL_VERSION);
   }
-  const base = decision ? DECISION_GATEWAY_BASE_URL : GATEWAY_BASE_URL;
+  const base = decision
+    ? DECISION_GATEWAY_BASE_URL
+    : languageModelGatewayBase(
+        c.req.header("ai-language-model-specification-version"),
+      );
   const res = await fetch(`${base}/${kind}`, {
     method: "POST",
     headers,
