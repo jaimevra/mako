@@ -42,6 +42,51 @@ export const model = createGateway({
   apiKey: key,
 });
 
+/**
+ * Ask a decision model, e.g. `decide("typesafe-ai/jev", { text }, questions)`.
+ * It answers each question about the state; `questions` are passed to the
+ * model as given. Counted in the workspace's usage.
+ */
+export async function decide(
+  modelId: string,
+  state: unknown,
+  questions: unknown[],
+): Promise<{ answers: unknown; usage?: unknown; warnings?: unknown[] }> {
+  const workflow = workflowName();
+  const res = await fetch(`${url}/api/workflows/runtime/ai/decision-model`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "ai-model-id": modelId,
+      "ai-decision-model-specification-version": "4",
+      ...(workflow ? { "X-Mako-Workflow": workflow } : {}),
+    },
+    body: JSON.stringify({
+      stateParts: [{ type: "json", value: state }],
+      questions,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    answers?: unknown;
+    usage?: unknown;
+    warnings?: unknown[];
+    error?: unknown;
+  };
+  if (!res.ok) {
+    const error =
+      typeof body.error === "string"
+        ? body.error
+        : (body.error as { message?: string } | undefined)?.message;
+    throw new Error(error ?? `The decision model failed (${res.status})`);
+  }
+  return {
+    answers: body.answers,
+    usage: body.usage,
+    warnings: body.warnings,
+  };
+}
+
 const clients = new Map<string, ReturnType<typeof createMCPClient>>();
 
 /** The workflow this step belongs to (set by the worker), if any. */

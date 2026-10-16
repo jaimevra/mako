@@ -10,7 +10,7 @@ import mongoose, { Types } from "mongoose";
 import { OpenAPIHono } from "@hono/zod-openapi";
 
 import { hashApiKey } from "../auth/api-key.middleware";
-import { User } from "../database/schema";
+import { LlmUsage, User } from "../database/schema";
 import { Workspace } from "../database/workspace-schema";
 import { encryptString } from "../services/crypto.service";
 import { workflowRuntimeRoutes } from "./workflows";
@@ -144,6 +144,131 @@ async function main() {
       400,
     );
     assert.equal((await call("/source/main", WORKER_KEY)).status, 400);
+
+    // A decision model (Jev) is forwarded like a language model: to the
+    // gateway's /decision-model, with only its protocol headers and the
+    // gateway key, the body untouched, and its usage counted.
+    const gatewayCalls: Array<{ url: string; init: RequestInit }> = [];
+    let gatewayReply = () =>
+      new Response(
+        JSON.stringify({
+          answers: { intent: "valuation" },
+          usage: { inputTokens: 120, outputTokens: 4 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      // Anything else (the model catalog, pricing) finds no network here.
+      if (!url.endsWith("-model")) return new Response(null, { status: 503 });
+      gatewayCalls.push({ url, init: init ?? {} });
+      return gatewayReply();
+    }) as typeof fetch;
+    process.env.AI_GATEWAY_API_KEY = "gateway-key-for-tests";
+    const decide = (key: string) =>
+      app.request("/api/workflows/runtime/ai/decision-model", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+          "ai-model-id": "typesafe-ai/jev",
+          "ai-decision-model-specification-version": "4",
+          "x-mako-workflow": "crm-chat-classifier",
+          cookie: "session=secret",
+        },
+        body: JSON.stringify({
+          stateParts: [{ type: "json", value: { text: "hi" } }],
+          questions: [{ name: "intent" }],
+        }),
+      });
+    const usageRows = async (expected: number) => {
+      // trackUsage is not awaited by the route.
+      for (let i = 0; i < 50; i++) {
+        const n = await LlmUsage.countDocuments({ workspaceId: id });
+        if (n >= expected) return n;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      return LlmUsage.countDocuments({ workspaceId: id });
+    };
+    try {
+      assert.equal((await decide(OTHER_KEY)).status, 403);
+      assert.equal(gatewayCalls.length, 0);
+
+      const decided = await decide(WORKER_KEY);
+      assert.equal(decided.status, 200);
+      assert.deepEqual(
+        ((await decided.json()) as { answers: unknown }).answers,
+        { intent: "valuation" },
+      );
+      assert.equal(gatewayCalls.length, 1);
+      const [forwarded] = gatewayCalls;
+      assert.match(forwarded.url, /\/decision-model$/);
+      const sent = new Headers(forwarded.init.headers);
+      assert.deepEqual([...sent.keys()].sort(), [
+        "ai-decision-model-specification-version",
+        "ai-model-id",
+        "authorization",
+        "content-type",
+      ]);
+      assert.equal(sent.get("authorization"), "Bearer gateway-key-for-tests");
+      assert.equal(sent.get("ai-model-id"), "typesafe-ai/jev");
+      assert.deepEqual(
+        JSON.parse(
+          Buffer.from(forwarded.init.body as ArrayBuffer).toString("utf8"),
+        ),
+        {
+          stateParts: [{ type: "json", value: { text: "hi" } }],
+          questions: [{ name: "intent" }],
+        },
+      );
+      assert.equal(await usageRows(1), 1);
+      const row = await LlmUsage.findOne({ workspaceId: id }).lean();
+      assert.equal(row?.invocationType, "workflow");
+      assert.equal(row?.modelId, "typesafe-ai/jev");
+      assert.equal(row?.inputTokens, 120);
+      assert.equal(row?.outputTokens, 4);
+      assert.equal(row?.totalTokens, 124);
+
+      // A gateway error is passed back as is, and nothing is counted.
+      gatewayReply = () =>
+        new Response(JSON.stringify({ error: "model not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      const missing = await decide(WORKER_KEY);
+      assert.equal(missing.status, 404);
+      assert.deepEqual(await missing.json(), { error: "model not found" });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.equal(await LlmUsage.countDocuments({ workspaceId: id }), 1);
+
+      // Over its plan's limit, the call is refused before the gateway.
+      process.env.BILLING_ENABLED = "true";
+      await Workspace.updateOne(
+        { _id: id },
+        { $set: { billing: { plan: "pro", hardLimitUsd: 1 } } },
+      );
+      await LlmUsage.create({
+        workspaceId: id,
+        userId: "tester",
+        invocationType: "workflow",
+        modelId: "typesafe-ai/jev",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 10,
+      });
+      const callsBefore = gatewayCalls.length;
+      assert.equal((await decide(WORKER_KEY)).status, 402);
+      assert.equal(gatewayCalls.length, callsBefore);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env.AI_GATEWAY_API_KEY;
+      delete process.env.BILLING_ENABLED;
+    }
 
     console.log("workflows runtime route tests passed");
   } finally {
