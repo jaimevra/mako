@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { api, unwrapBody, toErrorMessage as message } from "../api";
+import { useConsoleStore } from "./consoleStore";
 
 interface WorkflowDeployment {
   liveSha: string | null;
@@ -90,6 +91,8 @@ interface WorkflowsState {
     workflowId: string,
     change: { active?: boolean; webhook?: boolean },
   ) => Promise<Result>;
+  /** Remove the workflow's folder from main; its runs' tabs close. */
+  deleteWorkflow: (workspaceId: string, workflowId: string) => Promise<Result>;
 }
 
 export const isActiveRun = (status?: string) =>
@@ -194,6 +197,49 @@ export const useWorkflowsStore = create<WorkflowsState>()(
       } catch (e) {
         return { ok: false, error: message(e, "Failed to change the trigger") };
       }
+    },
+
+    deleteWorkflow: async (workspaceId, workflowId) => {
+      try {
+        unwrapBody(
+          await api.DELETE("/api/workspaces/{workspaceId}/workflows/{name}", {
+            params: { path: { workspaceId, name: workflowId } },
+          }),
+        );
+      } catch (e) {
+        return {
+          ok: false,
+          error: message(e, "Failed to delete the workflow"),
+        };
+      }
+      // Its runs and its files' tabs show something that is gone.
+      const consoles = useConsoleStore.getState();
+      for (const tab of Object.values(consoles.tabs)) {
+        const { workflowId: id, path } = tab.metadata ?? {};
+        if (
+          tab.kind === "workflow" &&
+          (id === workflowId ||
+            (typeof path === "string" && path.startsWith(`${workflowId}/`)))
+        ) {
+          consoles.closeTab(tab.id);
+        }
+      }
+      // Gone from the list now, not when the deploy lands.
+      set(s => {
+        const overview = s.overviewByWorkspace[workspaceId];
+        if (overview?.workflows) {
+          overview.workflows = overview.workflows.filter(
+            w => w.workflowId !== workflowId,
+          );
+        }
+        const files = s.filesByWorkspace[workspaceId];
+        if (files) {
+          s.filesByWorkspace[workspaceId] = files.filter(
+            f => !f.startsWith(`${workflowId}/`),
+          );
+        }
+      });
+      return { ok: true };
     },
   })),
 );

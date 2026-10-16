@@ -52,6 +52,8 @@ Every folder with a `workflow.ts` is picked up. There is no list to keep.
 
 Anyone with the member role writes workflows in their sandbox and tests them there; only workspace admins put them on `main`, activate them and add webhooks. A webhook is off until an admin adds it on the workflow's tab. Its URL carries its own secret, so treat it like a password; removing the webhook and adding it again gives a new URL. The schedule and the webhook start runs only while the workflow is active; Run always works. The webhook URL with `?sandbox=<your user id>` is a test URL: a POST to it runs your sandbox's version with the body as input and answers with the finished run, whether or not the workflow is active.
 
+An admin deletes a workflow from its row's menu in the explorer or the trash button on its tab. That is one commit on `main` removing its folder: its schedule and webhook are turned off, the worker is deployed without it, and Hatchet forgets it so its schedule stops. The files stay in git history; restoring the folder brings it back inactive, with no webhook.
+
 ## Using Mako from a step
 
 ```ts
@@ -143,5 +145,6 @@ All under `/api/workspaces/<workspaceId>/workflows`:
 | `GET /files`, `GET /files?path=<file>` | The files under `workflows/`, or one file's contents                                                                                            |
 | `POST /<name>/run`                     | Start a run: `{ input }` answers `runId`; `{ input, sandbox: true }` runs the caller's checkout in their sandbox and answers the finished `run` |
 | `PUT /<name>/triggers`                 | Change what starts it: `{ active }` (its schedule and webhook), `{ webhook }` (add: answers the new URL; remove). Admins                        |
+| `DELETE /<name>`                       | Delete it: one commit on `main` removing `workflows/<name>/`, its triggers off, deployed without it. Admins                                     |
 
 Over MCP, an API key needs the `workflows:run` scope to start runs or add webhooks; looking needs only `mcp`.

@@ -35,6 +35,7 @@ import { useConsoleStore } from "../store/consoleStore";
 import { useWorkflowsStore } from "../store/workflowsStore";
 import ExplorerShell from "./ExplorerShell";
 import ResourceTree, { type ResourceTreeNode } from "./ResourceTree";
+import { useDeleteWorkflow } from "../hooks/useDeleteWorkflow";
 import { SMALL_CHIP_SX } from "./WorkflowView";
 
 const WorkflowIcon = EXPLORER_ICONS.workflows;
@@ -103,7 +104,6 @@ const getRightAdornment = (node: ResourceTreeNode) => {
 };
 const isWorkflow = (node: ResourceTreeNode) => Boolean((node as Node).workflow);
 const nodeId = (node: ResourceTreeNode) => node.id;
-const never = () => false;
 
 export function WorkflowsExplorer() {
   const { currentWorkspace } = useWorkspace();
@@ -117,6 +117,7 @@ export function WorkflowsExplorer() {
   );
   const fetchOverview = useWorkflowsStore(s => s.fetchOverview);
   const fetchFiles = useWorkflowsStore(s => s.fetchFiles);
+  const deleteWorkflow = useDeleteWorkflow(workspaceId);
 
   const focusOrOpenTab = useConsoleStore(s => s.focusOrOpenTab);
   const activeItemId = useConsoleStore(s => {
@@ -241,6 +242,21 @@ export function WorkflowsExplorer() {
     [focusOrOpenTab],
   );
 
+  // Admins delete a workflow from its row's menu; files are read-only here.
+  const mayChange = Boolean(overview?.mayChange);
+  const canManageItem = useCallback(
+    (node: ResourceTreeNode) => mayChange && isWorkflow(node),
+    [mayChange],
+  );
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const onDeleteItem = useCallback(
+    (node: ResourceTreeNode) => {
+      if (!isWorkflow(node)) return;
+      void deleteWorkflow(node.name).then(setDeleteError);
+    },
+    [deleteWorkflow],
+  );
+
   const deployment = overview?.deployment;
   const buildError = deployment?.buildError
     ? `Build failed at ${short(deployment.targetSha)}. ${
@@ -253,7 +269,7 @@ export function WorkflowsExplorer() {
   return (
     <ExplorerShell
       title="Workflows"
-      error={buildError}
+      error={deleteError ?? buildError}
       loading={!overview}
       actions={
         <>
@@ -307,10 +323,11 @@ export function WorkflowsExplorer() {
             onToggleFolder={onToggleFolder}
             onExpandFolder={onExpandFolder}
             getFolderExpansionKey={nodeId}
-            canManageItem={never}
+            canManageItem={canManageItem}
+            onDeleteItem={onDeleteItem}
             enableDragDrop={false}
             enableRename={false}
-            enableDelete={false}
+            enableDelete={mayChange}
             enableMove={false}
             enableInfo={false}
             enableNewFolder={false}

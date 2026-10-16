@@ -30,7 +30,7 @@ export function workflowsNamePrefix(): string {
 export function hasInstanceHatchet(): boolean {
   return Boolean(
     process.env.HATCHET_CLIENT_TOKEN ||
-      (process.env.HATCHET_ADMIN_PASSWORD && process.env.HATCHET_API_URL),
+    (process.env.HATCHET_ADMIN_PASSWORD && process.env.HATCHET_API_URL),
   );
 }
 
@@ -76,7 +76,7 @@ export function tenantFromToken(token: string): WorkspaceTenant {
 }
 
 interface HatchetRequest {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   query?: URLSearchParams;
   body?: unknown;
 }
@@ -287,6 +287,43 @@ export async function tenantJson<T>(
 /** A Hatchet id: a UUID. Checked before one is put in a Hatchet path. */
 export function isHatchetId(value: string): boolean {
   return /^[0-9a-fA-F-]{36}$/.test(value);
+}
+
+/**
+ * Delete a workflow from the tenant. The worker registers what main holds
+ * and never withdraws a name main drops, so without this a deleted
+ * workflow's schedule would keep starting runs no worker takes. Answers
+ * whether Hatchet knew it.
+ */
+export async function deleteWorkflowDefinition(
+  tenant: WorkspaceTenant,
+  workflowName: string,
+): Promise<boolean> {
+  const list = await tenantJson<{
+    rows?: Array<{ name?: string; metadata?: { id?: string } }>;
+  }>(tenant, `/api/v1/tenants/${tenant.tenantId}/workflows`, {
+    query: new URLSearchParams({ name: workflowName, limit: "100" }),
+  });
+  // The name filter may match more than the name: keep the exact one.
+  const ids = (list.rows ?? [])
+    .filter(row => row.name === workflowName)
+    .map(row => row.metadata?.id ?? "")
+    .filter(isHatchetId);
+  for (const id of ids) {
+    const res = await send(
+      `${tenant.apiUrl}/api/v1/workflows/${id}`,
+      { Authorization: `Bearer ${tenant.token}` },
+      { method: "DELETE" },
+    );
+    if (!res.ok && res.status !== 404) {
+      const text = await res.text().catch(() => "");
+      throw new HatchetError(
+        `Hatchet delete of ${workflowName} failed (${res.status}): ${text.slice(0, 500)}`,
+        res.status,
+      );
+    }
+  }
+  return ids.length > 0;
 }
 
 /** Start a run of a workflow. Returns the run's id. */

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 
 import { parseWorkspaceApiKeyScopes } from "../auth/api-key-scopes";
-import { HatchetError, isHatchetId, tenantFromToken } from "./hatchet";
+import {
+  HatchetError,
+  deleteWorkflowDefinition,
+  isHatchetId,
+  tenantFromToken,
+} from "./hatchet";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const RUN = "22222222-2222-2222-2222-222222222222";
@@ -40,4 +45,47 @@ for (const bad of [
   assert.throws(() => tenantFromToken(bad), HatchetError, `must refuse ${bad}`);
 }
 
-console.log("workflows hatchet tests passed");
+// Deleting a workflow deletes only the one of exactly that name, and a
+// workflow Hatchet already forgot (404) is not an error.
+async function deleteTests() {
+  const DIGEST = "33333333-3333-3333-3333-333333333333";
+  const OTHER = "44444444-4444-4444-4444-444444444444";
+  const tenant = { tenantId: TENANT, token: "t", apiUrl: "https://h" };
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push(`${init?.method ?? "GET"} ${url}`);
+    if (url.startsWith(`https://h/api/v1/tenants/${TENANT}/workflows?`)) {
+      return Response.json({
+        rows: [
+          { name: "digest", metadata: { id: DIGEST } },
+          { name: "digest-weekly", metadata: { id: OTHER } },
+        ],
+      });
+    }
+    return new Response(null, { status: url.endsWith(DIGEST) ? 204 : 404 });
+  }) as typeof fetch;
+  try {
+    assert.equal(await deleteWorkflowDefinition(tenant, "digest"), true);
+    assert.deepEqual(calls.slice(1), [
+      `DELETE https://h/api/v1/workflows/${DIGEST}`,
+    ]);
+    assert.equal(await deleteWorkflowDefinition(tenant, "gone"), false);
+    globalThis.fetch = (async () =>
+      new Response("boom", { status: 500 })) as typeof fetch;
+    await assert.rejects(
+      deleteWorkflowDefinition(tenant, "digest"),
+      HatchetError,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+deleteTests()
+  .then(() => console.log("workflows hatchet tests passed"))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });

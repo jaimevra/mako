@@ -1133,7 +1133,7 @@ async function moveWritesUnder(
  */
 type MainMutation = Parameters<typeof commitFilesOnBranch>[2];
 
-async function commitOnMainDurably(
+export async function commitOnMainDurably(
   workspaceId: string,
   repoDir: string,
   /**

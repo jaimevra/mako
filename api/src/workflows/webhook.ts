@@ -17,7 +17,7 @@ import { HatchetError } from "./hatchet";
 type Webhooks = Record<string, string> | undefined;
 
 /** The name becomes a key, a URL segment and a Hatchet workflow name. */
-function checkName(name: string): void {
+export function checkName(name: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
     throw new HatchetError(`Invalid workflow: ${name}`, 400);
   }

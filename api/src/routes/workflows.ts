@@ -39,6 +39,7 @@ import {
   requireTenant,
   startRun,
 } from "../workflows/hatchet";
+import { deleteWorkflow } from "../workflows/delete";
 import { readRun, readWorkflowsOverview } from "../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
 import { runInSandbox } from "../workflows/sandbox";
@@ -269,6 +270,29 @@ workflowRoutes.openapi(
     const { workspaceId, name } = c.req.valid("param");
     const changed = await setTriggers(workspaceId, name, c.req.valid("json"));
     return c.json({ success: true as const, ...changed }, 200);
+  },
+);
+
+workflowRoutes.openapi(
+  createRoute({
+    method: "delete",
+    path: "/{name}",
+    tags: ["Workflows"],
+    summary:
+      "Delete a workflow: remove its folder from main in one commit, turn its triggers off and deploy without it",
+    security: AUTH_SECURITY,
+    request: { params: NameParam },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    const { workspaceId, name } = c.req.valid("param");
+    const userId = c.get("user")?.id;
+    await deleteWorkflow(
+      workspaceId,
+      name,
+      userId ? String(userId) : undefined,
+    );
+    return c.json({ success: true as const }, 200);
   },
 );
 

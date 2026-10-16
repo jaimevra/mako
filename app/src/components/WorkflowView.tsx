@@ -14,6 +14,7 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
+  IconButton,
   Switch,
   TextField,
   ToggleButton,
@@ -22,8 +23,13 @@ import {
   Typography,
 } from "@mui/material";
 import MonacoEditor from "@monaco-editor/react";
-import { Play as RunIcon, Webhook as WebhookIcon } from "lucide-react";
+import {
+  Play as RunIcon,
+  Trash2 as DeleteIcon,
+  Webhook as WebhookIcon,
+} from "lucide-react";
 import { useWorkspace } from "../contexts/workspace-context";
+import { useDeleteWorkflow } from "../hooks/useDeleteWorkflow";
 import { EDITOR_OPTIONS, useMonacoTheme } from "../lib/monaco-presets";
 import {
   fetchWorkflowFile,
@@ -257,6 +263,7 @@ function RunsView({
   const fetchRun = useWorkflowsStore(s => s.fetchRun);
   const startRun = useWorkflowsStore(s => s.run);
   const setTriggers = useWorkflowsStore(s => s.setTriggers);
+  const deleteWorkflow = useDeleteWorkflow(workspaceId);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // The last sandbox run: shown in place of a selected run until one is picked.
@@ -433,6 +440,22 @@ function RunsView({
               color="error"
               sx={{ height: 20 }}
             />
+          )}
+          {workflow && overview?.mayChange && (
+            <Tooltip title="Delete this workflow: its folder is removed from main">
+              <IconButton
+                size="small"
+                aria-label="Delete workflow"
+                sx={{ p: 0.25 }}
+                onClick={() =>
+                  void deleteWorkflow(workflowId).then(failure => {
+                    if (failure) setError(failure);
+                  })
+                }
+              >
+                <DeleteIcon size={14} />
+              </IconButton>
+            </Tooltip>
           )}
         </Box>
       </Box>
