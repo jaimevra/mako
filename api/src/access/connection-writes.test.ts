@@ -5,6 +5,8 @@
 import assert from "node:assert/strict";
 import {
   actingPrincipal,
+  inReadOnlyTransaction,
+  ownResult,
   decideWrite,
   isWrite,
   refusal,
@@ -47,8 +49,19 @@ assert.equal(
   isWrite("mongodb", 'db.x.aggregate([{ $match: {} }, { $out: "y" }])'),
   true,
 );
+assert.equal(isWrite("mongodb", "db.runCommand({ drop: 'y' })"), true);
+assert.equal(isWrite("mongodb", "db.adminCommand({ shutdown: 1 })"), true);
 assert.equal(isWrite("mongodb", { operation: "find" }), false);
 assert.equal(isWrite("mongodb", { operation: "updateMany" }), true);
+
+// A read-only transaction in one round trip; a trailing comment can't
+// swallow the COMMIT.
+assert.equal(
+  inReadOnlyTransaction("select 1 -- note"),
+  "BEGIN TRANSACTION READ ONLY;\nselect 1 -- note\n;COMMIT",
+);
+assert.equal(ownResult(["begin", "rows", "commit"]), "rows");
+assert.equal(ownResult(["begin", "a", "b", "commit"]), "b");
 
 // --- Which table a write changes ----------------------------------------------
 

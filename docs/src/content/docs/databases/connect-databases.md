@@ -54,7 +54,28 @@ last 30 days, with an **Allow** button for each. Once the lists match what
 people do, an admin chooses **Start enforcing**, for the whole workspace, and
 can switch back at any time.
 
-Reads never go through this check, so they are not slowed down.
+While a workspace reports, reads never go through this check, so they are
+not slowed down.
+
+### What the database enforces
+
+Mako tells reads from writes by reading the statement, which cannot see a
+write hidden inside a function (`SELECT f()`). Once a workspace enforces, a
+read by anyone not allowed to write anywhere therefore runs read-only, and
+the database itself refuses such a write:
+
+- **PostgreSQL, Cloud SQL, Redshift:** a read-only transaction, sent with the
+  query in one round trip.
+- **MySQL:** a read-only transaction (two extra round trips per read).
+- **ClickHouse:** the `readonly` setting.
+- **BigQuery, Cloudflare D1:** a `SELECT` cannot change a table.
+- **MongoDB, SQL Server:** no read-only mode for a single request; commands
+  (`runCommand`, `adminCommand`) count as writes, but a write hidden in
+  JavaScript cannot be seen. Connect with a read-only database user where
+  that matters.
+
+A function that opens its own connection (Postgres `dblink`) escapes a
+read-only transaction. A read-only database user closes every case.
 
 ## Local Databases (localhost)
 

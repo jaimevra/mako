@@ -5,11 +5,16 @@
  * `writers` list, each anywhere or only to one schema or table. Work no
  * person or workflow started (syncs, flows, CDC, dbt) is not concerned.
  *
- * The read path pays nothing: a statement is classified in memory first, and
- * only a write looks further (the writers list comes with the connection;
+ * Reads pay nothing while a workspace reports: a statement is classified in
+ * memory first, and only a write looks further (the writers list comes with the connection;
  * the workspace's mode is cached). A workspace starts in "report": writes
  * that would be refused are recorded and run anyway, so the lists can be
  * filled from what people really do before anything is refused.
+ *
+ * Text cannot see a write hidden in a function (`SELECT f()`). Once a
+ * workspace enforces, a read by anyone not allowed to write anywhere runs in
+ * a read-only transaction where the engine has one, so the database refuses
+ * what the text missed.
  */
 import { Types } from "mongoose";
 import {
@@ -39,9 +44,9 @@ export type WritesMode = "report" | "enforce";
 const LOOKING =
   /^(SHOW|DESCRIBE|DESC|EXPLAIN(?!\s+ANALY[SZ]E)|USE|VALUES|PRAGMA\s+(table_info|index_list|foreign_key_list))\b/i;
 
-/** MongoDB shell methods that change data or structure. */
+/** MongoDB shell methods that change data or structure, or may: commands. */
 const MONGO_WRITE =
-  /\.(insert|insertOne|insertMany|update|updateOne|updateMany|replaceOne|delete|deleteOne|deleteMany|remove|drop|dropDatabase|dropIndex|dropIndexes|createCollection|createIndex|createIndexes|renameCollection|bulkWrite|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify)\s*\(|\$out\b|\$merge\b/;
+  /\.(runCommand|adminCommand|eval|insert|insertOne|insertMany|update|updateOne|updateMany|replaceOne|delete|deleteOne|deleteMany|remove|drop|dropDatabase|dropIndex|dropIndexes|createCollection|createIndex|createIndexes|renameCollection|bulkWrite|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify)\s*\(|\$out\b|\$merge\b/;
 
 const MONGO_READ_OPERATIONS = new Set([
   "find",
@@ -229,6 +234,20 @@ export async function principalsOutsideWorkspace(
   return people.filter(p => !known.has(p));
 }
 
+/**
+ * `query` inside a read-only transaction, sent as one string so it costs no
+ * extra round trip (Postgres simple protocol). The newlines keep a trailing
+ * `-- comment` from swallowing the COMMIT.
+ */
+export function inReadOnlyTransaction(query: string): string {
+  return `BEGIN TRANSACTION READ ONLY;\n${query}\n;COMMIT`;
+}
+
+/** The query's own result among those of `inReadOnlyTransaction`. */
+export function ownResult<T>(results: T | T[]): T {
+  return Array.isArray(results) ? results[results.length - 2] : results;
+}
+
 // ---------------------------------------------------------------------------
 // The check executeQuery runs
 // ---------------------------------------------------------------------------
@@ -236,7 +255,7 @@ export async function principalsOutsideWorkspace(
 const MODE_TTL_MS = 30_000;
 const modes = new Map<string, { mode: WritesMode; at: number }>();
 
-/** The workspace's mode, cached briefly: it is read only on writes. */
+/** The workspace's mode, cached briefly. */
 export async function writesMode(workspaceId: string): Promise<WritesMode> {
   const cached = modes.get(workspaceId);
   if (cached && Date.now() - cached.at < MODE_TTL_MS) return cached.mode;
@@ -254,10 +273,27 @@ export function forgetWritesMode(workspaceId: string): void {
   modes.delete(workspaceId);
 }
 
+/** Engines whose reads can run in a read-only transaction (or setting). */
+const READ_ONLY_TRANSACTION = new Set([
+  "postgresql",
+  "redshift",
+  "cloudsql-postgres",
+  "mysql",
+  "clickhouse",
+]);
+
+export interface WriteCheck {
+  /** Why the query may not run. */
+  refused?: string;
+  /** Run this read in a read-only transaction. */
+  readOnlyTransaction?: boolean;
+}
+
 /**
- * Null when the query may run; otherwise why it may not. A read returns at
- * once. A write is recorded either way (who, which connection, where, and
- * whether it was allowed), and refused only when the workspace enforces.
+ * Whether the query may run, and how. A write is recorded either way (who,
+ * which connection, where, and whether it was allowed), and refused only
+ * when the workspace enforces. A read is never recorded; once enforced, it
+ * runs read-only unless its principal may write anywhere.
  */
 export async function checkConnectionWrite(
   database: Pick<
@@ -266,12 +302,18 @@ export async function checkConnectionWrite(
   >,
   query: unknown,
   options: { readOnly?: boolean; actor?: string; writeChecked?: boolean } = {},
-): Promise<string | null> {
-  if (options.readOnly || options.writeChecked) return null;
-  if (!database._id || !database.workspaceId) return null; // a connection being tested
+): Promise<WriteCheck> {
+  if (options.readOnly || options.writeChecked) return {};
+  if (!database._id || !database.workspaceId) return {}; // a connection being tested
   const principal = actingPrincipal(options.actor);
-  if (!principal) return null;
-  if (!isWrite(database.type, query)) return null;
+  if (!principal) return {};
+  if (!isWrite(database.type, query)) {
+    if (!READ_ONLY_TRANSACTION.has(database.type)) return {};
+    if (covers(database.writers, principal, null)) return {};
+    const enforced =
+      (await writesMode(String(database.workspaceId))) === "enforce";
+    return enforced ? { readOnlyTransaction: true } : {};
+  }
 
   const decision = decideWrite(database.writers, principal, query);
   const mode = await writesMode(String(database.workspaceId));
@@ -290,6 +332,6 @@ export async function checkConnectionWrite(
   }).catch(error =>
     logger.warn("Could not record a connection write", { error }),
   );
-  if (decision.allowed || mode !== "enforce") return null;
-  return refusal(decision, database.name);
+  if (decision.allowed || mode !== "enforce") return {};
+  return { refused: refusal(decision, database.name) };
 }

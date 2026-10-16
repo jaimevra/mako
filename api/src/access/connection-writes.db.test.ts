@@ -84,11 +84,23 @@ async function main() {
     });
 
     // What runs after the check is not under test here.
+    let readOnlyTransaction: boolean | undefined;
     (
       databaseConnectionService as unknown as {
-        executePostgreSQLQuery: () => Promise<{ success: boolean }>;
+        executePostgreSQLQuery: (
+          db: unknown,
+          q: unknown,
+          o?: { readOnlyTransaction?: boolean },
+        ) => Promise<{ success: boolean }>;
       }
-    ).executePostgreSQLQuery = async () => ({ success: true });
+    ).executePostgreSQLQuery = async (_db, _q, o) => {
+      readOnlyTransaction = o?.readOnlyTransaction;
+      return { success: true };
+    };
+    const readsReadOnly = async (person: Person) => {
+      await as(person, "SELECT f()");
+      return readOnlyTransaction === true;
+    };
 
     const as = (person: Person | null, sql: string) => {
       const run = () => databaseConnectionService.executeQuery(db, sql);
@@ -107,7 +119,16 @@ async function main() {
     };
     const refused = async (person: Person | null, sql: string) =>
       REFUSED.test(String((await as(person, sql)).error ?? ""));
-    const settle = () => new Promise(resolve => setTimeout(resolve, 50));
+    // Events are written without waiting: wait until their count holds.
+    const settle = async () => {
+      let last = -1;
+      for (let i = 0; i < 60; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const now = await ConnectionWriteEvent.countDocuments({});
+        if (now === last && now > 0) return;
+        last = now;
+      }
+    };
 
     // Report (the default): nothing is refused, writes are recorded.
     assert.equal(
@@ -122,6 +143,7 @@ async function main() {
     assert.equal(reported[0].target, "finance.x");
     assert.equal(reported[0].allowed, false);
     assert.equal(reported[0].mode, "report");
+    assert.equal(await readsReadOnly("marc"), false, "report: reads as today");
 
     // Enforce: only writers write, and only where they may.
     await Workspace.updateOne(
@@ -147,6 +169,31 @@ async function main() {
       true,
     );
     assert.equal(await refused("anna", "INSERT INTO x VALUES (1)"), true);
+    // Enforced reads run read-only, so the database refuses a write the text
+    // missed (SELECT f()), except for those who may write anywhere.
+    assert.equal(await readsReadOnly("marc"), true);
+    assert.equal(
+      await readsReadOnly("anna"),
+      true,
+      "anna writes to finance only",
+    );
+    await DatabaseConnection.updateOne(
+      { _id: db._id },
+      { $push: { writers: { principal: "user:owner" } } },
+    );
+    db.writers = (await DatabaseConnection.findById(db._id).lean())?.writers;
+    assert.equal(
+      await readsReadOnly("owner"),
+      false,
+      "the owner writes anywhere",
+    );
+    assert.equal(await readsReadOnly(null as never), false, "the system");
+    await DatabaseConnection.updateOne(
+      { _id: db._id },
+      { $pull: { writers: { principal: "user:owner" } } },
+    );
+    db.writers = (await DatabaseConnection.findById(db._id).lean())?.writers;
+
     // The admin is no writer either: the list decides.
     assert.equal(await refused("admin", "DELETE FROM finance.x"), true);
     // Syncs, flows and other work no request started: the system's.

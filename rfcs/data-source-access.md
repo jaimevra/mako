@@ -37,9 +37,10 @@ One function, `checkConnectionWrite`, at the top of `executeQuery`:
    one for work no request started (syncs, flows, CDC, dbt): the system's,
    never checked.
 2. **Is it a write**: in memory, with the existing read-only classifier
-   (`checkPreviewQuerySafety`, plus SHOW, DESCRIBE, EXPLAIN). A read returns
-   here: no lookup, no transaction, no dry run. MongoDB requests are
-   classified by their operation or shell method.
+   (`checkPreviewQuerySafety`, plus SHOW, DESCRIBE, EXPLAIN). While the
+   workspace reports, a read returns here: no lookup, no transaction. Once
+   enforced, it runs read-only where the engine allows (see Limits). MongoDB
+   requests are classified by their operation or shell method.
 3. **May they**: the writers list comes with the connection document. A
    writer limited to a place must write one statement that names its target
    (`INSERT INTO s.t`, `CREATE TABLE s.t`, `UPDATE`, `DELETE`, `MERGE`,
@@ -68,9 +69,15 @@ next deploy.
 ## Limits
 
 - A write hidden inside a function call (`SELECT f()` where `f` writes) is
-  classified as a read. Where that matters, connect with a read-only
-  database role.
-- MongoDB writers limited to a place cannot be checked; allow them anywhere
+  classified as a read. Once enforced, reads by anyone not allowed to write
+  anywhere run read-only (Postgres, Cloud SQL, Redshift: `BEGIN TRANSACTION
+  READ ONLY` sent with the query in one round trip; MySQL: a read-only
+  transaction; ClickHouse: `readonly=2`), so the database refuses it.
+  BigQuery and D1 `SELECT`s cannot write. MongoDB and SQL Server have no such
+  mode: connect with a read-only database user where that matters, as for
+  Postgres `dblink`, which opens its own connection.
+- MongoDB commands (`runCommand`, `adminCommand`, `eval`) count as writes.
+  MongoDB writers limited to a place cannot be checked; allow them anywhere
   or not at all.
 - dbt, syncs and flows are not concerned.
 
