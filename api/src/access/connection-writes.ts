@@ -334,9 +334,26 @@ export async function checkConnectionWrite(
   }
 
   const decision = decideWrite(database.writers, principal, query);
+  recordWrite(database, principal, query, decision.allowed, decision.target);
+  if (decision.allowed) return {};
+  return { refused: refusal(decision, database.name) };
+}
+
+/**
+ * Record a write by `principal` (who, which connection, where, allowed), so
+ * the Access tab lists it with Allow. Not awaited: the query does not wait.
+ */
+export function recordWrite(
+  database: Pick<IDatabaseConnection, "_id" | "workspaceId">,
+  principal: string,
+  query: unknown,
+  allowed: boolean,
+  known?: WriteTarget,
+): void {
+  if (!database._id || !database.workspaceId) return;
   // Where it wrote, for whoever reviews the log: worked out for writes only.
   const target =
-    decision.target ?? (typeof query === "string" ? writeTarget(query) : null);
+    known ?? (typeof query === "string" ? writeTarget(query) : null);
   void ConnectionWriteEvent.create({
     workspaceId: new Types.ObjectId(String(database.workspaceId)),
     connectionId: new Types.ObjectId(String(database._id)),
@@ -344,10 +361,23 @@ export async function checkConnectionWrite(
     target: target
       ? [target.schema, target.table].filter(Boolean).join(".")
       : undefined,
-    allowed: decision.allowed,
+    allowed,
   }).catch(error =>
     logger.warn("Could not record a connection write", { error }),
   );
-  if (decision.allowed) return {};
-  return { refused: refusal(decision, database.name) };
+}
+
+/**
+ * Why `principal` may not write through an API key with the query:write
+ * scope: it is not on the connection's writers list. Names the identity
+ * Mako saw, since that is what an admin allows.
+ */
+export function notAWriterRefusal(
+  principal: string | undefined,
+  connectionName: string,
+): string {
+  if (!principal) {
+    return `This request has no person or workflow Mako can allow to write to ${connectionName}; everyone can read it.`;
+  }
+  return `${principal} is not allowed to write to ${connectionName}; everyone can read it. An admin can allow ${principal} on the connection's Access tab.`;
 }

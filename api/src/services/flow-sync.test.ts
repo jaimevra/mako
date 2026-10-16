@@ -152,6 +152,43 @@ async function main(): Promise<void> {
     "an existing endpoint is never overwritten, new row or not",
   );
 
+  // Any flow whose file switches webhooks on gets its URL, with the same
+  // formula — a scheduled flow keeps polling and takes webhooks on top. An
+  // existing URL is never moved, and a file without the stanza mints nothing.
+  const hybrid = mintedWebhookEndpoint({
+    isNew: false,
+    type: "scheduled",
+    webhookEnabled: true,
+    workspaceId: WS,
+    flowId: ID,
+  });
+  assert.ok(hybrid?.endsWith(`/api/webhooks/${WS}/${ID}`), String(hybrid));
+  assert.equal(
+    mintedWebhookEndpoint({
+      isNew: false,
+      type: "scheduled",
+      webhookEnabled: true,
+      workspaceId: WS,
+      flowId: ID,
+      existingEndpoint: "https://api.example.com/api/webhooks/w/f",
+    }),
+    null,
+    "switching webhooks on never moves an existing URL",
+  );
+  for (const webhookEnabled of [undefined, false]) {
+    assert.equal(
+      mintedWebhookEndpoint({
+        isNew: false,
+        type: "scheduled",
+        webhookEnabled,
+        workspaceId: WS,
+        flowId: ID,
+      }),
+      null,
+      `webhook ${String(webhookEnabled)}: no URL`,
+    );
+  }
+
   // The SECRET is never minted here. It is the provider's signing secret
   // (Stripe's whsec_...), checked by connector.verifyWebhook — a value we
   // invented would fail verification on every real delivery while the flow

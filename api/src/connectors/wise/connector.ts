@@ -1554,7 +1554,10 @@ export class WiseConnector extends BaseConnector {
   async updateWebhookSubscription(
     options: UpdateWebhookSubscriptionOptions,
   ): Promise<ProvisionWebhookResult | null> {
-    return this.reconcileProfileSubscriptions(options, false);
+    const result = await this.reconcileProfileSubscriptions(options, false);
+    // Wise signs with its public keys: the "secret" is only the key set, the
+    // same whether the subscription is new or adopted.
+    return result ? { ...result, signingSecret: this.webhookKeySet() } : null;
   }
 
   supportsWebhookSubscriptionDelete(): boolean {

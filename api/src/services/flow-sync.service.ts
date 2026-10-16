@@ -53,6 +53,7 @@ import { boundRepoDirIfExists } from "../apps/workspace-repo-required";
 import { getWorkspaceRepo } from "./workspace-repos.service";
 import { Flow, type IFlow } from "../database/workspace-schema";
 import { generateWebhookEndpoint } from "../utils/webhook.utils";
+import { isWebhookFlow } from "./flow-triggers.service";
 import {
   flowToFile,
   parseFlowFile,
@@ -100,14 +101,19 @@ const logger = loggers.api("flow-sync");
 export function mintedWebhookEndpoint(args: {
   isNew: boolean;
   type: string | undefined;
+  /** The file's `webhook.enabled` (undefined when it has no stanza). */
+  webhookEnabled?: boolean;
   workspaceId: string;
   flowId: string;
   existingEndpoint?: string;
 }): string | null {
-  if (!args.isNew) return null;
-  if (args.type !== "webhook") return null;
-  // Belt and braces: never overwrite one that somehow already exists.
+  // Never overwrite one that already exists: providers POST to it.
   if (args.existingEndpoint) return null;
+  // A new webhook flow, or any flow whose file switches webhooks on (a
+  // scheduled flow keeps polling and gets webhooks on top).
+  const wanted =
+    (args.isNew && args.type === "webhook") || args.webhookEnabled === true;
+  if (!wanted) return null;
   return generateWebhookEndpoint(args.workspaceId, args.flowId);
 }
 
@@ -580,7 +586,7 @@ function applyDefinition(doc: IFlow, file: FlowFile): string | null {
   // URL identity minted once in Mongo (17 of 31 production flows have
   // external systems POSTing to it) and the secret is a credential; neither
   // is in the file and neither may be touched from here.
-  if (file.type === "webhook") {
+  if (file.type === "webhook" || file.webhookEnabled !== undefined) {
     doc.webhookConfig = {
       ...(doc.webhookConfig ?? {}),
       enabled: file.webhookEnabled !== false,
@@ -592,7 +598,13 @@ function applyDefinition(doc: IFlow, file: FlowFile): string | null {
 
   doc.syncMode = file.sync.mode as IFlow["syncMode"];
   doc.writeMode = file.sync.writeMode as IFlow["writeMode"];
-  doc.syncEngine = file.sync.engine as IFlow["syncEngine"];
+  // CDC is the only engine for connector flows: a file saying otherwise (or
+  // nothing) still yields CDC, so a flow can never be born on the removed
+  // legacy engine from a file.
+  doc.syncEngine =
+    doc.sourceType === "database"
+      ? (file.sync.engine as IFlow["syncEngine"])
+      : "cdc";
   doc.deleteMode = file.sync.deleteMode as IFlow["deleteMode"];
   if (file.sync.batchSize !== undefined) doc.batchSize = file.sync.batchSize;
 
@@ -690,8 +702,7 @@ export function hydrateFlowRow(
   const error = (
     doc as unknown as {
       validateSync: () =>
-        | { errors?: Record<string, { message?: string }> }
-        | undefined;
+        { errors?: Record<string, { message?: string }> } | undefined;
     }
   ).validateSync();
   const errors = error?.errors ?? {};
@@ -910,9 +921,11 @@ export async function syncFlowsFromRepo(
     // A file-born webhook flow needs an inbound URL, and this is the only
     // place one may be minted. `isNew` is the create/update distinction: an
     // update must leave the endpoint exactly where it is.
+    const webhookOnBefore = !isNew && isWebhookFlow(doc as IFlow);
     const mintedEndpoint = mintedWebhookEndpoint({
       isNew,
       type: (doc as IFlow).type,
+      webhookEnabled: parsed.webhookEnabled,
       workspaceId,
       flowId: String((doc as IFlow)._id),
       existingEndpoint: (doc as IFlow).webhookConfig?.endpoint,
@@ -950,9 +963,12 @@ export async function syncFlowsFromRepo(
       desired.push({ slug, file: parsed, flowId: String(doc._id) });
     } else {
       result.updated++;
+      // Entities changed, or webhooks were just switched on: retarget or
+      // provision the subscription (adopted by URL, never duplicated).
       if (
-        (doc as IFlow).type === "webhook" &&
-        flowEntitySignature(doc as IFlow) !== entitySignatureBefore
+        isWebhookFlow(doc as IFlow) &&
+        (flowEntitySignature(doc as IFlow) !== entitySignatureBefore ||
+          !webhookOnBefore)
       ) {
         webhookResyncs.push(doc as IFlow);
       }

@@ -423,7 +423,8 @@ async function testUpdateRetargetsEventsAndDropsDuplicates() {
     s => s.trigger_on === "transfers#payout-failure",
   );
   assert.equal(payoutFailure?.delivery.version, "5.0.0");
-  assert.equal(result?.signingSecret, undefined);
+  // Adopted or new, the stored "secret" is the key set that verifies deliveries.
+  assert.equal(result?.signingSecret, "production");
   assert.equal(result?.providerWebhookId.split(",").length, 5);
 }
 

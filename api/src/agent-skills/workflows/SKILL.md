@@ -31,7 +31,7 @@ workflows/
 That one file is all a workflow needs. `../hatchet` (the Hatchet client) and
 `../lib/mako` (Mako data access) are supplied when it is built: do not create
 them, and they are not in the repo to read. `../lib/mako` exports `query`,
-`call`, `agent`, `model` and `tools`, each shown below.
+`call`, `agent`, `model`, `decide` and `tools`, each shown below.
 
 With `workflowId: "daily-digest"`, file paths are relative to that folder:
 the file above is `path: "workflow.ts"`.
@@ -214,6 +214,22 @@ const { output } = await generateText({
 
 Use `generateText`, not `streamText`. Use plain `call` or `query` when no
 judgement is needed.
+
+**A decision model** (e.g. TypeSafe's Jev, `typesafe-ai/jev`) answers fixed
+questions about a JSON state instead of writing text. `decide` sends the
+state and the questions as the model expects them and returns its
+`answers` (and `providerMetadata`, where Jev puts its confidence); it is
+counted in usage like `model`.
+
+```ts
+import { decide } from "../lib/mako";
+
+const { answers } = await decide(
+  "typesafe-ai/jev",
+  { conversation },
+  questions,
+);
+```
 
 ## What starts a run
 

@@ -42,6 +42,10 @@ import {
 } from "./observability/langfuse";
 import { assertDevLoginSafeAtBoot } from "./auth/dev-login";
 import { attachAppsTerminalWs } from "./apps/terminal-ws";
+import {
+  isGkeWorkerConfigured,
+  rollWorkersToRuntimeImage,
+} from "./workflows/kube";
 
 // Resolve the root‐level .env file regardless of the runtime working directory
 const envPath = path.resolve(__dirname, "../../.env");
@@ -402,6 +406,23 @@ async function main(): Promise<void> {
       error: err instanceof Error ? err.message : String(err),
     });
   });
+
+  // A new API may name a new workflows runtime image: move the workers.
+  if (isGkeWorkerConfigured()) {
+    rollWorkersToRuntimeImage()
+      .then(moved => {
+        if (moved.length > 0) {
+          logger.info("Moved workflow workers to the runtime image", {
+            count: moved.length,
+          });
+        }
+      })
+      .catch(err => {
+        logger.warn("Could not move workflow workers to the runtime image", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
 
   warmCatalog().catch(err => {
     logger.warn("Startup model catalog warm failed", {

@@ -61,6 +61,18 @@ export function hasWebhookTrigger(flow: FlowTriggerFields): boolean {
   );
 }
 
+/**
+ * Whether the flow takes inbound webhook deliveries. A flow created as
+ * `type: "webhook"` keeps exactly the behaviour it always had (its URL was
+ * minted at creation and providers already POST to it). Any other flow takes
+ * them once its webhook trigger is on: an endpoint minted when webhooks were
+ * switched on, and `enabled`. `type` no longer decides alone, so a scheduled
+ * flow keeps polling and gets webhooks on top.
+ */
+export function isWebhookFlow(flow: FlowTriggerFields): boolean {
+  return flow.type === "webhook" || hasWebhookTrigger(flow);
+}
+
 export function hasReconcileTrigger(flow: FlowTriggerFields): boolean {
   return (
     flow.backfillSchedule?.enabled === true &&
@@ -86,9 +98,8 @@ export function hasAnyTrigger(flow: FlowTriggerFields): boolean {
  * trigger is its sole freshness source; anything with a poll schedule is
  * "scheduled" so legacy consumers keep working.
  *
- * IMPORTANT: this value must never be persisted onto an existing webhook
- * flow's `type` — the inbound webhook receiver hard-filters `type: "webhook"`,
- * so rewriting a hybrid flow's type would 404 its webhook endpoint.
+ * Never persist it onto a flow's `type`: `type` is what keeps an existing
+ * webhook flow taking deliveries (see `isWebhookFlow`).
  */
 export function deriveFlowType(
   flow: FlowTriggerFields,
@@ -97,24 +108,39 @@ export function deriveFlowType(
   return triggers.webhook && !triggers.schedule ? "webhook" : "scheduled";
 }
 
+export const LEGACY_ENGINE_REMOVED =
+  "The legacy sync engine has been removed: connector flows run on CDC and need a table destination with a CDC adapter";
+
 /**
- * Engine default for newly created flows. Webhook flows are always CDC (the
- * legacy real-time webhook pipeline has been decommissioned). Connector
- * flows targeting a CDC-capable table destination default to CDC; everything
- * else stays on the legacy engine until the full sunset.
+ * Engine for a flow. CDC is the only engine for connector flows (the legacy
+ * engine has been removed); a connector flow that cannot run on CDC is
+ * refused where it is created (`connectorFlowCdcError`). Database-source
+ * flows (query -> table) have their own write path and keep the "legacy"
+ * label, which nothing reads for them.
  */
 export function resolveDefaultSyncEngine(params: {
-  flowType: "scheduled" | "webhook";
+  sourceType: "connector" | "database";
+}): "cdc" | "legacy" {
+  return params.sourceType === "database" ? "legacy" : "cdc";
+}
+
+/**
+ * Why a connector flow cannot be created or saved, or null when it can: CDC
+ * needs a table destination whose database has a CDC adapter.
+ */
+export function connectorFlowCdcError(params: {
   sourceType: "connector" | "database";
   hasTableDestination: boolean;
   destinationSupportsCdc: boolean;
-}): "cdc" | "legacy" {
-  if (params.flowType === "webhook") return "cdc";
-  return params.sourceType === "connector" &&
-    params.hasTableDestination &&
-    params.destinationSupportsCdc
-    ? "cdc"
-    : "legacy";
+}): string | null {
+  if (params.sourceType === "database") return null;
+  if (!params.hasTableDestination) {
+    return `${LEGACY_ENGINE_REMOVED}: this flow has no table destination`;
+  }
+  if (!params.destinationSupportsCdc) {
+    return `${LEGACY_ENGINE_REMOVED}: the destination database has no CDC adapter`;
+  }
+  return null;
 }
 
 /**
