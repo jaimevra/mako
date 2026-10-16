@@ -68,6 +68,8 @@ import {
 } from "../sync-cdc/adapters/registry";
 import {
   connectorFlowCdcError,
+  deriveFlowType,
+  hasWebhookTrigger,
   isWebhookFlow,
   resolveDefaultSyncEngine,
 } from "../services/flow-triggers.service";
@@ -284,7 +286,9 @@ function projectFlowListItem(
   return {
     _id: flow._id,
     workspaceId: flow.workspaceId,
-    type: flow.type,
+    // Retired field: an old document's stored value, else a display label
+    // (deriveFlowType). Never branched on.
+    type: flow.type ?? deriveFlowType(flow as never),
     name: flow.name,
     slug: flow.slug,
     sourceType: flow.sourceType ?? "connector",
@@ -850,8 +854,11 @@ flowRoutes.openapi(
       const userId = "system";
       const body = await c.req.json();
 
-      // Validate required fields based on flow type and source type
-      const flowType = body.type || "scheduled";
+      // Webhooks on at creation: `webhookConfig.enabled`, or the retired
+      // `type: "webhook"` older clients still send. Not stored: a flow's
+      // triggers are its schedule, its webhook config and its resync.
+      const webhookOn =
+        body.webhookConfig?.enabled === true || body.type === "webhook";
       const sourceType = body.sourceType || "connector";
 
       // Schedule cron required whenever a poll schedule is enabled,
@@ -995,7 +1002,6 @@ flowRoutes.openapi(
       // Create flow with type-specific configuration
       const flowData: any = {
         workspaceId: new Types.ObjectId(workspaceId),
-        type: flowType,
         sourceType,
         destinationDatabaseId,
         destinationDatabaseName:
@@ -1014,7 +1020,7 @@ flowRoutes.openapi(
 
       // Optional periodic full-backfill cadence (CDC flows only).
       if (
-        (flowType === "webhook" || flowData.syncEngine === "cdc") &&
+        (webhookOn || flowData.syncEngine === "cdc") &&
         body.backfillSchedule
       ) {
         const sched = body.backfillSchedule;
@@ -1108,7 +1114,7 @@ flowRoutes.openapi(
         flowData.entityLayouts = body.entityLayouts;
       }
 
-      if (flowType === "scheduled") {
+      if (!webhookOn) {
         const scheduleEnabled = body.schedule?.enabled === true;
         flowData.schedule = {
           enabled: scheduleEnabled,
@@ -1119,7 +1125,7 @@ flowRoutes.openapi(
             ? body.schedule?.timezone || body.timezone || "UTC"
             : undefined,
         };
-      } else if (flowType === "webhook") {
+      } else {
         // Unified trigger model: a webhook flow may also carry a poll
         // schedule (hybrid trigger set). Persist it so the scheduler's
         // trigger-based selection picks it up.
@@ -1159,8 +1165,7 @@ flowRoutes.openapi(
         syncMode: flowData.syncMode,
         destinationType,
         syncEngine: flowData.syncEngine,
-        webhookEnabled:
-          flowType === "webhook" || Boolean(flowData.webhookConfig?.enabled),
+        webhookEnabled: webhookOn,
         selectedEntities: selectedEntitiesFromFlowBody({
           entityFilter: flowData.entityFilter,
           entityLayouts: flowData.entityLayouts,
@@ -1194,7 +1199,7 @@ flowRoutes.openapi(
       const flow = new Flow(flowData);
 
       // Update webhook endpoint with actual flow ID
-      if (flowType === "webhook" && flow.webhookConfig) {
+      if (webhookOn && flow.webhookConfig) {
         const requestBaseUrl = getRequestBaseUrl(c);
         flow.webhookConfig.endpoint = generateWebhookEndpoint(
           workspaceId,
@@ -1380,7 +1385,7 @@ flowRoutes.openapi(
       // Entities before this edit: a change re-targets the provider-side
       // webhook subscription after save (see flow-webhook-subscription).
       const entitySignatureBefore = flow ? flowEntitySignature(flow) : "";
-      const webhookOnBefore = flow ? isWebhookFlow(flow) : false;
+      const webhookOnBefore = flow ? hasWebhookTrigger(flow) : false;
 
       if (!flow) {
         return c.json({ success: false, error: "Flow not found" }, 404);
@@ -1660,7 +1665,6 @@ flowRoutes.openapi(
       // the same formula as a webhook flow's. Polling is untouched: webhooks
       // only add speed on top of it.
       if (
-        flow.type !== "webhook" &&
         body.webhookConfig?.enabled === true &&
         !flow.webhookConfig?.endpoint
       ) {

@@ -65,7 +65,12 @@ export interface FlowFileBackfillSchedule extends FlowFileSchedule {
 
 export interface FlowFile {
   name: string;
-  type: "scheduled" | "webhook";
+  /**
+   * Retired: read from older files (`type: webhook` with no `webhook:`
+   * stanza means webhooks on) and written back only for a row that still
+   * carries it, so an existing file does not change. Never decides anything.
+   */
+  type?: "scheduled" | "webhook";
   source:
     /**
      * A source connection (a credential configured with a connector). On
@@ -211,7 +216,8 @@ function omitEmpty(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 export function serializeFlowFile(flow: FlowFile): string {
-  const doc: Record<string, unknown> = { name: flow.name, type: flow.type };
+  const doc: Record<string, unknown> = { name: flow.name };
+  if (flow.type) doc.type = flow.type;
 
   doc.source =
     flow.source.type === "database"
@@ -264,7 +270,7 @@ export function serializeFlowFile(flow: FlowFile): string {
   }
   // A scheduled flow with webhooks on carries the stanza too; a flow that
   // never had webhooks switched on writes none, so its file does not change.
-  if (flow.type === "webhook" || flow.webhookEnabled !== undefined) {
+  if (flow.webhookEnabled !== undefined) {
     doc.webhook = {
       enabled: flow.webhookEnabled !== false,
       ...(flow.webhookProviderId
@@ -373,10 +379,10 @@ export function parseFlowFileResult(contents: string): FlowFileParse {
         "`name:` is required and must be a non-empty string — it is the flow's display name",
     };
   }
-  if (type !== "scheduled" && type !== "webhook") {
+  if (type && type !== "scheduled" && type !== "webhook") {
     return {
       ok: false,
-      reason: `\`type:\` must be "scheduled" or "webhook"${type ? `, not "${type}"` : " and is missing"}`,
+      reason: `\`type:\` is retired (triggers are \`schedule\`, \`webhook\` and \`backfill_schedule\`); when present it must be "scheduled" or "webhook", not "${type}"`,
     };
   }
 
@@ -429,12 +435,17 @@ export function parseFlowFileResult(contents: string): FlowFileParse {
 
   const file: FlowFile = {
     name,
-    type,
+    type: type === "scheduled" || type === "webhook" ? type : undefined,
     source,
     destination,
     schedule: scheduleFrom(doc.schedule),
     backfillSchedule: backfillScheduleFrom(doc.backfill_schedule),
-    webhookEnabled: webhookDoc ? webhookDoc.enabled !== false : undefined,
+    // An older file's `type: webhook` with no stanza means webhooks on.
+    webhookEnabled: webhookDoc
+      ? webhookDoc.enabled !== false
+      : type === "webhook"
+        ? true
+        : undefined,
     webhookProviderId: str(webhookDoc?.provider_webhook_id),
     sync: {
       mode: str(syncDoc.mode),

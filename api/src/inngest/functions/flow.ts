@@ -35,6 +35,7 @@ import { syncBackfillEntityFunction } from "./sync-entity";
 import { emitFlowExecutionTerminalEvent } from "../../services/flow-run-notification.emit";
 import {
   buildScheduledFlowSelection,
+  deriveTriggerSet,
   hasScheduleTrigger,
   hasWebhookTrigger,
   LEGACY_ENGINE_REMOVED,
@@ -619,7 +620,7 @@ export const flowFunction = inngest.createFunction(
       if (isWebhookOnly && !backfill) {
         logger.error("CRITICAL: Webhook-only flow reached flow executor!", {
           flowId,
-          flowType: flow.type,
+          triggers: deriveTriggerSet(flow),
           dataSourceId: flow.dataSourceId,
           schedule: flow.schedule,
           webhookConfig: !!flow.webhookConfig,
@@ -1837,10 +1838,10 @@ export const flowSchedulerFunction = inngest.createFunction(
       const found = await Flow.find(buildScheduledFlowSelection());
       scheduleLogger.info("Found flows with enabled poll schedules", {
         count: found.length,
-        // Log flow types for debugging
-        flowTypes: found.map(f => ({
+        // Each flow's triggers, for debugging
+        flowTriggers: found.map(f => ({
           id: f._id.toString(),
-          type: f.type,
+          ...deriveTriggerSet(f),
         })),
       });
       return found.map(f => f.toObject() as IFlow);
@@ -1863,7 +1864,7 @@ export const flowSchedulerFunction = inngest.createFunction(
               "CRITICAL: Flow without poll schedule found in scheduler!",
               {
                 flowId: flow._id.toString(),
-                flowType: flow.type,
+                triggers: deriveTriggerSet(flow),
                 hasSchedule: !!flow.schedule,
                 hasCron: !!flow.schedule?.cron,
                 schedule: flow.schedule,

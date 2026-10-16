@@ -978,7 +978,11 @@ export interface ISyncStateMeta {
 export interface IFlow extends Document {
   _id: Types.ObjectId;
   workspaceId: Types.ObjectId;
-  type: "scheduled" | "webhook"; // Required field
+  /**
+   * Retired: what drives a flow is its trigger set (services/flow-triggers).
+   * Documents written before carry it; new code never writes it.
+   */
+  type?: "scheduled" | "webhook";
 
   /**
    * Editable display name. Absent on rows created before names existed —
@@ -2387,10 +2391,11 @@ const FlowSchema = new Schema<IFlow>(
       ref: "Workspace",
       required: true,
     },
+    // Retired (see IFlow.type): kept so older documents still load.
     type: {
       type: String,
       enum: ["scheduled", "webhook"],
-      required: true,
+      required: false,
     },
     // Display name (editable) and slug (minted once; the `flows/<slug>.yml`
     // filename identity — see RFC #904). Both optional: rows predating names
@@ -2478,14 +2483,18 @@ const FlowSchema = new Schema<IFlow>(
       },
       cron: {
         type: String,
-        // Requiredness stays keyed to `type` for back-compat: webhook flows
-        // carry the default `schedule.enabled: true` with no cron. Under the
-        // unified trigger model, "cron present when schedule is enabled" is
-        // enforced at the route boundary independent of `type` (see
-        // routes/flows.ts) and a poll trigger only exists when a cron is set
-        // (see services/flow-triggers.service.ts).
+        // A flow with webhooks carries the default `schedule.enabled: true`
+        // with no cron (it may have no poll schedule at all); any other flow
+        // whose schedule is on needs its cron. An older document's retired
+        // `type: "webhook"` counts as webhooks, so it saves as it always did.
+        // The route boundary enforces the same (routes/flows.ts), and a poll
+        // trigger only exists when a cron is set (flow-triggers.service.ts).
         required: function () {
-          return this.type === "scheduled" && this.schedule?.enabled;
+          return Boolean(
+            this.schedule?.enabled &&
+            !this.webhookConfig?.endpoint &&
+            this.type !== "webhook",
+          );
         },
         validate: {
           validator: function (v: string) {

@@ -308,7 +308,21 @@ assert.equal(slugFromFlowFilePath("flows/Bad_Slug.yml"), null);
 // ── malformed input is rejected, not half-parsed ──
 assert.equal(parseFlowFile("this: [is: not: valid"), null);
 assert.equal(parseFlowFile("just a string"), null);
-assert.equal(parseFlowFile("name: no type here"), null);
+// `type:` is retired: optional, and an invalid value is still refused.
+assert.equal(parseFlowFile("name: no type here")?.type, undefined);
+assert.equal(parseFlowFile("name: x\ntype: bogus"), null);
+// An older file's `type: webhook` without a `webhook:` stanza = webhooks on;
+// a stanza decides when present.
+assert.equal(parseFlowFile("name: x\ntype: webhook")?.webhookEnabled, true);
+assert.equal(
+  parseFlowFile("name: x\ntype: webhook\nwebhook:\n  enabled: false")
+    ?.webhookEnabled,
+  false,
+);
+assert.equal(
+  parseFlowFile("name: x\ntype: scheduled")?.webhookEnabled,
+  undefined,
+);
 assert.equal(parseFlowFile("type: scheduled"), null); // no name
 
 console.log("flow-config-files tests passed");

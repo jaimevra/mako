@@ -53,7 +53,7 @@ import { boundRepoDirIfExists } from "../apps/workspace-repo-required";
 import { getWorkspaceRepo } from "./workspace-repos.service";
 import { Flow, type IFlow } from "../database/workspace-schema";
 import { generateWebhookEndpoint } from "../utils/webhook.utils";
-import { isWebhookFlow } from "./flow-triggers.service";
+import { hasWebhookTrigger, isWebhookFlow } from "./flow-triggers.service";
 import {
   flowToFile,
   parseFlowFile,
@@ -100,7 +100,6 @@ const logger = loggers.api("flow-sync");
  */
 export function mintedWebhookEndpoint(args: {
   isNew: boolean;
-  type: string | undefined;
   /** The file's `webhook.enabled` (undefined when it has no stanza). */
   webhookEnabled?: boolean;
   workspaceId: string;
@@ -111,8 +110,7 @@ export function mintedWebhookEndpoint(args: {
   if (args.existingEndpoint) return null;
   // A new webhook flow, or any flow whose file switches webhooks on (a
   // scheduled flow keeps polling and gets webhooks on top).
-  const wanted =
-    (args.isNew && args.type === "webhook") || args.webhookEnabled === true;
+  const wanted = args.webhookEnabled === true;
   if (!wanted) return null;
   return generateWebhookEndpoint(args.workspaceId, args.flowId);
 }
@@ -520,7 +518,8 @@ export interface FlowSyncResult {
  */
 function applyDefinition(doc: IFlow, file: FlowFile): string | null {
   doc.name = file.name;
-  doc.type = file.type;
+  // `type` is retired: never written (a file's `type: webhook` arrives here
+  // as webhookEnabled, see parseFlowFile).
 
   if (file.source.type === "database") {
     doc.sourceType = "database";
@@ -586,7 +585,7 @@ function applyDefinition(doc: IFlow, file: FlowFile): string | null {
   // URL identity minted once in Mongo (17 of 31 production flows have
   // external systems POSTing to it) and the secret is a credential; neither
   // is in the file and neither may be touched from here.
-  if (file.type === "webhook" || file.webhookEnabled !== undefined) {
+  if (file.webhookEnabled !== undefined) {
     doc.webhookConfig = {
       ...(doc.webhookConfig ?? {}),
       enabled: file.webhookEnabled !== false,
@@ -921,10 +920,9 @@ export async function syncFlowsFromRepo(
     // A file-born webhook flow needs an inbound URL, and this is the only
     // place one may be minted. `isNew` is the create/update distinction: an
     // update must leave the endpoint exactly where it is.
-    const webhookOnBefore = !isNew && isWebhookFlow(doc as IFlow);
+    const webhookOnBefore = !isNew && hasWebhookTrigger(doc as IFlow);
     const mintedEndpoint = mintedWebhookEndpoint({
       isNew,
-      type: (doc as IFlow).type,
       webhookEnabled: parsed.webhookEnabled,
       workspaceId,
       flowId: String((doc as IFlow)._id),
