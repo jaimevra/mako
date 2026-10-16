@@ -124,9 +124,16 @@ async function findFlow(workspaceId: string, ref: string) {
   }
   const wanted = ref.trim().toLowerCase();
   const all = await Flow.find({ workspaceId: wsId });
-  const matches = all.filter(
+  const exact = all.filter(
     f => f.slug === ref || (f.name ?? "").trim().toLowerCase() === wanted,
   );
+  // A short name ("wise", "fr_close") is enough when it picks out one sync:
+  // the source part of "<source> → <destination>", else a unique substring.
+  const source = (f: (typeof all)[number]) =>
+    (f.name ?? "").split("→")[0].trim().toLowerCase();
+  const bySource = all.filter(f => source(f) === wanted);
+  const byPart = all.filter(f => (f.name ?? "").toLowerCase().includes(wanted));
+  const matches = exact.length ? exact : bySource.length ? bySource : byPart;
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
     throw new Error(
