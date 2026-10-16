@@ -388,6 +388,11 @@ export function SyncFlowForm({
   const canProvisionWebhook =
     !isNewMode && Boolean(currentFlowId) && Boolean(provisioning?.supported);
   const provisionProviderLabel = provisioning?.providerLabel ?? "Provider";
+  // Stored by the server when provisioning on save was refused.
+  const provisionErrorMessage = (
+    flows.find(flow => flow._id === currentFlowId)?.webhookConfig as
+      { provisionError?: { message?: string } | null } | undefined
+  )?.provisionError?.message;
   const webhookSecretHelpText =
     selectedWebhookCapabilities?.secretHelpText ??
     "Enter the webhook signing secret from your provider";
@@ -958,10 +963,9 @@ export function SyncFlowForm({
       );
       const generatedName = `${selectedSource?.name || "Source"} → ${selectedDatabase?.name || "Destination"}`;
 
-      // Back-compat `type`: webhook-only syncs are "webhook"; anything with a
-      // poll schedule is "scheduled" — EXCEPT hybrids, which must stay
-      // "webhook" so the inbound webhook receiver (type-keyed) accepts events.
-      // The backend persists the schedule for webhook flows under the flag.
+      // `type` is only chosen at creation. The inbound receiver no longer
+      // keys on it: an existing scheduled flow switches webhooks on through
+      // `webhookConfig.enabled` (below) and keeps polling.
       const flowType = data.webhookEnabled ? "webhook" : "scheduled";
 
       const payload: any = {
@@ -983,6 +987,14 @@ export function SyncFlowForm({
 
       if (data.webhookEnabled) {
         payload.webhookSecret = data.webhookSecret || "";
+      }
+      // A scheduled flow switches webhooks on or off here: the server mints
+      // its URL and provisions the subscription on save (adopting one already
+      // on the URL). Flows created as webhook flows keep their payload
+      // unchanged, so a save never turns their webhooks off.
+      const existingFlow = flows.find(flow => flow._id === currentFlowId);
+      if (!isNewMode && existingFlow && existingFlow.type !== "webhook") {
+        payload.webhookConfig = { enabled: Boolean(data.webhookEnabled) };
       }
       if (isCdcCapableDest) {
         payload.deleteMode = isBigQueryDest
@@ -2504,6 +2516,13 @@ export function SyncFlowForm({
                                     save if you change anything.
                                   </Alert>
                                 )}
+                              {provisionErrorMessage && (
+                                <Alert severity="warning">
+                                  {provisionProviderLabel} refused the webhook
+                                  subscription: {provisionErrorMessage}. The
+                                  sync keeps polling.
+                                </Alert>
+                              )}
                               {webhookUrl && (
                                 <TextField
                                   value={webhookUrl}

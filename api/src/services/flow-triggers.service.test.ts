@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  isWebhookFlow,
   buildScheduledFlowSelection,
   connectorFlowCdcError,
   deriveFlowType,
@@ -158,7 +159,40 @@ function testScheduledFlowSelection() {
   assert.equal("type" in selection, false);
 }
 
+function testIsWebhookFlow() {
+  // Every flow created as a webhook flow keeps taking deliveries exactly as
+  // before — even one whose endpoint was never stored.
+  assert.equal(
+    isWebhookFlow({ type: "webhook", webhookConfig: { enabled: true } }),
+    true,
+  );
+  // A scheduled flow with only the Mongoose default is not one…
+  assert.equal(
+    isWebhookFlow({ type: "scheduled", webhookConfig: { enabled: true } }),
+    false,
+  );
+  // …until webhooks are switched on (endpoint minted + enabled), whatever
+  // its type: it keeps polling and takes deliveries on top.
+  assert.equal(
+    isWebhookFlow({
+      type: "scheduled",
+      schedule: { enabled: true, cron: "0 * * * *" },
+      webhookConfig: { enabled: true, endpoint: "https://x/api/webhooks/w/f" },
+    }),
+    true,
+  );
+  assert.equal(
+    isWebhookFlow({
+      type: "scheduled",
+      webhookConfig: { enabled: false, endpoint: "https://x/api/webhooks/w/f" },
+    }),
+    false,
+    "switched off again: no deliveries",
+  );
+}
+
 function main() {
+  testIsWebhookFlow();
   testScheduledFlowTriggerSet();
   testWebhookFlowWithMongooseScheduleDefault();
   testScheduledFlowWithMongooseWebhookDefault();
