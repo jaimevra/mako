@@ -154,6 +154,7 @@ async function main() {
         JSON.stringify({
           answers: { intent: "valuation" },
           usage: { inputTokens: 120, outputTokens: 4 },
+          providerMetadata: { gateway: { cost: "0.000031374" } },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -206,16 +207,22 @@ async function main() {
       );
       assert.equal(gatewayCalls.length, 1);
       const [forwarded] = gatewayCalls;
-      assert.match(forwarded.url, /\/decision-model$/);
+      assert.equal(
+        forwarded.url,
+        "https://ai-gateway.vercel.sh/v4/ai/decision-model",
+      );
       const sent = new Headers(forwarded.init.headers);
       assert.deepEqual([...sent.keys()].sort(), [
         "ai-decision-model-specification-version",
+        "ai-gateway-protocol-version",
         "ai-model-id",
         "authorization",
         "content-type",
       ]);
       assert.equal(sent.get("authorization"), "Bearer gateway-key-for-tests");
       assert.equal(sent.get("ai-model-id"), "typesafe-ai/jev");
+      // A plain fetch omits the gateway protocol version; Mako adds it.
+      assert.equal(sent.get("ai-gateway-protocol-version"), "0.0.1");
       assert.deepEqual(
         JSON.parse(
           Buffer.from(forwarded.init.body as ArrayBuffer).toString("utf8"),
@@ -232,6 +239,7 @@ async function main() {
       assert.equal(row?.inputTokens, 120);
       assert.equal(row?.outputTokens, 4);
       assert.equal(row?.totalTokens, 124);
+      assert.equal(row?.costUsd, 0.000031374);
 
       // A gateway error is passed back as is, and nothing is counted.
       gatewayReply = () =>

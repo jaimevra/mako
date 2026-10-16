@@ -332,6 +332,15 @@ const GATEWAY_BASE_URL = (
   process.env.AI_GATEWAY_BASE_URL || "https://ai-gateway.vercel.sh/v1/ai"
 ).replace(/\/+$/, "");
 
+// Decision models are served only by the gateway's v4 API (the base
+// `@ai-sdk/gateway` v4 uses), and only to clients that state the gateway
+// protocol version. A custom base without a version is left as it is.
+const DECISION_GATEWAY_BASE_URL = GATEWAY_BASE_URL.replace(
+  /\/v\d+\/ai$/,
+  "/v4/ai",
+);
+const GATEWAY_PROTOCOL_VERSION = "0.0.1";
+
 type Worker = { workspaceId: string; userId: string };
 
 // Mako's own auth resolves the key; a session or a key without the worker's
@@ -445,7 +454,13 @@ async function forwardToGateway(
     }
   });
   const startedAt = Date.now();
-  const res = await fetch(`${GATEWAY_BASE_URL}/${kind}`, {
+  const decision = kind === "decision-model";
+  if (decision && !headers.has("ai-gateway-protocol-version")) {
+    // `@ai-sdk/gateway` sends it; a plain fetch from a step does not.
+    headers.set("ai-gateway-protocol-version", GATEWAY_PROTOCOL_VERSION);
+  }
+  const base = decision ? DECISION_GATEWAY_BASE_URL : GATEWAY_BASE_URL;
+  const res = await fetch(`${base}/${kind}`, {
     method: "POST",
     headers,
     body: await c.req.arrayBuffer(),
@@ -460,13 +475,22 @@ async function forwardToGateway(
         ? value
         : ((value as { total?: number } | undefined)?.total ?? 0);
     let usage: { inputTokens?: unknown; outputTokens?: unknown } = {};
+    let gatewayCost: unknown;
     try {
-      usage = (JSON.parse(body) as { usage?: typeof usage }).usage ?? {};
+      const result = JSON.parse(body) as {
+        usage?: typeof usage;
+        providerMetadata?: { gateway?: { cost?: unknown } };
+      };
+      usage = result.usage ?? {};
+      gatewayCost = result.providerMetadata?.gateway?.cost;
     } catch {
       // Not a model result: nothing to count.
     }
     const inputTokens = tokens(usage.inputTokens);
     const outputTokens = tokens(usage.outputTokens);
+    // Mako's price list has no decision models; the gateway says what the
+    // call cost, so a decision is billed at that.
+    const costUsd = decision ? Number(gatewayCost) : NaN;
     void trackUsage({
       workspaceId,
       userId,
@@ -476,6 +500,7 @@ async function forwardToGateway(
       outputTokens,
       totalTokens: inputTokens + outputTokens,
       durationMs: Date.now() - startedAt,
+      ...(Number.isFinite(costUsd) ? { costUsd } : {}),
     });
   }
   return new Response(body, {

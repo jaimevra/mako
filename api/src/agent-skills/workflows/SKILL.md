@@ -218,7 +218,8 @@ judgement is needed.
 **A decision model** (e.g. TypeSafe's Jev, `typesafe-ai/jev`) answers fixed
 questions about a JSON state instead of writing text. `decide` sends the
 state and the questions as the model expects them and returns its
-`answers`; it is counted in usage like `model`.
+`answers` (and `providerMetadata`, where Jev puts its confidence); it is
+counted in usage like `model`.
 
 ```ts
 import { decide } from "../lib/mako";

@@ -51,7 +51,12 @@ export async function decide(
   modelId: string,
   state: unknown,
   questions: unknown[],
-): Promise<{ answers: unknown; usage?: unknown; warnings?: unknown[] }> {
+): Promise<{
+  answers: unknown;
+  usage?: unknown;
+  warnings?: unknown[];
+  providerMetadata?: unknown;
+}> {
   const workflow = workflowName();
   const res = await fetch(`${url}/api/workflows/runtime/ai/decision-model`, {
     method: "POST",
@@ -60,6 +65,7 @@ export async function decide(
       "Content-Type": "application/json",
       "ai-model-id": modelId,
       "ai-decision-model-specification-version": "4",
+      "ai-gateway-protocol-version": "0.0.1",
       ...(workflow ? { "X-Mako-Workflow": workflow } : {}),
     },
     body: JSON.stringify({
@@ -71,6 +77,7 @@ export async function decide(
     answers?: unknown;
     usage?: unknown;
     warnings?: unknown[];
+    providerMetadata?: unknown;
     error?: unknown;
   };
   if (!res.ok) {
@@ -84,6 +91,7 @@ export async function decide(
     answers: body.answers,
     usage: body.usage,
     warnings: body.warnings,
+    providerMetadata: body.providerMetadata,
   };
 }
 
