@@ -92,9 +92,11 @@ async function main(): Promise<void> {
   const WS = "6a2bd881b6f8c41ea17e9bc7";
   const ID = "69c2719490eb18199aafa882";
 
+  // A file's `type: webhook` (retired) reaches here as webhookEnabled: true
+  // (parseFlowFile translates it).
   const created = mintedWebhookEndpoint({
     isNew: true,
-    type: "webhook",
+    webhookEnabled: true,
     workspaceId: WS,
     flowId: ID,
   });
@@ -112,7 +114,7 @@ async function main(): Promise<void> {
   assert.equal(
     mintedWebhookEndpoint({
       isNew: false,
-      type: "webhook",
+      webhookEnabled: true,
       workspaceId: WS,
       flowId: ID,
       existingEndpoint: "https://api.example.com/api/webhooks/w/f",
@@ -120,30 +122,25 @@ async function main(): Promise<void> {
     null,
     "an edit must never re-mint an endpoint",
   );
-  assert.equal(
-    mintedWebhookEndpoint({
-      isNew: false,
-      type: "webhook",
-      workspaceId: WS,
-      flowId: ID,
-    }),
-    null,
-    "not-new is decisive on its own, endpoint present or not",
-  );
 
   // Non-webhook flows get nothing, and a row that somehow already carries one
   // is never overwritten.
-  for (const type of ["scheduled", "manual", undefined]) {
+  for (const webhookEnabled of [undefined, false]) {
     assert.equal(
-      mintedWebhookEndpoint({ isNew: true, type, workspaceId: WS, flowId: ID }),
+      mintedWebhookEndpoint({
+        isNew: true,
+        webhookEnabled,
+        workspaceId: WS,
+        flowId: ID,
+      }),
       null,
-      `a ${String(type)} flow must not get a webhook endpoint`,
+      `webhooks ${String(webhookEnabled)}: no webhook endpoint`,
     );
   }
   assert.equal(
     mintedWebhookEndpoint({
       isNew: true,
-      type: "webhook",
+      webhookEnabled: true,
       workspaceId: WS,
       flowId: ID,
       existingEndpoint: "https://api.example.com/api/webhooks/w/f",
@@ -157,7 +154,6 @@ async function main(): Promise<void> {
   // existing URL is never moved, and a file without the stanza mints nothing.
   const hybrid = mintedWebhookEndpoint({
     isNew: false,
-    type: "scheduled",
     webhookEnabled: true,
     workspaceId: WS,
     flowId: ID,
@@ -166,7 +162,6 @@ async function main(): Promise<void> {
   assert.equal(
     mintedWebhookEndpoint({
       isNew: false,
-      type: "scheduled",
       webhookEnabled: true,
       workspaceId: WS,
       flowId: ID,
@@ -179,7 +174,6 @@ async function main(): Promise<void> {
     assert.equal(
       mintedWebhookEndpoint({
         isNew: false,
-        type: "scheduled",
         webhookEnabled,
         workspaceId: WS,
         flowId: ID,

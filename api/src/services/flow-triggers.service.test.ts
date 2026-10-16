@@ -6,6 +6,7 @@ import {
   deriveFlowType,
   deriveTriggerSet,
   hasAnyTrigger,
+  hasWebhookTrigger,
   resolveDefaultSyncEngine,
 } from "./flow-triggers.service";
 
@@ -181,9 +182,18 @@ function testIsWebhookFlow() {
     }),
     true,
   );
+  // Switched off again: still set up for webhooks (it has its URL, the
+  // receiver answers 403), but no webhook trigger, so no deliveries.
   assert.equal(
     isWebhookFlow({
       type: "scheduled",
+      webhookConfig: { enabled: false, endpoint: "https://x/api/webhooks/w/f" },
+    }),
+    true,
+    "switched off again: still has its URL",
+  );
+  assert.equal(
+    hasWebhookTrigger({
       webhookConfig: { enabled: false, endpoint: "https://x/api/webhooks/w/f" },
     }),
     false,

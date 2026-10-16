@@ -32,6 +32,7 @@ import { flowToFile } from "../../services/flow-config-files";
 import { commitFlowFile } from "../../services/flow-config.service";
 import {
   deriveTriggerSet,
+  hasWebhookTrigger,
   isWebhookFlow,
 } from "../../services/flow-triggers.service";
 import { syncFlowWebhookSubscription } from "../../services/flow-webhook-subscription.service";
@@ -368,7 +369,7 @@ export function createFlowSyncTools({
           }
           // PUT /flows/:id: switching webhooks on gives any flow its inbound
           // URL (same formula, minted once); polling is untouched.
-          const webhookOnBefore = isWebhookFlow(flow);
+          const webhookOnBefore = hasWebhookTrigger(flow);
           if (webhook !== undefined) {
             if (webhook === "on" && !flow.webhookConfig?.endpoint) {
               flow.webhookConfig = {
