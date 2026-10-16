@@ -55,6 +55,32 @@ function whereLabel(where?: string | null) {
     : { text: where, kind: "schema" as const };
 }
 
+type TreeLoader = ReturnType<typeof useSchemaStore.getState>;
+
+/**
+ * What a writer can be limited to: the schemas or datasets a write names.
+ * Where the tree starts with databases that hold schemas (Postgres, Redshift),
+ * those schemas; where a database is itself the namespace (MySQL,
+ * ClickHouse), the databases.
+ */
+async function writePlaces(
+  workspaceId: string,
+  connectionId: string,
+  ensureTreeRoot: TreeLoader["ensureTreeRoot"],
+  ensureTreeChildren: TreeLoader["ensureTreeChildren"],
+): Promise<string[]> {
+  const roots = (await ensureTreeRoot(workspaceId, connectionId)) ?? [];
+  const databases = roots.filter(n => n.kind === "database").slice(0, 5);
+  const children = await Promise.all(
+    databases.map(n =>
+      ensureTreeChildren(workspaceId, connectionId, n).catch(() => []),
+    ),
+  );
+  const schemas = children.flat().filter(n => n.kind === "schema");
+  const places = schemas.length > 0 ? schemas : roots;
+  return [...new Set(places.map(n => n.label))];
+}
+
 function initials(text: string) {
   const name = text.split("@")[0] ?? text;
   const parts = name.split(/[._-]+/).filter(Boolean);
@@ -74,6 +100,7 @@ export default function ConnectionWritersPanel({
   const setWriters = useSchemaStore(s => s.setConnectionWriters);
   const setMode = useSchemaStore(s => s.setConnectionWritesMode);
   const ensureTreeRoot = useSchemaStore(s => s.ensureTreeRoot);
+  const ensureTreeChildren = useSchemaStore(s => s.ensureTreeChildren);
   const fetchWorkflows = useWorkflowsStore(s => s.fetchOverview);
   const workflows = useWorkflowsStore(s =>
     workspaceId ? s.overviewByWorkspace[workspaceId]?.workflows : undefined,
@@ -102,8 +129,13 @@ export default function ConnectionWritersPanel({
     void load();
     void loadMembers?.();
     void fetchWorkflows(workspaceId);
-    void ensureTreeRoot(workspaceId, connectionId)
-      .then(nodes => setNamespaces((nodes ?? []).map(n => n.label)))
+    void writePlaces(
+      workspaceId,
+      connectionId,
+      ensureTreeRoot,
+      ensureTreeChildren,
+    )
+      .then(setNamespaces)
       .catch(() => setNamespaces([]));
   }, [
     workspaceId,
@@ -112,6 +144,7 @@ export default function ConnectionWritersPanel({
     loadMembers,
     fetchWorkflows,
     ensureTreeRoot,
+    ensureTreeChildren,
   ]);
 
   const people = useMemo<Who[]>(
