@@ -36,6 +36,44 @@ const runAs = (name, definition) => {
   }
 };
 
+// Every request a step makes to Mako names its workflow, whatever copy of
+// lib/mako the workspace keeps (an older one sends no name, and the worker
+// naming no workflow writes as no one). Installed before workflow code
+// loads, so a client that keeps a reference to fetch keeps this one.
+const makoOrigin = (() => {
+  try {
+    return new URL(process.env.MAKO_URL ?? "http://localhost:8080").origin;
+  } catch {
+    return null;
+  }
+})();
+if (!sandbox && makoOrigin) {
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const name = running.getStore();
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input?.url;
+    let origin = null;
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      // Not an absolute URL: not Mako.
+    }
+    if (typeof name !== "string" || origin !== makoOrigin) {
+      return baseFetch(input, init);
+    }
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    headers.set("X-Mako-Workflow", name);
+    return baseFetch(input, { ...init, headers });
+  };
+}
+
 const { hatchet } = await load("hatchet.ts");
 // The client has the token now; workflow code must not: it could otherwise
 // make its own client and register triggers Mako turned off.

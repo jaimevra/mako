@@ -19,32 +19,18 @@ import {
   resolveCommit,
 } from "../apps/repository.service";
 import { generateApiKey, hashApiKey } from "../auth/api-key.middleware";
-import type { WorkspaceApiKeyScope } from "../auth/api-key-scopes";
 import { Workspace } from "../database/workspace-schema";
 import { loggers } from "../logging";
-import {
-  ensureWorkspaceTenant,
-  hasInstanceHatchet,
-  workflowsNamePrefix,
-} from "./hatchet";
+import { ensureWorkspaceTenant, hasInstanceHatchet } from "./hatchet";
 import {
   ensureWorkerDeployment,
   isGkeWorkerConfigured,
   workerSecretExists,
   writeWorkerSecret,
 } from "./kube";
+import { WORKER_KEY_SCOPES, workerKeyName } from "./worker-key";
 
 const logger = loggers.api("workflows-on-push");
-
-/** One key per environment that runs a worker: previews share a database. */
-const workerKeyName = () => `Workflows worker ${workflowsNamePrefix()}`.trim();
-// `query:write` reads everywhere and writes only through connections that
-// list the workflow as a writer (access/connection-writes.ts).
-const WORKER_KEY_SCOPES: WorkspaceApiKeyScope[] = [
-  "mcp",
-  "query:write",
-  "workflows:runtime",
-];
 
 /** The object id at `spec` (a commit's `workflows/` by default), or null. */
 async function workflowsTree(
@@ -104,6 +90,17 @@ export async function setKey(
         },
       },
     },
+  );
+}
+
+/** Remove the runtime key `name` from the workspace, if it is there. */
+export async function removeKey(
+  workspaceId: string,
+  name: string,
+): Promise<void> {
+  await Workspace.updateOne(
+    { _id: new Types.ObjectId(workspaceId) },
+    { $pull: { apiKeys: { name } } },
   );
 }
 

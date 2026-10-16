@@ -18,15 +18,18 @@ import {
   execInWorktree,
 } from "../apps/worktree.service";
 import { generateApiKey } from "../auth/api-key.middleware";
+import { loggers } from "../logging";
 import { HatchetError } from "./hatchet";
-import { setKey } from "./on-push";
+import { removeKey, setKey } from "./on-push";
 import { type RunDetail, shapeRun } from "./runs";
 import { RUNTIME_IN_BOX, installRuntimeCommand } from "./runtime-files";
+import { sandboxKeyName } from "./worker-key";
 
 /**
  * run.mjs ends a run after five minutes; the exec gets longer, for a box
  * that installs the runtime and fetches the engine first.
  */
+const logger = loggers.api("workflows-sandbox");
 const EXEC_TIMEOUT_MS = 8 * 60_000;
 const FAILED = "MAKO_SANDBOX_FAILED";
 
@@ -69,7 +72,9 @@ async function runNow(
   const handle = await ensureWorkspaceWorktree(workspaceId, userId);
   const ctx = boxCtx(handle);
   const { key } = generateApiKey();
-  await setKey(workspaceId, userId, `Workflows sandbox ${userId}`, key);
+  // The run's own key, for this run only: the code being tested can read it.
+  const keyName = sandboxKeyName(userId);
+  await setKey(workspaceId, userId, keyName, key);
 
   const scratch = provider.scratch(ctx);
   const out = `${scratch}/mako-workflow-run.json`;
@@ -88,7 +93,11 @@ async function runNow(
       MAKO_URL: appsGitOriginBase(),
       MAKO_API_KEY: key,
     },
-  });
+  }).finally(() =>
+    removeKey(workspaceId, keyName).catch(error =>
+      logger.warn("Could not remove a sandbox run's key", { error }),
+    ),
+  );
 
   let result: Result | null = null;
   if (!exec.stdout.startsWith(FAILED)) {

@@ -2856,12 +2856,15 @@ flowRoutes.openapi(
         retryFailedMaterialization?: boolean;
         entity?: string;
       };
-      const result = await cdcBackfillService.recoverFlow({
-        workspaceId,
-        flowId,
-        retryFailedMaterialization: body.retryFailedMaterialization !== false,
-        entity: typeof body.entity === "string" ? body.entity : undefined,
-      });
+      // Drops the flow's own orphaned staging tables: Mako's, like its syncs.
+      const result = await asSystem(() =>
+        cdcBackfillService.recoverFlow({
+          workspaceId,
+          flowId,
+          retryFailedMaterialization: body.retryFailedMaterialization !== false,
+          entity: typeof body.entity === "string" ? body.entity : undefined,
+        }),
+      );
       return c.json({
         success: true,
         message: "CDC flow recovered",
@@ -2917,12 +2920,15 @@ flowRoutes.openapi(
         retryFailedMaterialization?: boolean;
         entity?: string;
       };
-      const result = await cdcBackfillService.recoverStream({
-        workspaceId,
-        flowId,
-        retryFailedMaterialization: body.retryFailedMaterialization !== false,
-        entity: typeof body.entity === "string" ? body.entity : undefined,
-      });
+      // Drops the flow's own orphaned staging tables: Mako's, like its syncs.
+      const result = await asSystem(() =>
+        cdcBackfillService.recoverStream({
+          workspaceId,
+          flowId,
+          retryFailedMaterialization: body.retryFailedMaterialization !== false,
+          entity: typeof body.entity === "string" ? body.entity : undefined,
+        }),
+      );
       return c.json({
         success: true,
         message: "CDC stream recovered",
@@ -3411,12 +3417,15 @@ flowRoutes.openapi(
         });
       }
 
-      await cdcBackfillService.resyncFlow({
-        workspaceId,
-        flowId,
-        deleteDestination: Boolean(body.deleteDestination),
-        clearWebhookEvents: Boolean(body.clearWebhookEvents),
-      });
+      // May drop the flow's own destination tables: Mako's, like its syncs.
+      await asSystem(() =>
+        cdcBackfillService.resyncFlow({
+          workspaceId,
+          flowId,
+          deleteDestination: Boolean(body.deleteDestination),
+          clearWebhookEvents: Boolean(body.clearWebhookEvents),
+        }),
+      );
       return c.json({
         success: true,
         message: "CDC resync started",

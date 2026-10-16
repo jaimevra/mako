@@ -1,4 +1,5 @@
 import {
+  checkConnectionWrite,
   covers,
   principalsOutsideWorkspace,
 } from "../access/connection-writes";
@@ -48,7 +49,7 @@ const consoleManager = new ConsoleManager();
 
 type WorkspaceDatabaseRouteError = {
   response: { success: false; error: string };
-  status: 400 | 404;
+  status: 400 | 403 | 404;
 };
 
 type WorkspaceDatabaseResult =
@@ -104,12 +105,30 @@ async function getWorkspaceDatabase(
   return { database };
 }
 
+/**
+ * The MongoDB database behind a connection. `write` names the change a
+ * route is about to make with the raw client (createCollection,
+ * dropCollection): it is checked against the connection's writers list
+ * first, as a query would be (access/connection-writes.ts).
+ */
 async function getWorkspaceMongoDb(
   workspaceId: Types.ObjectId,
   databaseId: string,
+  write?: string,
 ): Promise<WorkspaceMongoDbResult> {
   const result = await getWorkspaceDatabase(workspaceId, databaseId);
   if (isWorkspaceDatabaseRouteError(result)) return result;
+  if (write) {
+    const check = await checkConnectionWrite(result.database, {
+      operation: write,
+    });
+    if (check.refused) {
+      return {
+        response: { success: false, error: check.refused },
+        status: 403 as const,
+      };
+    }
+  }
 
   const connection = await databaseConnectionService.getConnection(
     result.database,
@@ -957,10 +976,14 @@ const writersParams = z.object({
   id: z.string().openapi({ param: { name: "id", in: "path" } }),
 });
 
+/** A principal that can be put on a writers list. */
+const LISTABLE_PRINCIPAL =
+  /^(user:[A-Za-z0-9_-]+|workflow:[A-Za-z0-9][A-Za-z0-9_-]{0,99})$/;
+
 const WriterSchema = z.object({
   principal: z
     .string()
-    .regex(/^(user:[A-Za-z0-9_-]+|workflow:[A-Za-z0-9][A-Za-z0-9_-]{0,99})$/)
+    .regex(LISTABLE_PRINCIPAL)
     .openapi({ example: "workflow:crm-chat-issues" }),
   where: z
     .string()
@@ -1034,19 +1057,23 @@ workspaceDatabaseRoutes.openapi(
           addedAt: w.addedAt ?? null,
         })),
         canEdit: memberRole === "owner" || memberRole === "admin",
-        recent: recent.map(r => {
-          const targets = r.targets.filter((t): t is string => !!t);
-          return {
-            principal: r._id,
-            count: r.count,
-            lastAt: r.lastAt,
-            targets: targets.slice(0, 5),
-            // Against the list as it is now, not as it was then.
-            uncovered: targets
-              .filter(t => !covers(database.writers, r._id, t))
-              .slice(0, 5),
-          };
-        }),
+        // Only who could be allowed: the worker writing as no workflow
+        // cannot be listed.
+        recent: recent
+          .filter(r => LISTABLE_PRINCIPAL.test(r._id))
+          .map(r => {
+            const targets = r.targets.filter((t): t is string => !!t);
+            return {
+              principal: r._id,
+              count: r.count,
+              lastAt: r.lastAt,
+              targets: targets.slice(0, 5),
+              // Against the list as it is now, not as it was then.
+              uncovered: targets
+                .filter(t => !covers(database.writers, r._id, t))
+                .slice(0, 5),
+            };
+          }),
       },
     });
   },
@@ -1514,7 +1541,11 @@ workspaceDatabaseRoutes.openapi(
         );
       }
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "createCollection",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1777,7 +1808,11 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const collectionName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "dropCollection",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -1945,7 +1980,11 @@ workspaceDatabaseRoutes.openapi(
         );
       }
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "createView",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }
@@ -2110,7 +2149,11 @@ workspaceDatabaseRoutes.openapi(
       const databaseId = c.req.param("id");
       const viewName = c.req.param("name");
 
-      const result = await getWorkspaceMongoDb(workspace._id, databaseId);
+      const result = await getWorkspaceMongoDb(
+        workspace._id,
+        databaseId,
+        "dropView",
+      );
       if (isWorkspaceMongoDbRouteError(result)) {
         return c.json(result.response, result.status);
       }

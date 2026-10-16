@@ -53,15 +53,32 @@ const MONGO_READ_OPERATIONS = new Set([
 
 /**
  * Run `work` as Mako itself, unchecked, like a sync: a flow creating or
- * resetting its own destination from a route a person called.
+ * resetting its own destination from a route a person called, or an Inngest
+ * function. Within a request, a write is refused unless someone is
+ * identified or the work is marked as Mako's this way.
  */
 export function asSystem<T>(work: () => Promise<T>): Promise<T> {
   const context = getRequestContext();
   if (!context) return work();
   return requestContextStorage.run(
-    { ...context, userId: undefined, workflow: undefined },
+    {
+      ...context,
+      userId: undefined,
+      workflow: undefined,
+      workflowWorker: undefined,
+      system: true,
+    },
     work,
   );
+}
+
+/**
+ * Whether the current work is Mako's own: marked so (`asSystem`), or not
+ * serving any request at all (a script, a task at startup).
+ */
+function isSystemWork(): boolean {
+  const context = getRequestContext();
+  return !context || context.system === true;
 }
 
 /** Whether `query` would change something, judged without asking the database. */
@@ -146,6 +163,9 @@ function fits(where: string, target: WriteTarget): boolean {
 // Who is writing, and may they?
 // ---------------------------------------------------------------------------
 
+/** The principal of the workflow worker when it names no deployed workflow. */
+export const WORKFLOW_WORKER = "worker:workflows";
+
 /**
  * Who is acting: given explicitly (a scheduled console runs as its owner),
  * or the workflow or person of the request being served. Nobody for work
@@ -155,6 +175,8 @@ export function actingPrincipal(explicit?: string): string | undefined {
   if (explicit) return explicit;
   const context = getRequestContext();
   if (context?.workflow) return `workflow:${context.workflow}`;
+  // The worker's key naming no deployed workflow: never on a writers list.
+  if (context?.workflowWorker) return WORKFLOW_WORKER;
   if (context?.userId) return `user:${context.userId}`;
   return undefined;
 }
@@ -292,8 +314,20 @@ export async function checkConnectionWrite(
   if (options.readOnly || options.writeChecked) return {};
   if (!database._id || !database.workspaceId) return {}; // a connection being tested
   const principal = actingPrincipal(options.actor);
-  if (!principal) return {};
-  if (!isWrite(database.type, query)) {
+  const write = isWrite(database.type, query);
+  if (!principal) {
+    // A request that identifies no one writes nothing, unless the code
+    // serving it marked the work as Mako's own (asSystem).
+    if (!write || isSystemWork()) return {};
+    logger.warn("Refused a write by no identified person or workflow", {
+      connectionId: String(database._id),
+      path: getRequestContext()?.path,
+    });
+    return {
+      refused: `Mako could not tell who is writing to ${database.name}, so the write was refused. Writes need a signed-in person, an API key, or a workflow on the connection's writers list.`,
+    };
+  }
+  if (!write) {
     if (!READ_ONLY_TRANSACTION.has(database.type)) return {};
     if (covers(database.writers, principal, null)) return {};
     return { readOnlyTransaction: true };

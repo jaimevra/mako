@@ -88,6 +88,14 @@ async function main() {
         // A person's key that may write: it cannot name a workflow.
         key("Mine", PERSON_KEY, ["mcp", "query:write"]),
       ],
+      // The worker is believed only for workflows deployed from main.
+      workflows: {
+        live: {
+          sha: "a".repeat(40),
+          tree: "t",
+          names: ["crm-chat-classifier", "other-flow"],
+        },
+      },
     });
     const db = await DatabaseConnection.create({
       workspaceId: ws,
@@ -164,6 +172,20 @@ async function main() {
     assert.equal(recorded[1].allowed, false);
     assert.equal(recorded[1].target, "crm_ai_chat.chat_labels");
 
+    // A name not deployed from main is not believed: the worker writes as
+    // no one listable, never as the person who deployed it.
+    const stranger = (await running.run("not-deployed", () =>
+      worker.query(id, MERGE),
+    )) as Answer;
+    assert.equal(stranger.success, false);
+    assert.match(
+      stranger.error ?? "",
+      /^worker:workflows is not allowed to write to bigquery_write/,
+    );
+    recorded = await events(3);
+    assert.equal(recorded[2].principal, "worker:workflows");
+    assert.equal(recorded[2].allowed, false);
+
     // A person's key naming a workflow is still the person.
     const person = await load(PERSON_KEY);
     const mine = (await running.run("crm-chat-classifier", () =>
@@ -174,9 +196,9 @@ async function main() {
       mine.error ?? "",
       /^user:deployer is not allowed to write to bigquery_write/,
     );
-    recorded = await events(3);
-    assert.equal(recorded[2].principal, "user:deployer");
-    assert.equal(recorded[2].allowed, false);
+    recorded = await events(4);
+    assert.equal(recorded[3].principal, "user:deployer");
+    assert.equal(recorded[3].allowed, false);
     assert.equal(ran.length, 1, "no refused write reached the driver");
 
     // A read needs no list.

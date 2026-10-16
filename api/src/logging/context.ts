@@ -28,6 +28,17 @@ export interface RequestContext {
    * person who deployed it, when writing (access/connection-writes.ts).
    */
   workflow?: string;
+  /**
+   * The deployed workflow worker's key, without a deployed workflow's name:
+   * it writes as no one, not as the person who deployed it.
+   */
+  workflowWorker?: boolean;
+  /**
+   * Mako's own work, not a person's or a workflow's: an Inngest function (a
+   * sync, a flow run, dbt), a flow writing its own destination. Its writes
+   * are not checked against writers lists (access/connection-writes.ts).
+   */
+  system?: boolean;
   /** Workspace ID if in workspace context */
   workspaceId?: string;
   /** HTTP method */
@@ -294,6 +305,11 @@ export function enrichContextWithUser(userId: string): void {
 export function enrichContextWithWorkflow(workflow: string): void {
   const context = requestContextStorage.getStore();
   if (context) context.workflow = workflow;
+}
+
+export function enrichContextWithWorkflowWorker(): void {
+  const context = requestContextStorage.getStore();
+  if (context) context.workflowWorker = true;
 }
 
 export function enrichContextWithWorkspace(workspaceId: string): void {
