@@ -3,6 +3,7 @@
  * Supports PostgreSQL, MySQL, BigQuery, SQLite, and Cloudflare D1 with a single tool surface.
  */
 
+import { actingPrincipal } from "../../access/connection-writes";
 import { tool } from "ai";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -907,10 +908,20 @@ function compactQueryFields(fields: unknown): unknown {
  */
 export function effectiveSqlQueryAccess(
   queryAccess: QueryAccess,
-  connection: { allowAgentWrites?: boolean },
+  connection: {
+    allowAgentWrites?: boolean;
+    writers?: { principal: string }[];
+  },
 ): QueryAccess {
   if (queryAccess !== "write-opt-in") return queryAccess;
-  return connection.allowAgentWrites === true ? "write" : "read";
+  if (connection.allowAgentWrites === true) return "write";
+  // Being on the connection's writers list is the same opt-in, for that
+  // principal only; where it may write is checked when the query runs
+  // (access/connection-writes.ts).
+  const acting = actingPrincipal();
+  return acting && connection.writers?.some(w => w.principal === acting)
+    ? "write"
+    : "read";
 }
 
 async function executeQueryImpl(

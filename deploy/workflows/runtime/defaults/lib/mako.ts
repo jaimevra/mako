@@ -15,11 +15,13 @@ export async function agent(
   goal: string,
   options: { model?: string; maxSteps?: number } = {},
 ): Promise<{ text: string; toolCalls: string[]; chatId: string }> {
+  const workflow = workflowName();
   const res = await fetch(`${url}/api/workflows/runtime/agent`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
+      ...(workflow ? { "X-Mako-Workflow": workflow } : {}),
     },
     body: JSON.stringify({ goal, ...options }),
   });
@@ -40,19 +42,36 @@ export const model = createGateway({
   apiKey: key,
 });
 
-let mcp: ReturnType<typeof createMCPClient> | undefined;
+const clients = new Map<string, ReturnType<typeof createMCPClient>>();
+
+/** The workflow this step belongs to (set by the worker), if any. */
+function workflowName(): string | undefined {
+  const running = (globalThis as { makoWorkflow?: { getStore(): unknown } })
+    .makoWorkflow;
+  const name = running?.getStore();
+  return typeof name === "string" ? name : undefined;
+}
 
 /** Mako's tools (queries, table inspection, apps, web search) for a model to use. */
 export async function tools() {
-  // One connection for the process, opened on first use.
-  mcp ??= createMCPClient({
-    transport: {
-      type: "http",
-      url: `${url}/api/mcp`,
-      headers: { Authorization: `Bearer ${key}` },
-    },
-  });
-  return (await mcp).tools();
+  // One connection per workflow, opened on first use: Mako learns which
+  // workflow writes, so a connection can allow that workflow alone.
+  const workflow = workflowName() ?? "";
+  let client = clients.get(workflow);
+  if (!client) {
+    client = createMCPClient({
+      transport: {
+        type: "http",
+        url: `${url}/api/mcp`,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          ...(workflow ? { "X-Mako-Workflow": workflow } : {}),
+        },
+      },
+    });
+    clients.set(workflow, client);
+  }
+  return (await client).tools();
 }
 
 /** Call one Mako tool by name and return its result, e.g. `call("app_materialize", { appId, name })`. */

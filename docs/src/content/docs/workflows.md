@@ -58,7 +58,8 @@ Anyone with the member role writes workflows in their sandbox and tests them the
 import { generateText } from "ai";
 import { agent, call, model, query } from "../lib/mako";
 
-// SQL on a workspace connection (read-only).
+// SQL on a workspace connection. Writing needs the workflow on the
+// connection's writers list (Access tab).
 const rows = await query("<connectionId>", "select count(*) from orders");
 
 // Any Mako tool by name: here, rebuild an app's data.

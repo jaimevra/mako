@@ -14,6 +14,7 @@ import { User } from "../database/schema";
 import {
   loggers,
   enrichContextWithUser,
+  enrichContextWithWorkflow,
   enrichContextWithWorkspace,
 } from "../logging";
 
@@ -176,6 +177,17 @@ export async function unifiedAuthMiddleware(c: Context, next: Next) {
           enrichContextWithUser(creator._id);
           // Enrich logging context with workspace ID (API key auth)
           enrichContextWithWorkspace(workspace._id.toString());
+          // The workflow worker's own key may say which workflow a request
+          // runs for, so the workflow writes as itself
+          // (access/connection-writes.ts). Any other key cannot.
+          const workflow = c.req.header("x-mako-workflow");
+          if (
+            workflow &&
+            /^[a-z0-9][a-z0-9_-]{0,99}$/i.test(workflow) &&
+            workspaceApiKey.scopes?.includes("workflows:runtime")
+          ) {
+            enrichContextWithWorkflow(workflow);
+          }
 
           await next();
           return;

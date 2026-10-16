@@ -37,6 +37,7 @@ import {
 import { parseMcpOAuthScopes } from "../auth/mcp-oauth.service";
 import { mcpOAuthWellKnownRoutes } from "../routes/mcp-oauth.routes";
 import { effectiveSqlQueryAccess } from "../agent-lib/tools/sql-tools";
+import { requestContextStorage } from "../logging/context";
 import { sqlReadOnlyAccessError } from "../services/read-only-query.service";
 import {
   assertBridgePolicyCovers,
@@ -161,6 +162,45 @@ async function main() {
   assert.equal(
     effectiveSqlQueryAccess("none", { allowAgentWrites: true }),
     "none",
+  );
+  // Being on the connection's writers list opens writes for that principal
+  // only, the way allowAgentWrites opens them for every key.
+  const asWorkflow = <T>(fn: () => T): T =>
+    requestContextStorage.run(
+      {
+        requestId: "t",
+        userId: "deployer",
+        workflow: "digest",
+        method: "POST",
+        path: "/api/mcp",
+        startTime: 0,
+      },
+      fn,
+    );
+  assert.equal(
+    asWorkflow(() =>
+      effectiveSqlQueryAccess("write-opt-in", {
+        writers: [{ principal: "workflow:digest" }],
+      }),
+    ),
+    "write",
+  );
+  assert.equal(
+    asWorkflow(() =>
+      effectiveSqlQueryAccess("write-opt-in", {
+        writers: [{ principal: "workflow:other" }],
+      }),
+    ),
+    "read",
+  );
+  assert.equal(
+    asWorkflow(() =>
+      effectiveSqlQueryAccess("read", {
+        writers: [{ principal: "workflow:digest" }],
+      }),
+    ),
+    "read",
+    "a list never upgrades a read-only key either",
   );
   // REST endpoints have not adopted per-connection resolution: a
   // query:write key stays read there.

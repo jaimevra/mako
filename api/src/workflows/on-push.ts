@@ -38,9 +38,11 @@ const logger = loggers.api("workflows-on-push");
 
 /** One key per environment that runs a worker: previews share a database. */
 const workerKeyName = () => `Workflows worker ${workflowsNamePrefix()}`.trim();
+// `query:write` reads everywhere and writes only through connections that
+// list the workflow as a writer (access/connection-writes.ts).
 const WORKER_KEY_SCOPES: WorkspaceApiKeyScope[] = [
   "mcp",
-  "query:read",
+  "query:write",
   "workflows:runtime",
 ];
 
@@ -134,6 +136,14 @@ async function ensureWorker(
     .select("apiKeys.name")
     .lean();
   const hasKey = workspace?.apiKeys?.some(k => k.name === workerKeyName());
+  // A key made before workflows could write keeps working; it just gains
+  // the scope (idempotent, every deploy).
+  if (hasKey) {
+    await Workspace.updateOne(
+      { _id: new Types.ObjectId(workspaceId), "apiKeys.name": workerKeyName() },
+      { $set: { "apiKeys.$.scopes": WORKER_KEY_SCOPES } },
+    );
+  }
   const rotate = !hasKey || !(await workerSecretExists(workspaceId));
   if (rotate) {
     const { key } = generateApiKey();

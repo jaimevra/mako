@@ -1,6 +1,15 @@
+import {
+  checkConnectionWrite,
+  inReadOnlyTransaction,
+  ownResult,
+} from "../access/connection-writes";
 import { createClient } from "@clickhouse/client";
 import { MongoClient, Db, MongoClientOptions, ClientSession } from "mongodb";
-import { Client as PgClient, Pool as PgPool } from "pg";
+import {
+  Client as PgClient,
+  Pool as PgPool,
+  type QueryResult as PgQueryResult,
+} from "pg";
 import * as mysql from "mysql2/promise";
 import { ConnectionPool, Request as MSSQLRequest } from "mssql";
 import { IDatabaseConnection } from "../database/workspace-schema";
@@ -71,6 +80,13 @@ export interface ConnectionConfig {
  * Used consistently across all database drivers
  */
 export interface QueryExecuteOptions {
+  /** Set once checkConnectionWrite ran at an outer entry point. */
+  writeChecked?: boolean;
+  /**
+   * Run in a read-only transaction (or setting) without readOnly's lexical
+   * single-SELECT rule: set by checkConnectionWrite for a person's reads.
+   */
+  readOnlyTransaction?: boolean;
   /** Target database name (for cluster/server-level connections) */
   databaseName?: string;
   /** Sub-database ID (e.g., Cloudflare D1 database UUID) */
@@ -88,6 +104,12 @@ export interface QueryExecuteOptions {
    * engines fail closed instead of falling back to lexical SQL checks.
    */
   readOnly?: boolean;
+  /**
+   * Who runs this query when it is not the person or workflow of the
+   * request being served, e.g. "user:<id>" for a scheduled console run as
+   * its owner (access/connection-writes.ts).
+   */
+  actor?: string;
   /**
    * BigQuery only: max time to poll jobs.query until jobComplete (default 5m).
    * Large MERGE/DML jobs need a higher value or we return a false timeout while BQ keeps running.
@@ -532,6 +554,13 @@ export class DatabaseConnectionService {
     options?: QueryExecuteOptions,
   ): Promise<QueryResult> {
     try {
+      // Writes are for the connection's writers; a read returns from this
+      // at once, in memory (access/connection-writes.ts).
+      const check = await checkConnectionWrite(database, query, options);
+      if (check.refused) return { success: false, error: check.refused };
+      if (check.readOnlyTransaction) {
+        options = { ...options, readOnlyTransaction: true };
+      }
       if (options?.readOnly) {
         if (typeof query !== "string") {
           return {
@@ -618,6 +647,14 @@ export class DatabaseConnectionService {
     options?: QueryPreviewOptions,
   ): Promise<QueryPreviewResult> {
     try {
+      const check = await checkConnectionWrite(database, query, options);
+      if (check.refused) return { success: false, error: check.refused };
+      options = {
+        ...options,
+        writeChecked: true,
+        readOnlyTransaction:
+          options?.readOnlyTransaction || check.readOnlyTransaction,
+      };
       if (
         !options?.readOnly &&
         database.type === "bigquery" &&
@@ -680,6 +717,9 @@ export class DatabaseConnectionService {
           executionId: options?.executionId,
           signal: options?.signal,
           readOnly: options?.readOnly,
+          actor: options?.actor,
+          writeChecked: true,
+          readOnlyTransaction: options?.readOnlyTransaction,
         },
       );
 
@@ -723,6 +763,16 @@ export class DatabaseConnectionService {
     query: any,
     options: StreamingQueryOptions & QueryExecuteOptions,
   ): Promise<{ success: boolean; totalRows: number; error?: string }> {
+    const check = await checkConnectionWrite(database, query, options);
+    if (check.refused) {
+      return { success: false, totalRows: 0, error: check.refused };
+    }
+    options = {
+      ...options,
+      writeChecked: true,
+      readOnlyTransaction:
+        options.readOnlyTransaction || check.readOnlyTransaction,
+    };
     // Read-only enforcement is engine-agnostic: validate the query lexically
     // once, up front. Engines with a session read-only mode additionally get it
     // via executeQuery below; engines without one (e.g. BigQuery, whose native
@@ -792,6 +842,9 @@ export class DatabaseConnectionService {
           executionId: options.executionId,
           signal: options.signal,
           readOnly: options.readOnly,
+          actor: options.actor,
+          writeChecked: true,
+          readOnlyTransaction: options.readOnlyTransaction,
         });
 
         if (!result.success) {
@@ -3873,14 +3926,16 @@ export class DatabaseConnectionService {
           return { success: false, error: "Query cancelled" };
         }
 
-        if (options?.readOnly) {
-          await client.query("BEGIN TRANSACTION READ ONLY");
+        let result: PgQueryResult;
+        if (options?.readOnly || options?.readOnlyTransaction) {
           readOnlyTransactionStarted = true;
-        }
-        const result = await client.query(query);
-        if (readOnlyTransactionStarted) {
-          await client.query("COMMIT");
+          result = ownResult(
+            (await client.query(inReadOnlyTransaction(query))) as
+              PgQueryResult | PgQueryResult[],
+          );
           readOnlyTransactionStarted = false;
+        } else {
+          result = await client.query(query);
         }
         const fields = normalizePostgresFields(result.fields);
         const rows = normalizePostgresRows(
@@ -4290,7 +4345,7 @@ export class DatabaseConnectionService {
           return { success: false, error: "Query cancelled" };
         }
 
-        if (options?.readOnly) {
+        if (options?.readOnly || options?.readOnlyTransaction) {
           await connection.query("START TRANSACTION READ ONLY");
           readOnlyTransactionStarted = true;
         }
@@ -4662,7 +4717,9 @@ export class DatabaseConnectionService {
           clickhouse_settings: {
             // Allow query to be cancelled
             cancel_http_readonly_queries_on_client_close: 1,
-            ...(options?.readOnly ? { readonly: "2" } : {}),
+            ...(options?.readOnly || options?.readOnlyTransaction
+              ? { readonly: "2" }
+              : {}),
           },
           abort_signal: abortController.signal,
         });

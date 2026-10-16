@@ -167,6 +167,10 @@ export const scheduledQueryExecutorFunction = inngest.createFunction(
           {
             databaseId: consoleDoc.savedConsole.databaseId,
             databaseName: consoleDoc.savedConsole.databaseName,
+            // A schedule writes as the console's owner, not as the system.
+            actor: consoleDoc.savedConsole.createdBy
+              ? `user:${consoleDoc.savedConsole.createdBy}`
+              : undefined,
           },
         );
 
