@@ -545,7 +545,10 @@ export function SyncFlowForm({
   // full reconcile" both mean "run a complete backfill on this cadence" —
   // the same underlying operation exposed as two controls. Collapse to the
   // single reconcile cron below and hide the redundant Scheduled trigger.
-  const showScheduleTrigger = !(isCdcCapableDest && watchSyncMode === "full");
+  // Poll is always shown and never switched off behind the user's back: a
+  // Full Refresh sync whose only trigger is its poll (Sway, WordPress…) must
+  // keep it. Redundancy with the full resync is fine.
+  const showScheduleTrigger = true;
   const reconcileDescription =
     watchSyncMode === "full" && watchWriteMode === "overwrite"
       ? "Refreshes an exact snapshot each run — additions, edits, and deletions at the source are all reflected."
@@ -593,19 +596,6 @@ export function SyncFlowForm({
     connectorSupportsWebhook,
     setValue,
   ]);
-
-  // The Scheduled trigger is hidden (see showScheduleTrigger) once Full
-  // Refresh + a CDC destination make it redundant with the reconcile cron —
-  // disable it too so it doesn't keep firing invisibly in the background.
-  useEffect(() => {
-    if (
-      !showScheduleTrigger &&
-      watchScheduleEnabled &&
-      formTouchedRef.current
-    ) {
-      setValue("scheduleEnabled", false);
-    }
-  }, [showScheduleTrigger, watchScheduleEnabled, setValue]);
 
   // Incremental requires at least one selected entity to do better than a
   // full re-pull; fall back to Full Refresh | Deduped when the connector (or
