@@ -72,6 +72,8 @@ export interface ConnectionConfig {
  * Used consistently across all database drivers
  */
 export interface QueryExecuteOptions {
+  /** Set once checkConnectionWrite ran at an outer entry point. */
+  writeChecked?: boolean;
   /** Target database name (for cluster/server-level connections) */
   databaseName?: string;
   /** Sub-database ID (e.g., Cloudflare D1 database UUID) */
@@ -629,6 +631,9 @@ export class DatabaseConnectionService {
     options?: QueryPreviewOptions,
   ): Promise<QueryPreviewResult> {
     try {
+      const refused = await checkConnectionWrite(database, query, options);
+      if (refused) return { success: false, error: refused };
+      options = { ...options, writeChecked: true };
       if (
         !options?.readOnly &&
         database.type === "bigquery" &&
@@ -691,6 +696,8 @@ export class DatabaseConnectionService {
           executionId: options?.executionId,
           signal: options?.signal,
           readOnly: options?.readOnly,
+          actor: options?.actor,
+          writeChecked: true,
         },
       );
 
@@ -734,6 +741,9 @@ export class DatabaseConnectionService {
     query: any,
     options: StreamingQueryOptions & QueryExecuteOptions,
   ): Promise<{ success: boolean; totalRows: number; error?: string }> {
+    const refused = await checkConnectionWrite(database, query, options);
+    if (refused) return { success: false, totalRows: 0, error: refused };
+    options = { ...options, writeChecked: true };
     // Read-only enforcement is engine-agnostic: validate the query lexically
     // once, up front. Engines with a session read-only mode additionally get it
     // via executeQuery below; engines without one (e.g. BigQuery, whose native

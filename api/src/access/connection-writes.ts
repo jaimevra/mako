@@ -85,7 +85,7 @@ function singleStatement(sql: string): boolean {
 /** One part of a name: quoted with backticks, double quotes, brackets, or bare. */
 const PART = String.raw`(?:\x60[^\x60]+\x60|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$-]+)`;
 const TARGET = new RegExp(
-  String.raw`^(?:INSERT\s+(?:OVERWRITE\s+)?(?:INTO\s+)?|UPDATE\s+|DELETE\s+(?:FROM\s+)?|MERGE\s+(?:INTO\s+)?|TRUNCATE\s+(?:TABLE\s+)?|DROP\s+(?:TABLE|VIEW|MATERIALIZED\s+VIEW)\s+(?:IF\s+EXISTS\s+)?|ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:TABLE|VIEW|MATERIALIZED\s+VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?)(${PART}(?:\s*\.\s*${PART}){0,2})`,
+  String.raw`^(?:INSERT\s+(?:OVERWRITE\s+)?(?:INTO\s+)?|LOAD\s+DATA\s+(?:OVERWRITE\s+|INTO\s+)|UPDATE\s+|DELETE\s+(?:FROM\s+)?|MERGE\s+(?:INTO\s+)?|TRUNCATE\s+(?:TABLE\s+)?|DROP\s+(?:TABLE|VIEW|MATERIALIZED\s+VIEW)\s+(?:IF\s+EXISTS\s+)?|ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:TABLE|VIEW|MATERIALIZED\s+VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?)(${PART}(?:\s*\.\s*${PART}){0,2})`,
   "i",
 );
 
@@ -265,9 +265,9 @@ export async function checkConnectionWrite(
     "_id" | "workspaceId" | "name" | "type" | "writers"
   >,
   query: unknown,
-  options: { readOnly?: boolean; actor?: string } = {},
+  options: { readOnly?: boolean; actor?: string; writeChecked?: boolean } = {},
 ): Promise<string | null> {
-  if (options.readOnly) return null;
+  if (options.readOnly || options.writeChecked) return null;
   if (!database._id || !database.workspaceId) return null; // a connection being tested
   const principal = actingPrincipal(options.actor);
   if (!principal) return null;

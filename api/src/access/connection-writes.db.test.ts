@@ -30,7 +30,7 @@ import {
 
 const PEOPLE = ["owner", "admin", "marc", "anna"] as const;
 type Person = (typeof PEOPLE)[number];
-const ROLE: Record<Person, string> = {
+const ROLE: Record<Person, "owner" | "admin" | "member"> = {
   owner: "owner",
   admin: "admin",
   marc: "member",
@@ -158,6 +158,63 @@ async function main() {
       { actor: "user:marc" },
     );
     assert.match(String(scheduled.error), REFUSED);
+
+    // BigQuery console runs and exports skip executeQuery: checked at their
+    // own entry, once.
+    const bq = await DatabaseConnection.create({
+      workspaceId: ws,
+      name: "BigQuery",
+      type: "bigquery",
+      connection: { project_id: "p" },
+      createdBy: "owner",
+      writers: [{ principal: "user:anna", where: "finance" }],
+    });
+    Object.assign(databaseConnectionService, {
+      executeBigQueryPreviewQuery: async () => ({ success: true, rows: [] }),
+      executeBigQueryStreamingQuery: async () => ({
+        success: true,
+        totalRows: 0,
+      }),
+    });
+    const asMarc = <T>(run: () => Promise<T>) =>
+      requestContextStorage.run(
+        {
+          requestId: "t",
+          userId: "marc",
+          method: "POST",
+          path: "/",
+          startTime: 0,
+        },
+        run,
+      );
+    const preview = await asMarc(() =>
+      databaseConnectionService.executePreviewQuery(
+        bq,
+        "INSERT INTO `p.finance.x` VALUES (1)",
+      ),
+    );
+    assert.match(String(preview.error), REFUSED);
+    const streamed = await asMarc(() =>
+      databaseConnectionService.executeStreamingQuery(
+        bq,
+        "DELETE `p.finance.x` WHERE true",
+        { onBatch: async () => {} } as never,
+      ),
+    );
+    assert.match(String(streamed.error), REFUSED);
+    const read = await asMarc(() =>
+      databaseConnectionService.executePreviewQuery(
+        bq,
+        "SELECT * FROM `p.finance.x`",
+      ),
+    );
+    assert.equal(read.success, true);
+    await settle();
+    assert.equal(
+      await ConnectionWriteEvent.countDocuments({ connectionId: bq._id }),
+      2,
+      "one event per write, not one per layer",
+    );
 
     // The routes, as each person, with their own API key.
     const call = (p: Person, method: string, path: string, body?: unknown) =>

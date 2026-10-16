@@ -84,6 +84,15 @@ assert.equal(
   "s.t",
 );
 assert.equal(target("DELETE FROM t WHERE id = 1"), "t");
+assert.equal(target("DELETE `p.crm.leads` WHERE true"), "crm.leads");
+assert.equal(
+  target("LOAD DATA OVERWRITE mako_out.t FROM FILES(uris=['gs://x'])"),
+  "mako_out.t",
+);
+assert.equal(
+  target("LOAD DATA INTO mako_out.t FROM FILES(uris=['gs://x'])"),
+  "mako_out.t",
+);
 // No single, named target: never guessed.
 assert.equal(
   target("WITH x AS (SELECT 1) INSERT INTO s.t SELECT * FROM x"),
