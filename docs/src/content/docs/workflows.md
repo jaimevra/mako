@@ -56,7 +56,7 @@ Anyone with the member role writes workflows in their sandbox and tests them the
 
 ```ts
 import { generateText } from "ai";
-import { agent, call, model, query } from "../lib/mako";
+import { agent, call, decide, model, query } from "../lib/mako";
 
 // SQL on a workspace connection. Writing needs the workflow on the
 // connection's writers list (Access tab).
@@ -74,6 +74,16 @@ const { text, toolCalls } = await agent(
 const summary = await generateText({
   model: model("anthropic/claude-haiku-4.5"),
   prompt: `Summarize in one line: ${text}`,
+});
+
+// A decision model (e.g. Jev): several judgements about one record, with
+// probabilities. Use this helper, not `decide` from "ai".
+const { answers } = await decide({
+  model: "<decision model id>",
+  state: text,
+  questions: {
+    churnRisk: { type: "boolean", instructions: "Is this account at risk?" },
+  },
 });
 ```
 

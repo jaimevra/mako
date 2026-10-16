@@ -42,6 +42,78 @@ export const model = createGateway({
   apiKey: key,
 });
 
+/** What a decision model judges: text, or JSON it reads as data. */
+export type DecisionState =
+  | string
+  | ({ type: "text"; text: string } | { type: "json"; value: unknown })[];
+
+/** One judgement about the state. Criteria describe the options (null: none). */
+export type DecisionQuestion =
+  | {
+      type: "choice";
+      instructions: string;
+      criteria: Record<string, string | null>;
+    }
+  | { type: "score"; instructions: string; criteria: (string | null)[] }
+  | {
+      type: "boolean";
+      instructions: string;
+      criteria?: { true?: string | null; false?: string | null };
+    };
+
+export type DecisionAnswer =
+  | { type: "choice"; choice: string; probabilities?: Record<string, number> }
+  | { type: "score"; score: number; probabilities?: Record<string, number> }
+  | { type: "boolean"; probability: number }
+  | { type: "refusal" };
+
+/**
+ * A decision model (e.g. Jev) answering several questions about one state,
+ * with probabilities rather than text. Counted in the workspace's usage.
+ *
+ * `decide({ model: "...", state: ticket, questions: { category: { type:
+ * "choice", instructions: "...", criteria: { bug: null, billing: null } } } })`
+ */
+export async function decide<
+  Q extends Record<string, DecisionQuestion>,
+>(options: {
+  model: string;
+  state: DecisionState;
+  questions: Q;
+}): Promise<{ answers: { [K in keyof Q]: DecisionAnswer }; model?: string }> {
+  const stateParts =
+    typeof options.state === "string"
+      ? [{ type: "text", text: options.state }]
+      : options.state;
+  const res = await fetch(`${url}/api/workflows/runtime/ai/decision-model`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "ai-decision-model-specification-version": "4",
+      "ai-model-id": options.model,
+    },
+    body: JSON.stringify({ stateParts, questions: options.questions }),
+  });
+  const text = await res.text();
+  let body: {
+    answers?: { [K in keyof Q]: DecisionAnswer };
+    model?: string;
+    error?: string | { message?: string };
+  } = {};
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // Not JSON: the status says what went wrong.
+  }
+  if (!res.ok || !body.answers) {
+    const error =
+      typeof body.error === "string" ? body.error : body.error?.message;
+    throw new Error(error ?? `The decision failed (${res.status})`);
+  }
+  return { answers: body.answers, model: body.model };
+}
+
 const clients = new Map<string, ReturnType<typeof createMCPClient>>();
 
 /** The workflow this step belongs to (set by the worker), if any. */

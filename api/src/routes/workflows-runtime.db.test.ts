@@ -79,6 +79,12 @@ async function main() {
     // The agent and the model are behind the same key; a goal is required.
     assert.equal((await call("/agent", OTHER_KEY, { goal: "x" })).status, 403);
     assert.equal((await call("/ai/language-model", OTHER_KEY, {})).status, 403);
+    assert.equal((await call("/ai/decision-model", OTHER_KEY, {})).status, 403);
+    // A decision names its model, as the gateway protocol does.
+    assert.equal(
+      (await call("/ai/decision-model", WORKER_KEY, {})).status,
+      400,
+    );
     assert.equal((await call("/agent", WORKER_KEY, {})).status, 400);
     // Only the gateway call that can be counted is forwarded.
     assert.equal(

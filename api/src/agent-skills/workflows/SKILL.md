@@ -212,6 +212,33 @@ const { output } = await generateText({
 // output.category is "bug" | "billing" | "feature" | "other"
 ```
 
+**A decision model** (e.g. Jev), for several judgements about one record
+at once when you want probabilities, not prose: `decide` from `lib/mako`. Do
+not use `decide` from `ai` — the runtime's AI SDK predates it; call it
+through `lib/mako` and the run is metered like any other model call.
+
+```ts
+import { decide } from "../lib/mako";
+
+const { answers } = await decide({
+  model: "<decision model id>",
+  state: ticketText, // a string, or [{ type: "json", value: row }]
+  questions: {
+    category: {
+      type: "choice",
+      instructions: "What is this ticket about?",
+      criteria: { bug: null, billing: null, feature: null, other: null },
+    },
+    urgent: { type: "boolean", instructions: "Does it need an answer today?" },
+  },
+});
+// answers.category: { type: "choice", choice, probabilities? } or
+// { type: "refusal" }; answers.urgent: { type: "boolean", probability }
+```
+
+Check `type` before reading an answer: any question can come back as a
+refusal. A failed call throws, and the step's retry asks again.
+
 Use `generateText`, not `streamText`. Use plain `call` or `query` when no
 judgement is needed.
 
