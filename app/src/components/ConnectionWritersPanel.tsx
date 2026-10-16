@@ -345,14 +345,24 @@ export default function ConnectionWritersPanel({
                   }}
                 >
                   <PrincipalAvatar who={w} />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Box
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                    }}
+                  >
                     <Typography variant="body2" noWrap>
                       {w.label}
                     </Typography>
                     {w.kind === "workflow" && (
-                      <Typography variant="caption" color="text.secondary">
-                        Workflow
-                      </Typography>
+                      <Chip
+                        size="small"
+                        label="Workflow"
+                        sx={{ height: 20, fontSize: 11 }}
+                      />
                     )}
                   </Box>
                   <PlaceChip place={place} />

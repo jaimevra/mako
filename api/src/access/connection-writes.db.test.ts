@@ -24,6 +24,7 @@ import { workspaceDatabaseRoutes } from "../routes/workspace-databases";
 import { workspaceRoutes } from "../routes/workspaces";
 import { ConnectionWriteEvent } from "./connection-write-event";
 import {
+  asSystem,
   forgetWritesMode,
   principalsOutsideWorkspace,
 } from "./connection-writes";
@@ -198,6 +199,21 @@ async function main() {
     assert.equal(await refused("admin", "DELETE FROM finance.x"), true);
     // Syncs, flows and other work no request started: the system's.
     assert.equal(await refused(null, "DROP TABLE finance.x"), false);
+    // A flow resetting its own destination from a person's request: Mako's.
+    const flowReset = await requestContextStorage.run(
+      {
+        requestId: "t",
+        userId: "marc",
+        method: "POST",
+        path: "/",
+        startTime: 0,
+      },
+      () =>
+        asSystem(() =>
+          databaseConnectionService.executeQuery(db, "DROP TABLE crm.leads"),
+        ),
+    );
+    assert.equal(REFUSED.test(String(flowReset.error ?? "")), false);
     // A schedule writes as its owner.
     const scheduled = await databaseConnectionService.executeQuery(
       db,

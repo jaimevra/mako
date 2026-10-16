@@ -23,7 +23,7 @@ import {
   type IConnectionWriter,
   type IDatabaseConnection,
 } from "../database/workspace-schema";
-import { getRequestContext } from "../logging/context";
+import { getRequestContext, requestContextStorage } from "../logging/context";
 import { loggers } from "../logging";
 import {
   checkPreviewQuerySafety,
@@ -56,6 +56,19 @@ const MONGO_READ_OPERATIONS = new Set([
   "countDocuments",
   "distinct",
 ]);
+
+/**
+ * Run `work` as Mako itself, unchecked, like a sync: a flow creating or
+ * resetting its own destination from a route a person called.
+ */
+export function asSystem<T>(work: () => Promise<T>): Promise<T> {
+  const context = getRequestContext();
+  if (!context) return work();
+  return requestContextStorage.run(
+    { ...context, userId: undefined, workflow: undefined },
+    work,
+  );
+}
 
 /** Whether `query` would change something, judged without asking the database. */
 export function isWrite(type: string, query: unknown): boolean {

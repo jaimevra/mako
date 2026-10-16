@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { asSystem } from "../access/connection-writes";
 import { findInWorkspace } from "./lib/load-resource";
 import {
   Flow,
@@ -1212,12 +1213,15 @@ flowRoutes.openapi(
           const { createDestinationWriter } =
             await import("../services/destination-writer.service");
           // createDestinationWriter.initialize() calls ensureSchema which creates the dataset
-          await createDestinationWriter(
-            {
-              destinationDatabaseId: flowData.destinationDatabaseId,
-              tableDestination: flowData.tableDestination,
-            },
-            "pre-check",
+          // The flow's own destination: written as Mako, like its syncs.
+          await asSystem(() =>
+            createDestinationWriter(
+              {
+                destinationDatabaseId: flowData.destinationDatabaseId,
+                tableDestination: flowData.tableDestination,
+              },
+              "pre-check",
+            ),
           );
           logger.info("BigQuery dataset ensured", {
             dataset: flowData.tableDestination.schema,
@@ -2465,14 +2469,18 @@ flowRoutes.openapi(
             const flowToken = flowId.replace(/[^a-zA-Z0-9]/g, "").slice(-8);
             const bulkStagingTable = `${liveTable}__${flowToken}__staging`;
 
-            await driver.dropTable(destination, liveTable, { schema });
-            await driver.dropTable(destination, oldStageTable, {
-              schema: stageSchema,
+            // The flow's own tables: dropped as Mako, like its syncs.
+            const dropTable = driver.dropTable.bind(driver);
+            await asSystem(async () => {
+              await dropTable(destination, liveTable, { schema });
+              await dropTable(destination, oldStageTable, {
+                schema: stageSchema,
+              });
+              await dropTable(destination, `${liveTable}__stage_changes`, {
+                schema: stageSchema,
+              });
+              await dropTable(destination, bulkStagingTable, { schema });
             });
-            await driver.dropTable(destination, `${liveTable}__stage_changes`, {
-              schema: stageSchema,
-            });
-            await driver.dropTable(destination, bulkStagingTable, { schema });
           }
         }
       }
@@ -2724,9 +2732,9 @@ flowRoutes.openapi(
         );
       }
 
-      const resetResult = await driver.executeQuery(
-        destinationDoc as any,
-        resetQuery,
+      // The flow's own table: reset as Mako, like its syncs.
+      const resetResult = await asSystem(() =>
+        driver.executeQuery(destinationDoc as any, resetQuery),
       );
       if (!resetResult.success) {
         return c.json(
