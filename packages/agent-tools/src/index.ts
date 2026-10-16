@@ -263,6 +263,11 @@ export {
 } from "./capabilities/member-capabilities";
 
 export {
+  SYNC_CAPABILITIES,
+  type SyncCapabilityDefinition,
+} from "./capabilities/sync-capabilities";
+
+export {
   AGENT_CAPABILITIES,
   AGENT_CAPABILITY_BY_NAME,
   agentCapabilitiesForSurface,
