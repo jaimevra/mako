@@ -380,15 +380,10 @@ export default function ConnectionWritersPanel({
           <Box
             sx={{
               mt: 1.5,
-              p: 1.5,
               display: "grid",
               gridTemplateColumns: { xs: "1fr", sm: "1.4fr 1fr auto" },
               gap: 1,
-              alignItems: "center",
-              border: 1,
-              borderStyle: "dashed",
-              borderColor: "divider",
-              borderRadius: 1.5,
+              alignItems: "stretch",
             }}
           >
             <Autocomplete
@@ -400,7 +395,11 @@ export default function ConnectionWritersPanel({
               value={who}
               onChange={(_, value) => setWho(value)}
               renderInput={params => (
-                <TextField {...params} placeholder="Person or workflow" />
+                <TextField
+                  {...params}
+                  margin="none"
+                  placeholder="Person or workflow"
+                />
               )}
             />
             <Autocomplete
@@ -411,7 +410,11 @@ export default function ConnectionWritersPanel({
               onChange={(_, value) => setWhere(value ?? ANYWHERE)}
               onInputChange={(_, value) => setWhere(value || ANYWHERE)}
               renderInput={params => (
-                <TextField {...params} placeholder="schema or schema.table" />
+                <TextField
+                  {...params}
+                  margin="none"
+                  placeholder="schema or schema.table"
+                />
               )}
             />
             <Button
@@ -419,6 +422,7 @@ export default function ConnectionWritersPanel({
               disableElevation
               disabled={!who || busy}
               onClick={() => who && void allow(who.principal, where)}
+              sx={{ px: 2.5 }}
             >
               Allow
             </Button>
@@ -579,7 +583,12 @@ function RecentRow({
         <Typography variant="body2" noWrap>
           {who.label}
         </Typography>
-        <Typography variant="caption" color="text.secondary" noWrap>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          noWrap
+          sx={{ display: "block" }}
+        >
           {recent.count} {recent.count === 1 ? "write" : "writes"}
           {recent.targets.length > 0 && ` · ${recent.targets.join(", ")}`}
           {allowed && ` · not covered: ${recent.uncovered.join(", ")}`}
