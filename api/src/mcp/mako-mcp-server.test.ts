@@ -593,6 +593,50 @@ async function main() {
     assert.equal(names.has("dbt_create_job"), false);
   }
 
+  // Syncs: anyone may read them; a backfill or a trigger change is an
+  // owner/admin's call (as the flow routes), and needs warehouse-write.
+  for (const [role, mayAct] of [
+    ["viewer", false],
+    ["member", false],
+    ["admin", true],
+  ] as const) {
+    const [res] = await exchange(
+      [{ jsonrpc: "2.0", id: `sync-${role}`, method: "tools/list" }],
+      ["mcp", "query:read", "warehouse:write"],
+      false,
+      undefined,
+      role,
+    );
+    const { tools } = res.result as {
+      tools: { name: string; annotations?: { readOnlyHint?: boolean } }[];
+    };
+    const byName = new Map(tools.map(tool => [tool.name, tool]));
+    for (const read of ["flow_list", "flow_read", "flow_status"]) {
+      assert.ok(byName.has(read), `${read} must be listed for a ${role}`);
+      assert.equal(
+        byName.get(read)?.annotations?.readOnlyHint,
+        true,
+        `${read} is a read`,
+      );
+    }
+    for (const act of ["flow_backfill", "flow_update"]) {
+      assert.equal(
+        byName.has(act),
+        mayAct,
+        `${act} must ${mayAct ? "" : "not "}be listed for a ${role}`,
+      );
+    }
+  }
+  {
+    const capability = AGENT_CAPABILITY_BY_NAME.get("flow_backfill");
+    assert.equal(capability?.requiredGrant, "warehouse-write");
+    assert.equal(capability?.minimumWorkspaceRole, "admin");
+    assert.equal(
+      AGENT_CAPABILITY_BY_NAME.get("flow_update")?.requiredGrant,
+      "warehouse-write",
+    );
+  }
+
   // 3a. Warehouse tools: exposed (destructive-annotated) and authorized for
   //     every key, with or without the legacy warehouse:write scope.
   {

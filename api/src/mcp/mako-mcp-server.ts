@@ -52,6 +52,7 @@ import { createConnectorTools } from "../agent-lib/tools/connector-tools";
 import { createConnectionWriteTools } from "../agent-lib/tools/connection-write-tools";
 import { createFlowFileTools } from "../agent-lib/tools/flow-file-tools";
 import { createWorkflowTools } from "../agent-lib/tools/workflow-tools";
+import { createFlowSyncTools } from "../agent-lib/tools/flow-sync-tools";
 import { createMemberTools } from "../agent-lib/tools/member-tools";
 import { createWebTools } from "../agent-lib/tools/web-tools";
 import { createDbtServerTools } from "../agent-lib/tools/dbt-tools";
@@ -94,6 +95,8 @@ Typical loop:
 5. app_commit → app_merge_to_main (main is what publishes buildable state).
 
 dbt: create/read projects → create/read/edit/delete model files → validate with dbt_parse / dbt_compile_model / dbt_show (async: poll dbt_get_run) → create/update/delete jobs. Edits commit straight to the user's session branch of the workspace repo (dbt/ folder). Warehouse-mutating runs (dbt_run_model, dbt_run_job, dbt_cancel_run) appear only with the explicit warehouse:write OAuth/API-key scope.
+
+Syncs (flows, what loads sources into the warehouse): flow_list → flow_read / flow_status (per entity: mode, backlog, failures, last materialised). flow_backfill starts a full backfill; flow_update changes only the triggers (poll cron, webhook on/off, resync cron). Both need warehouse:write and an owner/admin.
 
 Skills (same knowledge as the in-product agent):
 - list_skills → compact index (workspace + system).
@@ -220,6 +223,8 @@ export function buildMakoMcpCandidateTools(
   // monorepo, so `pnpm flows:validate` is not a surface it can reach.
   const flowFileTools = createFlowFileTools(workspaceId);
   const workflowTools = createWorkflowTools({ workspaceId, userId });
+  // Syncs (flows): read, status, backfill, trigger controls.
+  const flowSyncTools = createFlowSyncTools({ workspaceId, userId });
   // Gated by the members-write grant AND a live owner/admin check inside the
   // tools themselves — a key outlives the membership that justified it.
   const memberTools = createMemberTools(workspaceId, userId);
@@ -227,6 +232,7 @@ export function buildMakoMcpCandidateTools(
     ...connectorTools,
     ...connectionWriteTools,
     ...flowFileTools,
+    ...flowSyncTools,
     ...workflowTools,
     ...appsTools,
     ...memberTools,
