@@ -26,8 +26,25 @@ async function main() {
   const { Workspace } = await import("../database/workspace-schema");
   const { runGit } = await import("../apps/git");
   const { initRepo, repoDirFor } = await import("../apps/repository.service");
-  const { deployWorkflowsFromRepo, hasWorkflowsToDeploy } =
+  const { deployWorkflowsFromRepo, hasWorkflowsToDeploy, recordWorkerReport } =
     await import("./on-push");
+  // Hatchet, as far as retiring needs it: each workflow has an id derived
+  // from its name, and every DELETE is recorded. `down` makes it fail.
+  const deleted: string[] = [];
+  let down = false;
+  const idOf = (name: string) =>
+    `00000000-0000-0000-0000-${Buffer.from(name).toString("hex").padStart(12, "0").slice(-12)}`;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    if (down) throw new Error("connection refused");
+    const url = new URL(String(input));
+    if (init?.method === "DELETE") {
+      deleted.push(url.pathname.split("/").pop() ?? "");
+      return new Response(null, { status: 204 });
+    }
+    const name = url.searchParams.get("name") ?? "";
+    return Response.json({ rows: [{ name, metadata: { id: idOf(name) } }] });
+  }) as typeof fetch;
   try {
     const id = new Types.ObjectId();
     const ws = id.toString();
@@ -89,6 +106,63 @@ async function main() {
     await deployWorkflowsFromRepo(ws);
     assert.equal((await slots())?.live?.sha, onMain);
 
+    // A workflow that leaves main is retired once the worker runs without
+    // it: Hatchet forgets it, its switch and webhook go off. Not before.
+    await Workspace.updateOne(
+      { _id: id },
+      {
+        $set: {
+          "workflows.active": ["digest", "other"],
+          "workflows.webhooks": { digest: "x", other: "y" },
+        },
+      },
+    );
+    await recordWorkerReport(ws, onMain);
+    const both = await commit("main", "main", {
+      "workflows/other/workflow.ts": WORKFLOW,
+    });
+    await deployWorkflowsFromRepo(ws);
+    await recordWorkerReport(ws, both);
+    assert.deepEqual((await slots())?.live?.running?.names, [
+      "digest",
+      "other",
+    ]);
+    const withoutDigest = await commit("main", "main", {
+      "workflows/digest": null,
+    });
+    await deployWorkflowsFromRepo(ws);
+    // Deployed but not running yet, then a build that failed: the previous
+    // commit still runs digest.
+    await recordWorkerReport(ws, withoutDigest, "type error");
+    assert.deepEqual(deleted, []);
+    assert.deepEqual((await slots())?.active, ["digest", "other"]);
+    // A report for a commit no longer wanted changes nothing.
+    await recordWorkerReport(ws, both);
+    assert.deepEqual(deleted, []);
+    await recordWorkerReport(ws, withoutDigest);
+    assert.deepEqual(deleted, [idOf("digest")]);
+    assert.deepEqual((await slots())?.active, ["other"]);
+    assert.deepEqual(Object.keys((await slots())?.webhooks ?? {}), ["other"]);
+    assert.deepEqual((await slots())?.retired, []);
+
+    // Hatchet down: the name stays queued, and the next deploy retries it.
+    deleted.length = 0;
+    const renamed = await commit("main", "main", {
+      "workflows/other": null,
+      "workflows/renamed/workflow.ts": WORKFLOW,
+    });
+    await deployWorkflowsFromRepo(ws);
+    down = true;
+    await recordWorkerReport(ws, renamed);
+    assert.deepEqual((await slots())?.retired, ["other"]);
+    assert.deepEqual((await slots())?.active, ["other"]);
+    down = false;
+    await deployWorkflowsFromRepo(ws);
+    assert.deepEqual(deleted, [idOf("other")]);
+    assert.deepEqual((await slots())?.retired, []);
+    assert.deepEqual((await slots())?.active, []);
+    deleted.length = 0;
+
     // `workflows/` deleted on main: still a deploy (something is live to
     // drop), and then nothing is live and nothing more to ask for.
     await commit("main", "main", { workflows: null });
@@ -96,9 +170,12 @@ async function main() {
     await deployWorkflowsFromRepo(ws);
     assert.equal((await slots())?.live, undefined);
     assert.equal(await hasWorkflowsToDeploy(ws), false);
+    // The worker stops and reports nothing more: what it ran is retired.
+    assert.deepEqual(deleted, [idOf("renamed")]);
 
     console.log("workflows on-push tests passed");
   } finally {
+    globalThis.fetch = realFetch;
     await mongoose.disconnect();
     await mongo.stop();
     await fs.rm(tmp, { recursive: true, force: true });

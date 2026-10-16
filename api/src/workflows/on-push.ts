@@ -33,6 +33,7 @@ import {
   workerSecretExists,
   writeWorkerSecret,
 } from "./kube";
+import { retireQueued, retireWorkflows } from "./retire";
 
 const logger = loggers.api("workflows-on-push");
 
@@ -263,5 +264,48 @@ async function deployWorkflowsNow(
       { $unset: { "workflows.live": "" } },
     );
     logger.info("Unset workflows target", { workspaceId });
+    // The worker stops and reports nothing more: everything it ran is gone.
+    await retireWorkflows(
+      workspaceId,
+      state.live.running?.names ?? state.live.names ?? [],
+    );
+    return;
   }
+  // Anything a failed retire left queued is tried again.
+  await retireQueued(workspaceId);
+}
+
+/**
+ * The worker's report on a switch: the commit it now runs, or the commit it
+ * could not start and why (`error`). A report for a commit that is no longer
+ * wanted changes nothing. What the worker ran before and runs no more has
+ * left main, and is retired (retire.ts).
+ */
+export async function recordWorkerReport(
+  workspaceId: string,
+  sha: string,
+  error?: string,
+): Promise<void> {
+  const filter = {
+    _id: new Types.ObjectId(workspaceId),
+    "workflows.live.sha": sha,
+  };
+  if (error !== undefined) {
+    await Workspace.updateOne(filter, {
+      $set: { "workflows.live.failed": { sha, error } },
+    });
+    return;
+  }
+  const slot = (await Workspace.findOne(filter).select("workflows.live").lean())
+    ?.workflows?.live;
+  if (!slot) return;
+  const names = slot.names ?? [];
+  await Workspace.updateOne(filter, {
+    $set: { "workflows.live.running": { sha, names } },
+    $unset: { "workflows.live.failed": "" },
+  });
+  const dropped = (slot.running?.names ?? []).filter(
+    name => !names.includes(name),
+  );
+  await retireWorkflows(workspaceId, dropped);
 }

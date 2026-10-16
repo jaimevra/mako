@@ -40,6 +40,7 @@ import {
   startRun,
 } from "../workflows/hatchet";
 import { deleteWorkflow } from "../workflows/delete";
+import { recordWorkerReport } from "../workflows/on-push";
 import { readRun, readWorkflowsOverview } from "../workflows/runs";
 import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
 import { runInSandbox } from "../workflows/sandbox";
@@ -430,21 +431,12 @@ workflowRuntimeRoutes.post(
     if (typeof body?.sha !== "string" || !isOid(body.sha)) {
       return c.json({ error: "Invalid report" }, 400);
     }
-    await Workspace.updateOne(
-      { _id: new Types.ObjectId(workspaceId), "workflows.live.sha": body.sha },
+    await recordWorkerReport(
+      workspaceId,
+      body.sha,
       typeof body.error === "string"
-        ? {
-            $set: {
-              "workflows.live.failed": {
-                sha: body.sha,
-                error: body.error.slice(-MAX_BUILD_ERROR_CHARS),
-              },
-            },
-          }
-        : {
-            $set: { "workflows.live.running": { sha: body.sha } },
-            $unset: { "workflows.live.failed": "" },
-          },
+        ? body.error.slice(-MAX_BUILD_ERROR_CHARS)
+        : undefined,
     );
     return c.json({ ok: true });
   }),

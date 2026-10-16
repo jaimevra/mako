@@ -160,7 +160,8 @@ export interface IWorkflowSlot {
   tree: string;
   /** The workflow folders at that commit: what the screen lists. */
   names: string[];
-  running?: { sha: string };
+  /** The commit the worker reports running, and the workflows it held. */
+  running?: { sha: string; names?: string[] };
   failed?: { sha: string; error: string };
 }
 
@@ -180,6 +181,11 @@ export interface IWorkspaceWorkflows {
   active?: string[];
   /** Workflows with a webhook turned on: name → its URL's secret, encrypted. */
   webhooks?: Record<string, string>;
+  /**
+   * Workflows the worker stopped running because main dropped them, still to
+   * be forgotten by Hatchet and turned off here (workflows/retire.ts).
+   */
+  retired?: string[];
 }
 
 export interface IWorkspaceRepoBinding {
@@ -1324,7 +1330,10 @@ const WorkflowSlotFields = {
   sha: String,
   tree: String,
   names: { type: [String], default: undefined },
-  running: { type: { sha: String }, _id: false },
+  running: {
+    type: { sha: String, names: { type: [String], default: undefined } },
+    _id: false,
+  },
   failed: { type: { sha: String, error: String }, _id: false },
 };
 
@@ -1435,6 +1444,7 @@ const WorkspaceSchema = new Schema<IWorkspace>(
         live: { type: WorkflowSlotFields, _id: false },
         active: { type: [String], default: undefined },
         webhooks: { type: Schema.Types.Mixed },
+        retired: { type: [String], default: undefined },
       },
       default: undefined,
       _id: false,

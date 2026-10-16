@@ -1,8 +1,9 @@
 /**
  * Delete a workflow (docs/src/content/docs/workflows.md): its folder leaves
- * main in one commit, its triggers are turned off, the worker is deployed
- * again without it, and Hatchet forgets it so its schedule stops. The files
- * stay in git history; a revert brings the workflow back, inactive.
+ * main in one commit and the worker is deployed without it. The rest is what
+ * happens to any workflow that leaves main (retire.ts): once the worker runs
+ * without it, Hatchet forgets it and its triggers are turned off. The files
+ * stay in git history.
  */
 import { WORKFLOWS_DIR } from "../apps/app-paths";
 import { RepoRequiredError } from "../apps/config";
@@ -15,12 +16,8 @@ import {
 } from "../apps/worktree.service";
 import { requestWorkflowsDeploy } from "../inngest/functions/workflows-deploy";
 import { loggers } from "../logging";
-import {
-  HatchetError,
-  deleteWorkflowDefinition,
-  readWorkspaceTenant,
-} from "./hatchet";
-import { checkName, setTriggers } from "./webhook";
+import { HatchetError } from "./hatchet";
+import { checkName } from "./webhook";
 
 const logger = loggers.api("workflows-delete");
 
@@ -68,20 +65,6 @@ export async function deleteWorkflow(
   // Sandboxes are clones: each pulls the deletion on its next touch, so the
   // folder does not linger in the explorer, which lists the person's checkout.
   invalidatePullThrottle();
-  // A workflow committed again under this name starts inactive, with no
-  // webhook: the old URL must not start it.
-  await setTriggers(workspaceId, name, { active: false, webhook: false });
   await requestWorkflowsDeploy(workspaceId, userId, "push");
-  // Best effort: main no longer holds it, and that is the deletion.
-  const tenant = await readWorkspaceTenant(workspaceId).catch(() => null);
-  if (tenant) {
-    await deleteWorkflowDefinition(tenant, name).catch(error => {
-      logger.warn("Hatchet workflow delete failed", {
-        workspaceId,
-        name,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
   logger.info("Workflow deleted", { workspaceId, name, userId });
 }
