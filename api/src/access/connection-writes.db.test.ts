@@ -1,7 +1,7 @@
 /**
  * Who may write through a connection, against an in-memory Mongo and the
- * real query path: reports first, refuses once enforced, never touches
- * reads, records what it sees, and is changed only in the app.
+ * real query path: only writers write, reads run read-only, writes are
+ * recorded, and the list is changed only in the app.
  *
  * Postgres itself is stubbed: a statement that is not refused succeeds at
  * once, so "refused" is told apart by the error alone.
@@ -21,13 +21,8 @@ import {
 import { requestContextStorage } from "../logging/context";
 import { databaseConnectionService } from "../services/database-connection.service";
 import { workspaceDatabaseRoutes } from "../routes/workspace-databases";
-import { workspaceRoutes } from "../routes/workspaces";
 import { ConnectionWriteEvent } from "./connection-write-event";
-import {
-  asSystem,
-  forgetWritesMode,
-  principalsOutsideWorkspace,
-} from "./connection-writes";
+import { asSystem, principalsOutsideWorkspace } from "./connection-writes";
 
 const PEOPLE = ["owner", "admin", "marc", "anna"] as const;
 type Person = (typeof PEOPLE)[number];
@@ -43,7 +38,6 @@ const REFUSED =
 
 const app = new OpenAPIHono();
 app.route("/api/workspaces/:workspaceId/databases", workspaceDatabaseRoutes);
-app.route("/api/workspaces", workspaceRoutes);
 
 async function main() {
   const mongo = await MongoMemoryServer.create();
@@ -131,32 +125,18 @@ async function main() {
       }
     };
 
-    // Report (the default): nothing is refused, writes are recorded.
-    assert.equal(
-      await refused("marc", "INSERT INTO finance.x VALUES (1)"),
-      false,
-    );
-    assert.equal(await refused("marc", "select * from finance.x"), false);
-    await settle();
-    const reported = await ConnectionWriteEvent.find({}).lean();
-    assert.equal(reported.length, 1, "a read is never recorded");
-    assert.equal(reported[0].principal, "user:marc");
-    assert.equal(reported[0].target, "finance.x");
-    assert.equal(reported[0].allowed, false);
-    assert.equal(reported[0].mode, "report");
-    assert.equal(await readsReadOnly("marc"), false, "report: reads as today");
-
-    // Enforce: only writers write, and only where they may.
-    await Workspace.updateOne(
-      { _id: ws },
-      { $set: { "settings.connectionWrites": "enforce" } },
-    );
-    forgetWritesMode(String(ws));
+    // Only writers write, and only where they may; refusals are recorded.
     assert.equal(
       await refused("marc", "INSERT INTO finance.x VALUES (1)"),
       true,
     );
     assert.equal(await refused("marc", "select * from finance.x"), false);
+    await settle();
+    const recorded = await ConnectionWriteEvent.find({}).lean();
+    assert.equal(recorded.length, 1, "a read is never recorded");
+    assert.equal(recorded[0].principal, "user:marc");
+    assert.equal(recorded[0].target, "finance.x");
+    assert.equal(recorded[0].allowed, false);
     assert.equal(
       await refused("anna", "INSERT INTO finance.x VALUES (1)"),
       false,
@@ -170,8 +150,8 @@ async function main() {
       true,
     );
     assert.equal(await refused("anna", "INSERT INTO x VALUES (1)"), true);
-    // Enforced reads run read-only, so the database refuses a write the text
-    // missed (SELECT f()), except for those who may write anywhere.
+    // Reads run read-only, so the database refuses a write the text missed
+    // (SELECT f()), except for those who may write anywhere.
     assert.equal(await readsReadOnly("marc"), true);
     assert.equal(
       await readsReadOnly("anna"),
@@ -297,7 +277,6 @@ async function main() {
     const { data } = (await view.json()) as {
       data: {
         writers: { principal: string; where: string | null }[];
-        mode: string;
         canEdit: boolean;
         recent: { principal: string; count: number; uncovered: string[] }[];
       };
@@ -306,10 +285,9 @@ async function main() {
       data.writers.map(w => [w.principal, w.where]),
       [["user:anna", "finance"]],
     );
-    assert.equal(data.mode, "enforce");
     assert.equal(data.canEdit, false);
     const marc = data.recent.find(r => r.principal === "user:marc");
-    assert.ok(marc && marc.count >= 2);
+    assert.ok(marc && marc.count >= 1);
     assert.ok(marc.uncovered.includes("finance.x"), "marc may not write there");
     const anna = data.recent.find(r => r.principal === "user:anna");
     // Anna's finance writes are covered; another schema and an unnamed one
@@ -327,19 +305,6 @@ async function main() {
     );
     assert.equal(
       (await call("marc", "PUT", base, { writers: [] })).status,
-      403,
-    );
-    assert.equal(
-      (
-        await call(
-          "owner",
-          "PUT",
-          `/api/workspaces/${ws}/settings/connection-writes`,
-          {
-            mode: "report",
-          },
-        )
-      ).status,
       403,
     );
     assert.equal(

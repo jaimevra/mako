@@ -129,12 +129,6 @@ export interface IWorkspace extends Document {
      * app's link, signs in, and is simply in.
      */
     autoJoin?: IWorkspaceAutoJoin;
-    /**
-     * Who may write through a connection (access/connection-writes.ts):
-     * "report" (the default) logs the writes it would refuse and refuses
-     * none; "enforce" refuses them. Reads are never affected.
-     */
-    connectionWrites?: "report" | "enforce";
   };
   billing: IWorkspaceBilling;
   apiKeys?: IWorkspaceApiKey[];
@@ -314,7 +308,7 @@ export interface IDatabaseConnection extends Document {
   allowAgentWrites?: boolean;
   /**
    * Who may write through this connection (access/connection-writes.ts).
-   * Absent or empty: no one, once the workspace enforces writes. Everyone
+   * Absent or empty: no one. Everyone
    * may always read; system jobs (syncs, flows, dbt) are not concerned.
    */
   writers?: IConnectionWriter[];
@@ -1368,7 +1362,6 @@ const WorkspaceSchema = new Schema<IWorkspace>(
         default: "free",
       },
       disabledModelIds: [{ type: String }],
-      connectionWrites: { type: String, enum: ["report", "enforce"] },
       dashboardRefreshConcurrency: {
         type: Number,
         default: 2,

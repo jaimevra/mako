@@ -84,7 +84,7 @@ export interface QueryExecuteOptions {
   writeChecked?: boolean;
   /**
    * Run in a read-only transaction (or setting) without readOnly's lexical
-   * single-SELECT rule: set by checkConnectionWrite for enforced reads.
+   * single-SELECT rule: set by checkConnectionWrite for a person's reads.
    */
   readOnlyTransaction?: boolean;
   /** Target database name (for cluster/server-level connections) */

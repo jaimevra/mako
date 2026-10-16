@@ -1,7 +1,6 @@
 import {
   covers,
   principalsOutsideWorkspace,
-  writesMode,
 } from "../access/connection-writes";
 import { ConnectionWriteEvent } from "../access/connection-write-event";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -999,8 +998,8 @@ workspaceDatabaseRoutes.openapi(
       return c.json({ success: false, error: "Database not found" }, 404);
     }
     const memberRole = c.get("memberRole");
-    // Who wrote here lately, from the write log: what to allow before the
-    // workspace enforces, and who an enforced list now refuses.
+    // Who wrote or tried to write here lately, from the write log, and what
+    // the list does not cover (what it refuses), to allow in one click.
     const since = new Date(Date.now() - RECENT_WRITES_DAYS * 86_400_000);
     const recent = await ConnectionWriteEvent.aggregate<{
       _id: string;
@@ -1034,7 +1033,6 @@ workspaceDatabaseRoutes.openapi(
           addedBy: w.addedBy ?? null,
           addedAt: w.addedAt ?? null,
         })),
-        mode: await writesMode(String(workspace._id)),
         canEdit: memberRole === "owner" || memberRole === "admin",
         recent: recent.map(r => {
           const targets = r.targets.filter((t): t is string => !!t);

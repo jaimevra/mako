@@ -467,23 +467,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{id}/settings/connection-writes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Report or enforce who may write through connections */
-        put: operations["put_api_workspaces_id_settings_connection_writes"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/workspaces/{id}/settings/limits": {
         parameters: {
             query?: never;
@@ -7977,53 +7960,6 @@ export interface operations {
             content: {
                 "application/json": {
                     [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            "2XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GenericJsonResponse"] & (Record<string, never> | null);
-                };
-            };
-            /** @description Invalid request */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Internal server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    put_api_workspaces_id_settings_connection_writes: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @enum {string} */
-                    mode: "report" | "enforce";
                 };
             };
         };

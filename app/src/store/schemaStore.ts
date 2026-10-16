@@ -35,8 +35,6 @@ export interface ConnectionRecentWriter {
 
 export interface ConnectionWriters {
   writers: ConnectionWriter[];
-  /** "report": writes are logged, never refused. "enforce": refused. */
-  mode: "report" | "enforce";
   canEdit: boolean;
   recent: ConnectionRecentWriter[];
 }
@@ -221,11 +219,6 @@ interface SchemaState {
     workspaceId: string,
     connectionId: string,
     writers: { principal: string; where?: string }[],
-  ) => Promise<void>;
-  /** Report or enforce the writers lists, for the whole workspace. */
-  setConnectionWritesMode: (
-    workspaceId: string,
-    mode: "report" | "enforce",
   ) => Promise<void>;
   refreshTreeRoot: (
     workspaceId: string,
@@ -822,16 +815,6 @@ export const useSchemaStore = create<SchemaState>()(
               body: { writers },
             },
           ),
-        ) as { success: boolean; error?: string };
-        if (!res.success) throw new Error(res.error ?? "Couldn't save.");
-      },
-
-      setConnectionWritesMode: async (workspaceId, mode) => {
-        const res = unwrapBody(
-          await api.PUT("/api/workspaces/{id}/settings/connection-writes", {
-            params: { path: { id: workspaceId } },
-            body: { mode },
-          }),
         ) as { success: boolean; error?: string };
         if (!res.success) throw new Error(res.error ?? "Couldn't save.");
       },

@@ -1,9 +1,8 @@
 /**
  * One write through a connection by a person or workflow: who, where, and
- * whether their writers list allowed it. Kept 90 days. In "report" mode this
- * is how a workspace learns who really writes, to fill the lists before it
- * enforces them (scripts/seed-connection-writers.ts). Never the statement
- * itself: only its target.
+ * whether their writers list allowed it. Kept 90 days: the Access tab shows
+ * who tried to write, with Allow. Never the statement itself: only its
+ * target.
  */
 import mongoose, { Schema, Types } from "mongoose";
 
@@ -13,7 +12,6 @@ export interface IConnectionWriteEvent {
   principal: string;
   target?: string;
   allowed: boolean;
-  mode: "report" | "enforce";
   at: Date;
 }
 
@@ -24,7 +22,6 @@ const ConnectionWriteEventSchema = new Schema<IConnectionWriteEvent>(
     principal: { type: String, required: true },
     target: { type: String },
     allowed: { type: Boolean, required: true },
-    mode: { type: String, enum: ["report", "enforce"], required: true },
     at: { type: Date, default: () => new Date() },
   },
   { collection: "connection_write_events", versionKey: false },

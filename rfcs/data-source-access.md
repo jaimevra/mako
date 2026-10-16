@@ -12,7 +12,7 @@ Status: implemented (writes). Read restrictions: designed, kept on branch
 ## Model
 
 ```ts
-// on DatabaseConnection; absent or empty = no one writes (once enforced)
+// on DatabaseConnection; absent or empty = no one writes
 writers?: { principal: string; where?: string; addedBy; addedAt }[]
 // principal: "user:<id>" | "workflow:<name>"   ("group:<name>" later)
 // where:     absent = anywhere | "finance" (schema / dataset) | "finance.invoices"
@@ -21,15 +21,19 @@ writers?: { principal: string; where?: string; addedBy; addedAt }[]
 - Reads have no field: everyone. If reads are ever restricted, a `readers`
   field with the same shape is added; absent keeps meaning everyone, and
   writers can read where they write.
-- `settings.connectionWrites` on the workspace: `"report"` (the default) or
-  `"enforce"`.
+- No mode and no workspace setting: the list is always enforced. Before
+  this, members could not write from the console (only admins, through
+  "Execute anyway") and MCP keys only with `allowAgentWrites`, so an empty
+  list matches what people already do; admins and agent chats that wrote
+  are refused until listed, and the refusal says how to get added.
 - Owner and admins edit the list, in the app only (not API keys, MCP or
   agents), the same people who may set `allowAgentWrites` or delete a
   connection today.
 
 ## The check
 
-One function, `checkConnectionWrite`, at the top of `executeQuery`:
+One function, `checkConnectionWrite`, at the entry of `executeQuery`,
+`executePreviewQuery` and `executeStreamingQuery` (once per query):
 
 1. **Who is acting**: an explicit actor (a scheduled console runs as its
    owner), else the workflow of the request (the worker's own key names it
@@ -37,10 +41,10 @@ One function, `checkConnectionWrite`, at the top of `executeQuery`:
    one for work no request started (syncs, flows, CDC, dbt): the system's,
    never checked.
 2. **Is it a write**: in memory, with the existing read-only classifier
-   (`checkPreviewQuerySafety`, plus SHOW, DESCRIBE, EXPLAIN). While the
-   workspace reports, a read returns here: no lookup, no transaction. Once
-   enforced, it runs read-only where the engine allows (see Limits). MongoDB
-   requests are classified by their operation or shell method.
+   (`checkPreviewQuerySafety`, plus SHOW, DESCRIBE, EXPLAIN), with no lookup.
+   A read returns here, marked to run read-only where the engine allows
+   unless its principal may write anywhere (see Limits). MongoDB requests
+   are classified by their operation or shell method.
 3. **May they**: the writers list comes with the connection document. A
    writer limited to a place must write one statement that names its target
    (`INSERT INTO s.t`, `CREATE TABLE s.t`, `UPDATE`, `DELETE`, `MERGE`,
@@ -48,10 +52,12 @@ One function, `checkConnectionWrite`, at the top of `executeQuery`:
    since a write names what it changes. Anything else is refused for that
    writer, never guessed.
 4. **Record and decide**: every write by a person or workflow is recorded
-   (`connection_write_events`, 90 days: who, connection, target, allowed,
-   mode; never the statement). In `report`, nothing is refused. In
-   `enforce`, a write not allowed is refused with a message saying what to
-   do.
+   (`connection_write_events`, 90 days: who, connection, target, allowed;
+   never the statement). A write not allowed is refused with a message
+   saying what to do.
+
+A flow writing to its own destination from a route a person called (dataset
+on create, CDC resets) runs as Mako (`asSystem`), like its syncs.
 
 For agents and API keys, being on the list is also the connection's
 `query:write` opt-in for that principal only, next to `allowAgentWrites`.
@@ -60,17 +66,15 @@ next deploy.
 
 ## Rollout
 
-1. Ship: every workspace reports. Nothing changes for anyone.
-2. The Access tab shows who wrote through the connection in the last 30
-   days and what the list does not cover, with **Allow** for each.
-3. An admin fills the lists, then chooses **Start enforcing** for the
-   workspace (and can switch back).
+Enforced from the start. The Access tab shows who wrote or tried to write
+through the connection in the last 30 days and what the list does not
+cover, with **Allow** for each, so whoever is refused is added in one click.
 
 ## Limits
 
 - A write hidden inside a function call (`SELECT f()` where `f` writes) is
-  classified as a read. Once enforced, reads by anyone not allowed to write
-  anywhere run read-only (Postgres, Cloud SQL, Redshift: `BEGIN TRANSACTION
+  classified as a read. Reads by anyone not allowed to write anywhere run
+  read-only (Postgres, Cloud SQL, Redshift: `BEGIN TRANSACTION
   READ ONLY` sent with the query in one round trip; MySQL: a read-only
   transaction; ClickHouse: `readonly=2`), so the database refuses it.
   BigQuery and D1 `SELECT`s cannot write. MongoDB and SQL Server have no such
@@ -79,7 +83,8 @@ next deploy.
 - MongoDB commands (`runCommand`, `adminCommand`, `eval`) count as writes.
   MongoDB writers limited to a place cannot be checked; allow them anywhere
   or not at all.
-- dbt, syncs and flows are not concerned.
+- dbt, syncs and flows are not concerned. App bindings only read (MongoDB
+  and KV included).
 
 ## Later, without changing the model
 

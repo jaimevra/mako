@@ -135,10 +135,9 @@ const rows = (await query(
 connection id and check the SQL first with `list_connections`,
 `inspect_table` and `sql_execute_query`.
 
-A workflow reads every connection. Once the workspace enforces writes, it
-writes (INSERT, UPDATE, MERGE, CREATE, DROP) only through a connection whose
-Access tab lists that workflow, either anywhere or only in one schema or
-table. An admin adds it there; the agent
+A workflow reads every connection. It writes (INSERT, UPDATE, MERGE, CREATE,
+DROP) only through a connection whose Access tab lists that workflow, either
+anywhere or only in one schema or table. An admin adds it there; the agent
 cannot. Before building a workflow that writes, tell the user which
 connection and which `schema.table` to allow it on. Name the target fully in
 the statement (`INSERT INTO mako_out.labels ...`): a workflow allowed only

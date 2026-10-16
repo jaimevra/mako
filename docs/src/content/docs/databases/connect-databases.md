@@ -48,27 +48,24 @@ table (a BigQuery dataset, a Postgres schema, or `schema.table`).
 - **Writing to one place only** needs a single statement that names its table
   as `schema.table`; anything else is refused for that writer.
 
-### Rolling it out
+### Who tried to write
 
-A workspace starts in **reporting**: nothing is refused, and Mako records who
-writes where. The Access tab lists who wrote through the connection in the
-last 30 days, with an **Allow** button for each. Once the lists match what
-people do, an admin chooses **Start enforcing**, for the whole workspace, and
-can switch back at any time.
-
-While a workspace reports, reads never go through this check, so they are
-not slowed down.
+The Access tab lists who wrote, or tried to write, through the connection in
+the last 30 days and what the list does not cover yet, with an **Allow**
+button for each. Someone refused finds themselves there, so an admin adds
+them in one click. Only the target table is recorded, never the statement.
 
 ### What the database enforces
 
 Mako tells reads from writes by reading the statement, which cannot see a
-write hidden inside a function (`SELECT f()`). Once a workspace enforces, a
-read by anyone not allowed to write anywhere therefore runs read-only, and
-the database itself refuses such a write:
+write hidden inside a function (`SELECT f()`). A read by anyone not allowed
+to write anywhere therefore runs read-only, and the database itself refuses
+such a write:
 
 - **PostgreSQL, Cloud SQL, Redshift:** a read-only transaction, sent with the
   query in one round trip.
 - **MySQL:** a read-only transaction (two extra round trips per read).
+- Syncs, flows and dbt are not concerned, and their reads are unchanged.
 - **ClickHouse:** the `readonly` setting.
 - **BigQuery, Cloudflare D1:** a `SELECT` cannot change a table.
 - **MongoDB, SQL Server:** no read-only mode for a single request; commands

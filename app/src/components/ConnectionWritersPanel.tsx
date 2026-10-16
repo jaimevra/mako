@@ -27,7 +27,6 @@ import {
   BookOpen,
   Database,
   Folder,
-  Lock,
   PenLine,
   Route,
   Table2,
@@ -42,7 +41,6 @@ import {
   type ConnectionWriters,
 } from "../store/schemaStore";
 import { useWorkflowsStore } from "../store/workflowsStore";
-import { useConfirm } from "./ConfirmDialog";
 
 type Who = { principal: string; label: string; kind: "person" | "workflow" };
 
@@ -98,14 +96,12 @@ export default function ConnectionWritersPanel({
   const workspaceId = currentWorkspace?.id;
   const getWriters = useSchemaStore(s => s.getConnectionWriters);
   const setWriters = useSchemaStore(s => s.setConnectionWriters);
-  const setMode = useSchemaStore(s => s.setConnectionWritesMode);
   const ensureTreeRoot = useSchemaStore(s => s.ensureTreeRoot);
   const ensureTreeChildren = useSchemaStore(s => s.ensureTreeChildren);
   const fetchWorkflows = useWorkflowsStore(s => s.fetchOverview);
   const workflows = useWorkflowsStore(s =>
     workspaceId ? s.overviewByWorkspace[workspaceId]?.workflows : undefined,
   );
-  const confirm = useConfirm();
 
   const [state, setState] = useState<ConnectionWriters | null>(null);
   const [namespaces, setNamespaces] = useState<string[]>([]);
@@ -218,29 +214,6 @@ export default function ConnectionWritersPanel({
       ),
     );
 
-  const switchMode = async (mode: "report" | "enforce") => {
-    if (!workspaceId) return;
-    if (
-      mode === "enforce" &&
-      !(await confirm({
-        title: "Start refusing writes?",
-        body: "From now on, on every connection in this workspace, only the people and workflows listed can write. Everyone still reads; syncs, flows and dbt are not affected.",
-        confirmLabel: "Enforce",
-      }))
-    ) {
-      return;
-    }
-    setBusy(true);
-    try {
-      await setMode(workspaceId, mode);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!state) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
@@ -255,7 +228,6 @@ export default function ConnectionWritersPanel({
 
   const allowed = new Set(state.writers.map(w => w.principal));
   const suggestions = state.recent.filter(r => r.uncovered.length > 0);
-  const enforced = state.mode === "enforce";
 
   return (
     <Stack spacing={2.5} sx={{ py: 1 }}>
@@ -289,27 +261,6 @@ export default function ConnectionWritersPanel({
           tone={state.writers.length === 0 ? "muted" : "normal"}
         />
       </Box>
-
-      <Alert
-        severity={enforced ? "success" : "info"}
-        icon={enforced ? <Lock size={18} /> : undefined}
-        action={
-          state.canEdit ? (
-            <Button
-              size="small"
-              color="inherit"
-              disabled={busy}
-              onClick={() => void switchMode(enforced ? "report" : "enforce")}
-            >
-              {enforced ? "Back to reporting" : "Start enforcing"}
-            </Button>
-          ) : undefined
-        }
-      >
-        {enforced
-          ? "Enforced: writes by anyone not listed are refused."
-          : "Reporting: nothing is refused yet. Mako records who writes, so you can allow them below first."}
-      </Alert>
 
       {/* Allowed */}
       <Box>
@@ -452,7 +403,7 @@ export default function ConnectionWritersPanel({
       {/* What really happens */}
       {suggestions.length > 0 && (
         <Box>
-          <SectionTitle>Wrote here in the last 30 days</SectionTitle>
+          <SectionTitle>Tried to write in the last 30 days</SectionTitle>
           <Stack spacing={0.5}>
             {suggestions.map(r => (
               <RecentRow
@@ -599,9 +550,7 @@ function RecentRow({
           noWrap
           sx={{ display: "block" }}
         >
-          {recent.count} {recent.count === 1 ? "write" : "writes"}
-          {recent.targets.length > 0 && ` · ${recent.targets.join(", ")}`}
-          {allowed && ` · not covered: ${recent.uncovered.join(", ")}`}
+          Refused on {recent.uncovered.join(", ")}
         </Typography>
       </Box>
       {!allowed && canEdit && (

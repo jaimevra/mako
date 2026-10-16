@@ -1,4 +1,3 @@
-import { forgetWritesMode } from "../access/connection-writes";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   isSessionAuth,
@@ -802,58 +801,6 @@ workspaceRoutes.openapi(
 );
 
 // Get the workspace's AI model blocklist.
-// Who may write through connections (access/connection-writes.ts):
-// "report" logs the writes it would refuse, "enforce" refuses them.
-workspaceRoutes.openapi(
-  createRoute({
-    method: "put",
-    path: "/{id}/settings/connection-writes",
-    tags: ["Workspaces"],
-    summary: "Report or enforce who may write through connections",
-    security: AUTH_SECURITY,
-    middleware: [
-      unifiedAuthMiddleware,
-      requireWorkspace,
-      requireWorkspaceRole(["owner", "admin"]),
-    ] as const,
-    request: {
-      params: IdParam,
-      body: {
-        content: {
-          "application/json": {
-            schema: z.object({ mode: z.enum(["report", "enforce"]) }),
-          },
-        },
-      },
-    },
-    responses: { ...OPEN_RESPONSES },
-  }),
-  async c => {
-    const workspace = c.get("workspace");
-    const workspaceId = c.req.param("id");
-    if (workspaceId !== workspace._id.toString()) {
-      return c.json({ success: false, error: "Workspace ID mismatch" }, 400);
-    }
-    if (c.get("authType") !== "session") {
-      return c.json(
-        { success: false, error: "This can only be changed in the app" },
-        403,
-      );
-    }
-    const { mode } = c.req.valid("json");
-    await Workspace.findByIdAndUpdate(workspaceId, {
-      $set: { "settings.connectionWrites": mode },
-    });
-    forgetWritesMode(workspaceId);
-    logger.info("Connection writes mode changed", {
-      workspaceId,
-      mode,
-      userId: c.get("user")?.id,
-    });
-    return c.json({ success: true, mode });
-  },
-);
-
 workspaceRoutes.openapi(
   createRoute({
     method: "get",
