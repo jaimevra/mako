@@ -6,6 +6,7 @@
 // in a sandbox (SANDBOX=1) none does: it runs only when started.
 //
 // Env: WORKFLOWS_ROOT, GIT_SHA, HATCHET_CLIENT_TOKEN, WORKFLOWS_ACTIVE, SANDBOX.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +18,23 @@ const dir = join(process.env.WORKFLOWS_ROOT, "workflows");
 const sandbox = Boolean(process.env.SANDBOX);
 const active = new Set((process.env.WORKFLOWS_ACTIVE ?? "").split(","));
 const load = file => import(pathToFileURL(join(dir, file)).href);
+
+// Which workflow a step belongs to, for lib/mako to tell Mako: a workflow
+// writes to a connection as itself (access/connection-writes.ts), not as
+// whoever deployed it. Not in a sandbox run, which acts as its person.
+const running = (globalThis.makoWorkflow = new AsyncLocalStorage());
+const runAs = (name, definition) => {
+  const tasks = [
+    ...(definition._tasks ?? []),
+    ...(definition._durableTasks ?? []),
+    definition.onFailure,
+    definition.onSuccess,
+  ].filter(task => typeof task?.fn === "function");
+  for (const task of tasks) {
+    const fn = task.fn;
+    task.fn = (...args) => running.run(name, () => fn(...args));
+  }
+};
 
 const { hatchet } = await load("hatchet.ts");
 // The client has the token now; workflow code must not: it could otherwise
@@ -41,6 +59,7 @@ for (const entry of readdirSync(dir, { withFileTypes: true })) {
     );
     process.exit(1);
   }
+  if (!sandbox) runAs(name, workflow.definition);
   if (sandbox || !active.has(name)) {
     for (const trigger of ["on", "onCrons", "onEvents"]) {
       delete workflow.definition[trigger];

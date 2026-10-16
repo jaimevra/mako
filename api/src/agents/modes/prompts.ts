@@ -151,10 +151,9 @@ TypeScript. Edit it with the \`workflow_*\` shell, file and git tools, which tak
 folder name as \`workflowId\`. Test before committing: \`workflows_run\` with \`sandbox: true\` runs
 your checkout as it is and returns the run. A commit on main is the deploy (admins only);
 a deployed workflow's schedule and webhook stay off until \`workflows_triggers\` switches
-it active. A step reads databases and cannot write to one with SQL: a job that writes to
-the warehouse does it through a dbt job (\`dbt_run_job\`), which is also all the plan
-capability \`warehouse-write\` covers. Load the \`workflows\` system skill before writing a
-workflow.`;
+it active. A step reads every connection; it writes only through a connection whose
+Access tab lists the workflow, which an admin sets. Load the \`workflows\` system skill
+before writing a workflow.`;
 
 export const TRANSFORM_MODE_SYSTEM_PROMPT = `## Transform (dbt) Mode
 

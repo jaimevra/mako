@@ -1,3 +1,9 @@
+import {
+  covers,
+  principalsOutsideWorkspace,
+  writesMode,
+} from "../access/connection-writes";
+import { ConnectionWriteEvent } from "../access/connection-write-event";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Db } from "mongodb";
 import { unifiedAuthMiddleware } from "../auth/unified-auth.middleware";
@@ -940,6 +946,195 @@ workspaceDatabaseRoutes.openapi(
         500,
       );
     }
+  },
+);
+
+// Who may write through a connection (access/connection-writes.ts). Anyone
+// in the workspace may look; the owner and admins change it, in the app.
+const writersParams = z.object({
+  workspaceId: z
+    .string()
+    .openapi({ param: { name: "workspaceId", in: "path" } }),
+  id: z.string().openapi({ param: { name: "id", in: "path" } }),
+});
+
+const WriterSchema = z.object({
+  principal: z
+    .string()
+    .regex(/^(user:[A-Za-z0-9_-]+|workflow:[A-Za-z0-9][A-Za-z0-9_-]{0,99})$/)
+    .openapi({ example: "workflow:crm-chat-issues" }),
+  where: z
+    .string()
+    .regex(/^[^.\s]+(\.[^.\s]+)?$/)
+    .optional()
+    .openapi({ example: "mako_out.issue_labels" }),
+});
+
+const RECENT_WRITES_DAYS = 30;
+
+workspaceDatabaseRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/{id}/writers",
+    tags: ["Databases"],
+    summary: "Who may write through this connection",
+    security: AUTH_SECURITY,
+    middleware: [unifiedAuthMiddleware, requireWorkspace] as const,
+    request: { params: writersParams },
+    responses: { ...OPEN_RESPONSES },
+  }),
+  async c => {
+    const workspace = c.get("workspace");
+    const databaseId = c.req.param("id");
+    if (!Types.ObjectId.isValid(databaseId)) {
+      return c.json({ success: false, error: "Invalid database ID" }, 400);
+    }
+    const database = await DatabaseConnection.findOne({
+      _id: new Types.ObjectId(databaseId),
+      workspaceId: workspace._id,
+    })
+      .select("writers")
+      .lean();
+    if (!database) {
+      return c.json({ success: false, error: "Database not found" }, 404);
+    }
+    const memberRole = c.get("memberRole");
+    // Who wrote here lately, from the write log: what to allow before the
+    // workspace enforces, and who an enforced list now refuses.
+    const since = new Date(Date.now() - RECENT_WRITES_DAYS * 86_400_000);
+    const recent = await ConnectionWriteEvent.aggregate<{
+      _id: string;
+      count: number;
+      lastAt: Date;
+      targets: (string | null)[];
+    }>([
+      {
+        $match: {
+          connectionId: new Types.ObjectId(databaseId),
+          at: { $gte: since },
+        },
+      },
+      {
+        $group: {
+          _id: "$principal",
+          count: { $sum: 1 },
+          lastAt: { $max: "$at" },
+          targets: { $addToSet: "$target" },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: 50 },
+    ]);
+    return c.json({
+      success: true,
+      data: {
+        writers: (database.writers ?? []).map(w => ({
+          principal: w.principal,
+          where: w.where ?? null,
+          addedBy: w.addedBy ?? null,
+          addedAt: w.addedAt ?? null,
+        })),
+        mode: await writesMode(String(workspace._id)),
+        canEdit: memberRole === "owner" || memberRole === "admin",
+        recent: recent.map(r => {
+          const targets = r.targets.filter((t): t is string => !!t);
+          return {
+            principal: r._id,
+            count: r.count,
+            lastAt: r.lastAt,
+            targets: targets.slice(0, 5),
+            // Against the list as it is now, not as it was then.
+            uncovered: targets
+              .filter(t => !covers(database.writers, r._id, t))
+              .slice(0, 5),
+          };
+        }),
+      },
+    });
+  },
+);
+
+workspaceDatabaseRoutes.openapi(
+  createRoute({
+    method: "put",
+    path: "/{id}/writers",
+    tags: ["Databases"],
+    summary: "Change who may write through this connection",
+    security: AUTH_SECURITY,
+    middleware: [
+      unifiedAuthMiddleware,
+      requireWorkspace,
+      requireWorkspaceRole(["owner", "admin"]),
+    ] as const,
+    request: {
+      params: writersParams,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ writers: z.array(WriterSchema).max(200) }),
+          },
+        },
+      },
+    },
+    responses: { ...OPEN_RESPONSES },
+  }),
+  async c => {
+    const workspace = c.get("workspace");
+    const databaseId = c.req.param("id");
+    const user = c.get("user");
+    // People decide who writes, in the app: never an API key, MCP client or
+    // agent, whatever it is asked.
+    if (c.get("authType") !== "session" || !user?.id) {
+      return c.json(
+        { success: false, error: "Writers can only be changed in the app" },
+        403,
+      );
+    }
+    if (!Types.ObjectId.isValid(databaseId)) {
+      return c.json({ success: false, error: "Invalid database ID" }, 400);
+    }
+    const database = await DatabaseConnection.findOne({
+      _id: new Types.ObjectId(databaseId),
+      workspaceId: workspace._id,
+    });
+    if (!database) {
+      return c.json({ success: false, error: "Database not found" }, 404);
+    }
+    const { writers } = c.req.valid("json");
+    const strangers = await principalsOutsideWorkspace(
+      String(workspace._id),
+      writers.map(w => w.principal),
+    );
+    if (strangers.length > 0) {
+      return c.json(
+        {
+          success: false,
+          error: `${strangers.join(", ")} is not a member of this workspace`,
+        },
+        400,
+      );
+    }
+    // One entry per principal and place; keep who added an entry first.
+    const now = new Date();
+    const previous = new Map(
+      (database.writers ?? []).map(w => [`${w.principal} ${w.where ?? ""}`, w]),
+    );
+    const next = new Map<string, (typeof writers)[number]>();
+    for (const w of writers) next.set(`${w.principal} ${w.where ?? ""}`, w);
+    database.writers = [...next].map(([key, w]) => ({
+      principal: w.principal,
+      ...(w.where ? { where: w.where } : {}),
+      addedBy: previous.get(key)?.addedBy ?? user.id,
+      addedAt: previous.get(key)?.addedAt ?? now,
+    }));
+    await database.save();
+    logger.info("Connection writers changed", {
+      workspaceId: String(workspace._id),
+      databaseId,
+      userId: user.id,
+      writers: database.writers.length,
+    });
+    return c.json({ success: true });
   },
 );
 

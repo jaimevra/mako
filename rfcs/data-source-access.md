@@ -1,0 +1,83 @@
+# RFC: Who may write through a data source
+
+Status: implemented (writes). Read restrictions: designed, kept on branch
+`claude/connection-read-gate`, not shipped.
+
+## What people need
+
+- Sources are readable by everyone in the workspace (as today).
+- Writing is rare: little to no one, and sometimes one workflow to one table.
+- Reads must not get slower.
+
+## Model
+
+```ts
+// on DatabaseConnection; absent or empty = no one writes (once enforced)
+writers?: { principal: string; where?: string; addedBy; addedAt }[]
+// principal: "user:<id>" | "workflow:<name>"   ("group:<name>" later)
+// where:     absent = anywhere | "finance" (schema / dataset) | "finance.invoices"
+```
+
+- Reads have no field: everyone. If reads are ever restricted, a `readers`
+  field with the same shape is added; absent keeps meaning everyone, and
+  writers can read where they write.
+- `settings.connectionWrites` on the workspace: `"report"` (the default) or
+  `"enforce"`.
+- Owner and admins edit the list, in the app only (not API keys, MCP or
+  agents), the same people who may set `allowAgentWrites` or delete a
+  connection today.
+
+## The check
+
+One function, `checkConnectionWrite`, at the top of `executeQuery`:
+
+1. **Who is acting**: an explicit actor (a scheduled console runs as its
+   owner), else the workflow of the request (the worker's own key names it
+   with `X-Mako-Workflow`), else the signed-in person or API key owner. No
+   one for work no request started (syncs, flows, CDC, dbt): the system's,
+   never checked.
+2. **Is it a write**: in memory, with the existing read-only classifier
+   (`checkPreviewQuerySafety`, plus SHOW, DESCRIBE, EXPLAIN). A read returns
+   here: no lookup, no transaction, no dry run. MongoDB requests are
+   classified by their operation or shell method.
+3. **May they**: the writers list comes with the connection document. A
+   writer limited to a place must write one statement that names its target
+   (`INSERT INTO s.t`, `CREATE TABLE s.t`, `UPDATE`, `DELETE`, `MERGE`,
+   `DROP`, `TRUNCATE`, `ALTER`); the target is read from the statement,
+   since a write names what it changes. Anything else is refused for that
+   writer, never guessed.
+4. **Record and decide**: every write by a person or workflow is recorded
+   (`connection_write_events`, 90 days: who, connection, target, allowed,
+   mode; never the statement). In `report`, nothing is refused. In
+   `enforce`, a write not allowed is refused with a message saying what to
+   do.
+
+For agents and API keys, being on the list is also the connection's
+`query:write` opt-in for that principal only, next to `allowAgentWrites`.
+The workflow worker's key carries `query:write`; existing keys gain it on the
+next deploy.
+
+## Rollout
+
+1. Ship: every workspace reports. Nothing changes for anyone.
+2. The Access tab shows who wrote through the connection in the last 30
+   days and what the list does not cover, with **Allow** for each.
+3. An admin fills the lists, then chooses **Start enforcing** for the
+   workspace (and can switch back).
+
+## Limits
+
+- A write hidden inside a function call (`SELECT f()` where `f` writes) is
+  classified as a read. Where that matters, connect with a read-only
+  database role.
+- MongoDB writers limited to a place cannot be checked; allow them anywhere
+  or not at all.
+- dbt, syncs and flows are not concerned.
+
+## Later, without changing the model
+
+- Groups from SSO (`group:<name>`), expiry on an entry, request-and-approve.
+- Read restrictions (`readers`), using the gate kept on
+  `claude/connection-read-gate`.
+- Column and row security belong in the warehouse, reached by passing the
+  person's own identity through (BigQuery or Snowflake OAuth), not in Mako.

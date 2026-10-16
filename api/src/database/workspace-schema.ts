@@ -129,6 +129,12 @@ export interface IWorkspace extends Document {
      * app's link, signs in, and is simply in.
      */
     autoJoin?: IWorkspaceAutoJoin;
+    /**
+     * Who may write through a connection (access/connection-writes.ts):
+     * "report" (the default) logs the writes it would refuse and refuses
+     * none; "enforce" refuses them. Reads are never affected.
+     */
+    connectionWrites?: "report" | "enforce";
   };
   billing: IWorkspaceBilling;
   apiKeys?: IWorkspaceApiKey[];
@@ -306,10 +312,26 @@ export interface IDatabaseConnection extends Document {
    * access is unaffected. Set it on connections created for agent writes.
    */
   allowAgentWrites?: boolean;
+  /**
+   * Who may write through this connection (access/connection-writes.ts).
+   * Absent or empty: no one, once the workspace enforces writes. Everyone
+   * may always read; system jobs (syncs, flows, dbt) are not concerned.
+   */
+  writers?: IConnectionWriter[];
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
   lastConnectedAt?: Date;
+}
+
+/** One principal allowed to write, optionally only to one schema or table. */
+export interface IConnectionWriter {
+  /** `user:<id>` or `workflow:<name>`; `group:` fits the same field later. */
+  principal: string;
+  /** Absent: anywhere. `finance`: that schema or dataset. `finance.invoices`: that table. */
+  where?: string;
+  addedBy?: string;
+  addedAt?: Date;
 }
 
 /** @deprecated Use IDatabaseConnection instead */
@@ -1346,6 +1368,7 @@ const WorkspaceSchema = new Schema<IWorkspace>(
         default: "free",
       },
       disabledModelIds: [{ type: String }],
+      connectionWrites: { type: String, enum: ["report", "enforce"] },
       dashboardRefreshConcurrency: {
         type: Number,
         default: 2,
@@ -1613,6 +1636,20 @@ const DatabaseConnectionSchema = new Schema<IDatabaseConnection>(
     allowAgentWrites: {
       type: Boolean,
       default: false,
+    },
+    writers: {
+      type: [
+        new Schema<IConnectionWriter>(
+          {
+            principal: { type: String, required: true },
+            where: { type: String },
+            addedBy: { type: String },
+            addedAt: { type: Date },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
     },
     createdBy: {
       type: String,

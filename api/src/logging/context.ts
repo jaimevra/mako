@@ -22,6 +22,12 @@ export interface RequestContext {
   requestId: string;
   /** User ID if authenticated */
   userId?: string;
+  /**
+   * The workflow a workflow worker's request runs for (X-Mako-Workflow,
+   * trusted only on the worker's own key): it acts as itself, not as the
+   * person who deployed it, when writing (access/connection-writes.ts).
+   */
+  workflow?: string;
   /** Workspace ID if in workspace context */
   workspaceId?: string;
   /** HTTP method */
@@ -285,6 +291,11 @@ export function enrichContextWithUser(userId: string): void {
  * Updates the current request context with workspace information
  * Call this after workspace middleware has identified the workspace
  */
+export function enrichContextWithWorkflow(workflow: string): void {
+  const context = requestContextStorage.getStore();
+  if (context) context.workflow = workflow;
+}
+
 export function enrichContextWithWorkspace(workspaceId: string): void {
   const context = requestContextStorage.getStore();
   if (context) {

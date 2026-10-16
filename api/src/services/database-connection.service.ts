@@ -1,3 +1,4 @@
+import { checkConnectionWrite } from "../access/connection-writes";
 import { createClient } from "@clickhouse/client";
 import { MongoClient, Db, MongoClientOptions, ClientSession } from "mongodb";
 import { Client as PgClient, Pool as PgPool } from "pg";
@@ -88,6 +89,12 @@ export interface QueryExecuteOptions {
    * engines fail closed instead of falling back to lexical SQL checks.
    */
   readOnly?: boolean;
+  /**
+   * Who runs this query when it is not the person or workflow of the
+   * request being served, e.g. "user:<id>" for a scheduled console run as
+   * its owner (access/connection-writes.ts).
+   */
+  actor?: string;
   /**
    * BigQuery only: max time to poll jobs.query until jobComplete (default 5m).
    * Large MERGE/DML jobs need a higher value or we return a false timeout while BQ keeps running.
@@ -532,6 +539,10 @@ export class DatabaseConnectionService {
     options?: QueryExecuteOptions,
   ): Promise<QueryResult> {
     try {
+      // Writes are for the connection's writers; a read returns from this
+      // at once, in memory (access/connection-writes.ts).
+      const refused = await checkConnectionWrite(database, query, options);
+      if (refused) return { success: false, error: refused };
       if (options?.readOnly) {
         if (typeof query !== "string") {
           return {

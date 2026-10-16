@@ -135,10 +135,15 @@ const rows = (await query(
 connection id and check the SQL first with `list_connections`,
 `inspect_table` and `sql_execute_query`.
 
-Queries from a workflow are read-only: `query`, `sql_execute_query` and
-`run_console` refuse INSERT, UPDATE, MERGE, CREATE and DROP. A workflow that
-has to write to the warehouse runs a dbt job that does,
-`call("dbt_run_job", { ... })`, and says so before it is built.
+A workflow reads every connection. It writes (INSERT, UPDATE, MERGE, CREATE,
+DROP) only through a connection whose Access tab lists that workflow, either
+anywhere or only in one schema or table. An admin adds it there; the agent
+cannot. Before building a workflow that writes, tell the user which
+connection and which `schema.table` to allow it on. Name the target fully in
+the statement (`INSERT INTO mako_out.labels ...`): a workflow allowed only
+one place must say where it writes, in one statement. A sandbox run writes
+as the person running it, under their own access. A dbt job
+(`call("dbt_run_job", { ... })`) remains the way to rebuild models.
 
 ## Calling a Mako tool in a step
 

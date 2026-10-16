@@ -29,6 +29,33 @@ Mako connects to your databases directly — no data leaves your infrastructure.
 
 You can also click **Test Connection** at any point to check reachability without saving.
 
+## Who can write
+
+Everyone in the workspace can read every connection. Writing (INSERT, UPDATE,
+MERGE, CREATE, DROP) is for the people and workflows listed in the
+connection's **Access** tab, each either anywhere or only in one schema or
+table (a BigQuery dataset, a Postgres schema, or `schema.table`).
+
+- **Who changes the list:** the workspace owner and admins, in the app. API
+  keys, MCP clients and agents cannot.
+- **Not concerned:** syncs, flows and dbt, which write as Mako itself.
+- **A workflow** writes as itself, so a connection can allow one workflow to
+  write one table without allowing anyone else. Its sandbox runs write as
+  the person running them.
+- **A scheduled console** writes as its owner.
+- **Writing to one place only** needs a single statement that names its table
+  as `schema.table`; anything else is refused for that writer.
+
+### Rolling it out
+
+A workspace starts in **reporting**: nothing is refused, and Mako records who
+writes where. The Access tab lists who wrote through the connection in the
+last 30 days, with an **Allow** button for each. Once the lists match what
+people do, an admin chooses **Start enforcing**, for the whole workspace, and
+can switch back at any time.
+
+Reads never go through this check, so they are not slowed down.
+
 ## Local Databases (localhost)
 
 Mako Cloud can't reach databases on your local machine or private network. Use [Mako Desktop](/desktop/) instead: local addresses (`localhost`, `127.x`, private LAN ranges) are detected automatically and connect through the bundled Mako Agent. Credentials for local connections stay on your machine and are never sent to Mako Cloud.
