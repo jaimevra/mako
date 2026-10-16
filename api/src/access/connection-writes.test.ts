@@ -13,6 +13,7 @@ import {
   writeTarget,
 } from "./connection-writes";
 import { requestContextStorage } from "../logging/context";
+import { assertReadOnlyMaterializationQuery } from "../services/parquet-build.service";
 
 // --- What counts as a write --------------------------------------------------
 
@@ -62,6 +63,35 @@ assert.equal(
 );
 assert.equal(ownResult(["begin", "rows", "commit"]), "rows");
 assert.equal(ownResult(["begin", "a", "b", "commit"]), "b");
+
+// An app binding only reads, MongoDB and KV included.
+const binding = (q: unknown, type: string) => {
+  try {
+    assertReadOnlyMaterializationQuery(q as string, type);
+    return "read";
+  } catch {
+    return "refused";
+  }
+};
+assert.equal(binding("db.users.find({})", "mongodb"), "read");
+assert.equal(
+  binding({ collection: "u", operation: "find" }, "mongodb"),
+  "read",
+);
+assert.equal(binding("db.users.deleteMany({})", "mongodb"), "refused");
+assert.equal(
+  binding({ collection: "u", operation: "deleteMany" }, "mongodb"),
+  "refused",
+);
+assert.equal(
+  binding(
+    { collection: "u", operation: "aggregate", pipeline: [{ $out: "x" }] },
+    "mongodb",
+  ),
+  "refused",
+);
+assert.equal(binding("put k v", "cloudflare-kv"), "refused");
+assert.equal(binding("DELETE FROM t", "postgresql"), "refused");
 
 // --- Which table a write changes ----------------------------------------------
 

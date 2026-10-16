@@ -224,7 +224,7 @@ export default function ConnectionWritersPanel({
       mode === "enforce" &&
       !(await confirm({
         title: "Start refusing writes?",
-        body: "From now on, on every connection in this workspace, only the people and workflows listed can write. Reads, syncs, flows and dbt are not affected.",
+        body: "From now on, on every connection in this workspace, only the people and workflows listed can write. Everyone still reads; syncs, flows and dbt are not affected.",
         confirmLabel: "Enforce",
       }))
     ) {

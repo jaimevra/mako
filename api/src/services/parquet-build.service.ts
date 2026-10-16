@@ -21,6 +21,7 @@ import {
 } from "../utils/streaming-parquet-builder";
 import { storeArtifact } from "./dashboard-cache.service";
 import { databaseConnectionService } from "./database-connection.service";
+import { isWrite } from "../access/connection-writes";
 import { checkPreviewQuerySafety } from "./query-pagination.service";
 import { loggers } from "../logging";
 
@@ -33,8 +34,7 @@ const STREAM_BATCH_SIZE = 5000;
 
 /** SQL string, or a MongoDB executable descriptor (dashboard data sources). */
 export type ExecutableQuery =
-  | string
-  | { collection: string; operation: string; query: string };
+  string | { collection: string; operation: string; query: string };
 
 /**
  * Read-only gate for SQL materialization queries. Materialization runs
@@ -45,17 +45,25 @@ export type ExecutableQuery =
  * that requires the statement to start with `SELECT`/`WITH`, so it would
  * wrongly reject non-SQL executables. MongoDB executables (both structured
  * descriptors and JS shell strings like `db.users.aggregate([...])`) and
- * Cloudflare KV are validated by their own drivers/execution paths and are
- * skipped here. Pass the source `databaseType` so non-SQL sources are exempt.
+ * Cloudflare KV are judged by their operation or shell method instead
+ * (`isWrite`): a binding only reads. Pass the source `databaseType`.
  */
 export function assertReadOnlyMaterializationQuery(
   executableQuery: ExecutableQuery,
   databaseType?: string,
 ): void {
-  // Structured executables (e.g. MongoDB find/aggregate descriptors) are not SQL.
-  if (typeof executableQuery !== "string") return;
-  // Non-SQL sources use their own read-only semantics, not the SQL analyzer.
-  if (databaseType === "mongodb" || databaseType === "cloudflare-kv") return;
+  if (
+    typeof executableQuery !== "string" ||
+    databaseType === "mongodb" ||
+    databaseType === "cloudflare-kv"
+  ) {
+    if (isWrite(databaseType ?? "mongodb", executableQuery)) {
+      throw new Error(
+        "Query failed read-only safety checks: a binding can only read.",
+      );
+    }
+    return;
+  }
   const safety = checkPreviewQuerySafety(executableQuery);
   if (!safety.safe) {
     throw new Error(

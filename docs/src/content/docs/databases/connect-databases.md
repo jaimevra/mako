@@ -43,6 +43,8 @@ table (a BigQuery dataset, a Postgres schema, or `schema.table`).
   write one table without allowing anyone else. Its sandbox runs write as
   the person running them.
 - **A scheduled console** writes as its owner.
+- **Apps** only read: a binding that would write is refused, whoever views
+  the app, MongoDB and Cloudflare KV included.
 - **Writing to one place only** needs a single statement that names its table
   as `schema.table`; anything else is refused for that writer.
 
