@@ -756,21 +756,46 @@ function buildTools(
     app_edit_file: tool({
       description:
         "Anchored string-replacement edit of a file in an Apps project (like str_replace). oldString must match exactly once unless replaceAll is set. Flushed to the durable WIP snapshot immediately.",
-      inputSchema: z.object({
-        ...targetInput,
-        path: z.string().min(1),
-        oldString: z.string().min(1),
-        newString: z.string(),
-        replaceAll: z.boolean().optional(),
-      }),
-      execute: async ({
-        appId,
-        workflowId,
-        path: givenPath,
-        oldString,
-        newString,
-        replaceAll,
-      }) => {
+      // camelCase is canonical; the snake_case spellings are accepted too,
+      // because agents used to Claude Code's Edit tool send `old_string`.
+      inputSchema: z
+        .object({
+          ...targetInput,
+          path: z.string().min(1),
+          oldString: z.string().min(1).optional(),
+          newString: z.string().optional(),
+          replaceAll: z.boolean().optional(),
+          old_string: z
+            .string()
+            .min(1)
+            .optional()
+            .describe("Alias of oldString."),
+          new_string: z.string().optional().describe("Alias of newString."),
+          replace_all: z.boolean().optional().describe("Alias of replaceAll."),
+        })
+        .superRefine((input, ctx) => {
+          if (input.oldString === undefined && input.old_string === undefined) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["oldString"],
+              message:
+                "oldString is required: the exact text to replace (old_string is accepted too)",
+            });
+          }
+          if (input.newString === undefined && input.new_string === undefined) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["newString"],
+              message:
+                "newString is required: the replacement text (new_string is accepted too)",
+            });
+          }
+        }),
+      execute: async input => {
+        const { appId, workflowId, path: givenPath } = input;
+        const oldString = (input.oldString ?? input.old_string) as string;
+        const newString = (input.newString ?? input.new_string) as string;
+        const replaceAll = input.replaceAll ?? input.replace_all;
         const loaded = await loadTarget({ appId, workflowId }, { write: true });
         if ("error" in loaded) return { success: false, error: loaded.error };
         const relPath = toRelPath(loaded.project, givenPath);

@@ -231,6 +231,31 @@ const { answers } = await decide(
 );
 ```
 
+### Models
+
+- **Reasoning models** (GLM, DeepSeek, MiMo, …) spend hidden reasoning
+  against `maxOutputTokens`. At 2000 the longest inputs come back empty
+  ("No output generated") or cut off; give them about 6000.
+- **Some models ignore the schema's shape**: issues as bare strings,
+  numbers as text, enums as free text. Put an example of the expected
+  answer in the prompt, and normalise the answer after the call.
+- **Open-weight models**: pin the hosts so data stays off the makers' own
+  APIs, e.g. `providerOptions: { gateway: { only: ["deepinfra", "novita"] } }`.
+- **Decision models** (Jev) are called with `decide()`, not `model()`.
+
+```ts
+const { output } = await generateText({
+  model: model("zai/glm-4.6"),
+  maxOutputTokens: 6000,
+  providerOptions: { gateway: { only: ["deepinfra", "novita"] } }, // not "zai"
+  output: Output.object({ schema: Label }),
+  prompt: `Classify this conversation. Answer like:
+{"category":"billing","confidence":0.8}
+
+${text}`,
+});
+```
+
 ## What starts a run
 
 - A schedule: `on: { cron: "0 6 * * *" }` in the workflow (UTC).
