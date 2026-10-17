@@ -37,6 +37,8 @@ const FULL: Limits = {
   stackLines: Number.POSITIVE_INFINITY,
 };
 export type ShapeOptions = { full?: boolean };
+/** The most log lines read of one step. */
+const MAX_LOG_LINES = 10_000;
 const limitsOf = (options: ShapeOptions = {}) =>
   options.full ? FULL : SUMMARY;
 
@@ -54,6 +56,12 @@ export const cap = (
     ? `${text.slice(0, max)}… (${text.length} chars)`
     : text;
 };
+
+/**
+ * A log line's time. Parsed, not compared as text: Hatchet writes fractions
+ * of a second at varying lengths (`45.96` and `45.960647`).
+ */
+const timeOf = (row: Row) => Date.parse(String(row.createdAt ?? "")) || 0;
 
 const idOf = (row: Row): string | undefined =>
   (row.metadata as { id?: string } | undefined)?.id;
@@ -219,8 +227,8 @@ export function shapeRun(
     output: cap(detail.run?.output, limits.chars),
     steps: tasks.map(task => {
       // Hatchet lists log lines in no order; by time, oldest first.
-      const lines = [...(logs[idOf(task) ?? ""] ?? [])].sort((a, b) =>
-        String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")),
+      const lines = [...(logs[idOf(task) ?? ""] ?? [])].sort(
+        (a, b) => timeOf(a) - timeOf(b),
       );
       const shown = Number.isFinite(limits.lines)
         ? lines.slice(-limits.lines)
@@ -258,9 +266,12 @@ export async function readRun(
     (detail.tasks ?? []).map(async task => {
       const taskId = idOf(task);
       if (!taskId) return;
+      // Hatchet answers 50 lines unless asked for more, in no order: all of
+      // them, so the last ones are the last.
       logs[taskId] = await tenantJson<Rows>(
         tenant,
         `/api/v1/stable/tasks/${taskId}/logs`,
+        { query: new URLSearchParams({ limit: String(MAX_LOG_LINES) }) },
       )
         .then(l => l.rows ?? [])
         .catch(() => []);

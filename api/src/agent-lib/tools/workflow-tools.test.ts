@@ -38,7 +38,12 @@ const call = (
   ).execute(input, { toolCallId: "t", messages: [] });
 
 /** What the stand-in Hatchet was asked. */
-const requests: Array<{ method: string; path: string; body?: any }> = [];
+const requests: Array<{
+  method: string;
+  path: string;
+  limit?: string;
+  body?: any;
+}> = [];
 const responses: Record<string, unknown> = {
   [`GET /api/v1/tenants/${TENANT}/workflows`]: {
     rows: [{ name: "daily-digest" }, { name: "weekly-report" }],
@@ -90,7 +95,9 @@ const responses: Record<string, unknown> = {
     // In no order, as Hatchet lists them: newest first here.
     rows: Array.from({ length: 50 }, (_, i) => ({
       message: `line ${i}`,
-      createdAt: `2026-10-08T09:43:${String(i).padStart(2, "0")}Z`,
+      // Fractions of a second at varying lengths, as Hatchet writes them:
+      // "…:00.9Z" sorts after "…:00.95Z" as text, before it as time.
+      createdAt: `2026-10-08T09:43:${String(Math.floor(i / 2)).padStart(2, "0")}.${i % 2 ? "95" : "9"}Z`,
     })).reverse(),
   },
 };
@@ -100,6 +107,7 @@ globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
   requests.push({
     method,
     path: pathname,
+    limit: new URL(String(url)).searchParams.get("limit") ?? undefined,
     body: init?.body ? JSON.parse(String(init.body)) : undefined,
   });
   const body = responses[`${method} ${pathname}`];
@@ -208,6 +216,13 @@ async function main() {
     });
     const [fullStep] = whole.run.steps;
     assert.equal(fullStep.logs.length, 50);
+    assert.ok(
+      requests.some(
+        r =>
+          r.path === `/api/v1/stable/tasks/${TASK}/logs` && r.limit === "10000",
+      ),
+      "asks Hatchet for every line, not its default 50",
+    );
     assert.deepEqual(
       [fullStep.logs[0], fullStep.logs.at(-1)],
       ["line 0", "line 49"],

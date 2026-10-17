@@ -71,9 +71,9 @@ const clip = value => {
 /** A step's log lines, the last ones when there are more than Mako keeps. */
 function keepLines(rows) {
   // Hatchet lists them in no order; by time, oldest first.
-  const sorted = [...rows].sort((a, b) =>
-    String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")),
-  );
+  // Parsed: Hatchet writes fractions of a second at varying lengths.
+  const at = row => Date.parse(String(row.createdAt ?? "")) || 0;
+  const sorted = [...rows].sort((a, b) => at(a) - at(b));
   const kept = [];
   let chars = 0;
   for (let i = sorted.length - 1; i >= 0; i--) {
