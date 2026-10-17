@@ -6,6 +6,12 @@
  * like a deployed run (runs.ts shapes both), and listed among the person's
  * recent runs. Only the person who started a run reads it: it ran as them.
  * Kept as long as the recent runs list looks back.
+ *
+ * The records are also the box's lock, across every API process: two
+ * embedded engines cannot share a box, so at most one run per person and
+ * workspace (one box) is RUNNING, which a unique index holds. A run waits
+ * QUEUED until it can be the one; a run whose driver died stops counting
+ * once its heartbeat is stale.
  */
 import { randomUUID } from "node:crypto";
 import mongoose, { Schema } from "mongoose";
@@ -73,6 +79,14 @@ const SandboxRunSchema = new Schema<ISandboxRun>(
 
 SandboxRunSchema.index({ workspaceId: 1, userId: 1, createdAt: -1 });
 SandboxRunSchema.index(
+  { workspaceId: 1, userId: 1 },
+  {
+    name: "one_running_per_box",
+    unique: true,
+    partialFilterExpression: { status: "RUNNING" },
+  },
+);
+SandboxRunSchema.index(
   { createdAt: 1 },
   { expireAfterSeconds: RECENT_RUNS_DAYS * 24 * 60 * 60 },
 );
@@ -119,12 +133,50 @@ export async function createSandboxRun(
   return run._id;
 }
 
-export async function markSandboxRunStarted(runId: string) {
-  const now = new Date();
-  await SandboxRun.updateOne(
-    { _id: runId, status: { $in: ACTIVE } },
-    { $set: { status: "RUNNING", startedAt: now, heartbeatAt: now } },
+const LOST =
+  "The Mako process running this sandbox run stopped before it ended. Start it again.";
+
+/** End the box's runs whose driver stopped renewing them. */
+async function settleLostRuns(workspaceId: string, userId: string) {
+  const now = Date.now();
+  await SandboxRun.updateMany(
+    {
+      workspaceId,
+      userId,
+      status: { $in: ACTIVE },
+      heartbeatAt: { $lt: new Date(now - STALE_AFTER_MS) },
+    },
+    { $set: { status: "FAILED", finishedAt: new Date(now), error: LOST } },
   );
+}
+
+const isDuplicateKey = (error: unknown) =>
+  (error as { code?: number } | null)?.code === 11000;
+
+/**
+ * Make a queued run the box's running one. False while another run of the
+ * box is RUNNING: the caller waits and asks again.
+ */
+export async function claimBoxForRun(run: {
+  runId: string;
+  workspaceId: string;
+  userId: string;
+}): Promise<boolean> {
+  // The unique index is the lock: built before the first claim relies on it.
+  await SandboxRun.init();
+  await settleLostRuns(run.workspaceId, run.userId);
+  const now = new Date();
+  try {
+    const result = await SandboxRun.updateOne(
+      { _id: run.runId, status: "QUEUED" },
+      { $set: { status: "RUNNING", startedAt: now, heartbeatAt: now } },
+    );
+    if (result.matchedCount === 1) return true;
+  } catch (error) {
+    if (isDuplicateKey(error)) return false;
+    throw error;
+  }
+  throw new Error("The sandbox run ended before it started.");
 }
 
 /** Says the run's driver is alive. False once the run has ended. */
@@ -208,11 +260,9 @@ export async function finishSandboxRun(
 async function settleIfLost(run: ISandboxRun, now = Date.now()) {
   if (!ACTIVE.includes(run.status)) return run;
   if (now - run.heartbeatAt.getTime() < STALE_AFTER_MS) return run;
-  const error =
-    "The Mako process running this sandbox run stopped before it ended. Start it again.";
   await SandboxRun.updateOne(
     { _id: run._id, status: { $in: ACTIVE }, heartbeatAt: run.heartbeatAt },
-    { $set: { status: "FAILED", finishedAt: new Date(now), error } },
+    { $set: { status: "FAILED", finishedAt: new Date(now), error: LOST } },
   );
   return (await SandboxRun.findById(run._id).lean()) ?? run;
 }

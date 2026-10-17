@@ -1,6 +1,6 @@
 /**
  * Sandbox runs, kept and waited on, against a real (in-memory) Mongo: the
- * run store (sandbox-runs.ts), the box lease (box-lock.ts), the server-side
+ * run store and the box lock it holds (sandbox-runs.ts), the server-side
  * wait (wait.ts, status.ts). The box itself is not here: a real sandbox run
  * is verified end to end against a dev API (see the PR).
  *
@@ -12,18 +12,12 @@ import mongoose, { Types } from "mongoose";
 
 import { Workspace } from "../database/workspace-schema";
 import {
-  acquireBoxLock,
-  BoxLock,
-  releaseBoxLock,
-  renewBoxLock,
-} from "./box-lock";
-import {
+  claimBoxForRun,
   createSandboxRun,
   finishSandboxRun,
   heartbeatSandboxRun,
   isSandboxRunId,
   listSandboxRuns,
-  markSandboxRunStarted,
   readSandboxRun,
   SandboxRun,
   STALE_AFTER_MS,
@@ -65,33 +59,46 @@ function engineResult(output: string, lines: number) {
 }
 
 async function lockTests() {
-  const box = `${WS}:lock`;
-  // One holder at a time; the holder may take it again (a renewal).
-  assert.equal(await acquireBoxLock(box, "a", 60_000), true);
-  assert.equal(await acquireBoxLock(box, "b", 60_000), false);
-  assert.equal(await acquireBoxLock(box, "a", 60_000), true);
-  // Both race for a free box: exactly one wins.
-  await releaseBoxLock(box, "a");
-  const race = await Promise.all(
-    ["c", "d", "e", "f"].map(h => acquireBoxLock(box, h, 60_000)),
+  const claim = (runId: string, userId = "lock") =>
+    claimBoxForRun({ runId, workspaceId: WS, userId });
+  // One RUNNING run per box: the next waits QUEUED.
+  const a = await createSandboxRun(WS, "lock", "eval", {});
+  const b = await createSandboxRun(WS, "lock", "eval", {});
+  assert.equal(await claim(a), true);
+  assert.equal(await claim(b), false);
+  assert.equal((await SandboxRun.findById(b).lean())?.status, "QUEUED");
+  // Another person's box is another box.
+  const other = await createSandboxRun(WS, "other", "eval", {});
+  assert.equal(await claim(other, "other"), true);
+  // The box is free once the run ends.
+  await finishSandboxRun(a, { error: "done" });
+  assert.equal(await claim(b), true);
+  await finishSandboxRun(b, { error: "done" });
+  // Four race for a free box: exactly one wins.
+  const racers = await Promise.all(
+    [1, 2, 3, 4].map(() => createSandboxRun(WS, "lock", "eval", {})),
   );
-  assert.equal(race.filter(Boolean).length, 1);
-  const winner = (await BoxLock.findById(box).lean())?.holder;
-  assert.ok(winner);
-  // Releasing someone else's lease does nothing.
-  await releaseBoxLock(box, "nobody");
-  assert.equal((await BoxLock.findById(box).lean())?.holder, winner);
-  // A holder that stops renewing (its process died) loses the box once the
-  // lease runs out, and cannot renew it afterwards.
-  await BoxLock.updateOne(
-    { _id: box },
-    { expiresAt: new Date(Date.now() - 1) },
+  const won = await Promise.all(racers.map(id => claim(id)));
+  assert.equal(won.filter(Boolean).length, 1);
+  const winner = racers[won.indexOf(true)];
+  // A running run whose driver died (no heartbeat) stops holding the box:
+  // the next claim ends it as lost and takes the box.
+  await SandboxRun.updateOne(
+    { _id: winner },
+    { heartbeatAt: new Date(Date.now() - STALE_AFTER_MS - 1000) },
   );
-  assert.equal(await acquireBoxLock(box, "g", 60_000), true);
-  assert.equal(await renewBoxLock(box, winner, 60_000), false);
-  assert.equal(await renewBoxLock(box, "g", 60_000), true);
-  await releaseBoxLock(box, "g");
-  assert.equal(await BoxLock.countDocuments({ _id: box }), 0);
+  const next = racers.find(id => id !== winner) ?? "";
+  assert.equal(await claim(next), true);
+  const lost = await SandboxRun.findById(winner).lean();
+  assert.equal(lost?.status, "FAILED");
+  assert.match(lost?.error ?? "", /stopped before it ended/);
+  assert.equal(await heartbeatSandboxRun(winner), false);
+  // A run that already ended cannot start.
+  await assert.rejects(claim(winner), /ended before it started/);
+  await SandboxRun.updateMany(
+    { userId: { $in: ["lock", "other"] }, status: { $ne: "FAILED" } },
+    { $set: { status: "FAILED" } },
+  );
 }
 
 async function storeTests() {
@@ -103,7 +110,10 @@ async function storeTests() {
   let run = await readSandboxRun(WS, "u1", runId);
   assert.equal(run?.status, "QUEUED");
   assert.deepEqual(run?.steps, []);
-  await markSandboxRunStarted(runId);
+  assert.equal(
+    await claimBoxForRun({ runId, workspaceId: WS, userId: "u1" }),
+    true,
+  );
   assert.equal((await readSandboxRun(WS, "u1", runId))?.status, "RUNNING");
   assert.equal(await heartbeatSandboxRun(runId), true);
 
@@ -167,7 +177,7 @@ async function storeTests() {
 
   // A run whose driver died (no heartbeat) ends as failed when read.
   const orphan = await createSandboxRun(WS, "u1", "eval", {});
-  await markSandboxRunStarted(orphan);
+  await claimBoxForRun({ runId: orphan, workspaceId: WS, userId: "u1" });
   await SandboxRun.updateOne(
     { _id: orphan },
     { heartbeatAt: new Date(Date.now() - STALE_AFTER_MS - 1000) },
@@ -261,7 +271,7 @@ async function waitTests() {
 
   // A sandbox run ending during the wait: answered when it ends.
   const runId = await createSandboxRun(WS, "u4", "eval", {});
-  await markSandboxRunStarted(runId);
+  await claimBoxForRun({ runId, workspaceId: WS, userId: "u4" });
   setTimeout(
     () => void finishSandboxRun(runId, { result: engineResult("done", 1) }),
     1500,
@@ -348,7 +358,7 @@ async function main() {
   const mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
   try {
-    await Promise.all([BoxLock.init(), SandboxRun.init()]);
+    await SandboxRun.init();
     await lockTests();
     await storeTests();
     await sizeTests();

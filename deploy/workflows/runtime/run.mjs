@@ -10,13 +10,14 @@
 // Env: WORKFLOWS_ROOT (the checkout), MAKO_URL, MAKO_API_KEY (for lib/mako),
 // MAKO_SANDBOX_RESULT_FILE (where the result goes; stdout without it),
 // MAKO_SANDBOX_RUN_TIMEOUT_MS (how long the workflow may run),
-// MAKO_SANDBOX_ENGINE_DIR (the engine's Postgres; one per box).
+// MAKO_SANDBOX_ENGINE_DIR (where engines keep their Postgres, one folder per
+// run), MAKO_SANDBOX_RUN_ID (this run's folder name there).
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -29,7 +30,7 @@ import { prepare, startWorker, typecheck } from "./build.mjs";
 // The engine the sidecar runs, pinned: the one the sandbox image carries
 // (api/src/apps/e2b-template.ts), so a box never fetches another.
 const ENGINE_VERSION = "v0.110.5";
-const ENGINE_START_ATTEMPTS = 6;
+const ENGINE_START_ATTEMPTS = 3;
 const RUN_TIMEOUT_MS =
   Number(process.env.MAKO_SANDBOX_RUN_TIMEOUT_MS) || 300_000;
 const POLL_MS = 500;
@@ -38,12 +39,19 @@ const POLL_MS = 500;
 const MAX_TEXT_CHARS = 1_000_000;
 const MAX_LOG_CHARS_PER_STEP = 1_000_000;
 const MAX_LOG_LINES = 10_000;
-// The engine's Postgres lives here, and nothing else does: whatever runs
-// with this path in its command line is this box's engine.
+// Each run's engine keeps its Postgres in a folder of its own here, so no
+// run ever starts on what another left: an engine and Postgres that a killed
+// run left running hold only their own folder.
 const ENGINE_DIR =
   process.env.MAKO_SANDBOX_ENGINE_DIR ||
   join(homedir(), ".mako-workflow-engine");
-const PIDFILE = join(ENGINE_DIR, "run.pid");
+const RUN_DIR = join(
+  ENGINE_DIR,
+  (process.env.MAKO_SANDBOX_RUN_ID || `run-${process.pid}`).replace(
+    /[^A-Za-z0-9_-]/g,
+    "_",
+  ),
+);
 
 const [name, encodedInput] = process.argv.slice(2);
 const input = JSON.parse(
@@ -87,89 +95,48 @@ const alive = pid => {
 };
 
 /**
- * Stop what an earlier run left behind: a run whose caller gave up (or whose
- * exec was killed) can leave its run.mjs, its engine, and the engine's
- * Postgres, which outlives the engine and holds the data folder, so the next
- * engine exits before it is ready. The earlier run.mjs is named by the
- * pidfile; the engine and its Postgres by ENGINE_DIR in their command line.
- * Then the engine's data starts over: an engine that was killed stays
- * registered in it, and the next one waits a minute for it to expire. The
- * data is only this box's last runs, which Mako keeps.
+ * Stop what earlier runs left behind and delete their folders. A run whose
+ * exec was killed (a timeout) can leave its engine, and the engine's
+ * Postgres outlives it. Both name their run's folder in their command line;
+ * Postgres by its real path (/private/var/… for /var/…). One run at a time
+ * per box (Mako's lock), so every other folder is a leftover.
  */
 async function stopLeftovers() {
-  let list;
+  const old = readdirSync(ENGINE_DIR)
+    .map(entry => join(ENGINE_DIR, entry))
+    .filter(dir => dir !== RUN_DIR);
+  if (!old.length) return;
+  const named = old.flatMap(dir => [`${dir}/`, `${realpathSync(dir)}/`]);
+  let pids = [];
   try {
-    list = execFileSync("ps", ["-A", "-o", "pid=,ppid=,command="])
+    pids = execFileSync("ps", ["-A", "-o", "pid=,command="])
       .toString()
       .split("\n")
-      .map(line => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+      .map(line => line.trim().match(/^(\d+)\s+(.*)$/))
       .filter(Boolean)
-      .map(([, pid, ppid, command]) => ({
-        pid: Number(pid),
-        ppid: Number(ppid),
-        command,
-      }));
+      .filter(
+        ([, , command]) =>
+          /hatchet-embedded-sidecar|postgres/.test(command) &&
+          named.some(dir => command.includes(dir)),
+      )
+      .map(([, pid]) => Number(pid));
   } catch {
-    return;
+    // No ps: nothing to stop, only folders to delete.
   }
-  const targets = new Set();
-  let previous;
-  try {
-    previous = Number(readFileSync(PIDFILE, "utf8"));
-  } catch {
-    // No earlier run.
-  }
-  const prior = list.find(
-    p =>
-      p.pid === previous &&
-      p.pid !== process.pid &&
-      p.command.includes("run.mjs"),
-  );
-  if (prior) {
-    const queue = [prior.pid];
-    while (queue.length) {
-      const pid = queue.pop();
-      targets.add(pid);
-      for (const child of list) if (child.ppid === pid) queue.push(child.pid);
+  if (pids.length) {
+    console.error(
+      `Stopping what an earlier run left running: ${pids.join(", ")}`,
+    );
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
     }
+    for (let i = 0; i < 20 && pids.some(alive); i++) await sleep(250);
   }
-  // This run and the shell that started it name ENGINE_DIR too (in its
-  // environment, on the command line): never those.
-  const own = new Set();
-  for (let pid = process.pid; pid > 1 && !own.has(pid);) {
-    own.add(pid);
-    pid = list.find(p => p.pid === pid)?.ppid ?? 0;
-  }
-  // Postgres names the folder by its real path (/private/var/… for /var/…).
-  const dirs = [ENGINE_DIR, realpathSync(ENGINE_DIR)];
-  for (const p of list) {
-    const engine =
-      dirs.some(dir => p.command.includes(dir)) &&
-      /hatchet-embedded-sidecar|postgres/.test(p.command);
-    if (engine) targets.add(p.pid);
-  }
-  for (const pid of own) targets.delete(pid);
-  if (!targets.size) return;
-  console.error(
-    `Stopping what an earlier run left running: ${[...targets].join(", ")}`,
-  );
-  for (const pid of targets) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // Already gone.
-    }
-  }
-  for (let i = 0; i < 20 && [...targets].some(alive); i++) await sleep(500);
-  for (const pid of targets) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Already gone.
-    }
-  }
-  await sleep(500);
-  rmSync(join(ENGINE_DIR, "postgres"), { recursive: true, force: true });
+  for (const dir of old) rmSync(dir, { recursive: true, force: true });
 }
 
 let root;
@@ -178,19 +145,14 @@ let engine;
 
 async function finish(result) {
   worker?.kill("SIGKILL");
-  try {
-    if (readFileSync(PIDFILE, "utf8") === String(process.pid)) rmSync(PIDFILE);
-  } catch {
-    // Not ours, or gone.
-  }
   if (root) rmSync(root, { recursive: true, force: true });
   const json = JSON.stringify(result);
   if (process.env.MAKO_SANDBOX_RESULT_FILE) {
     writeFileSync(process.env.MAKO_SANDBOX_RESULT_FILE, json);
   } else console.log(json);
-  // Stop the engine before leaving: the next run starts its own on the same
-  // data folder, and two cannot hold it.
+  // Stop the engine and its Postgres, then its folder goes.
   await engine?.stop().catch(() => undefined);
+  rmSync(RUN_DIR, { recursive: true, force: true });
   process.exit(0);
 }
 
@@ -209,21 +171,19 @@ try {
   const errors = typecheck(root);
   if (errors) await finish({ buildError: errors });
 
-  mkdirSync(ENGINE_DIR, { recursive: true });
+  mkdirSync(RUN_DIR, { recursive: true });
   await stopLeftovers();
-  writeFileSync(PIDFILE, String(process.pid));
-  // The last run's Postgres can hold the data folder a moment after its
-  // engine stopped: try again before giving up.
+  const engineStart = Date.now();
   for (let attempt = 1; !engine; attempt++) {
     engine = await startEmbeddedSidecar({
       version: ENGINE_VERSION,
-      postgresDataDir: join(ENGINE_DIR, "postgres"),
-    }).catch(async err => {
+      postgresDataDir: join(RUN_DIR, "postgres"),
+    }).catch(err => {
       if (attempt === ENGINE_START_ATTEMPTS) throw err;
-      await stopLeftovers();
     });
-    if (!engine) await sleep(5_000);
+    if (!engine) await sleep(3_000);
   }
+  console.error(`Engine ready in ${Date.now() - engineStart} ms`);
   const api = async (path, init) => {
     const res = await fetch(`${engine.apiUrl}${path}`, {
       ...init,
