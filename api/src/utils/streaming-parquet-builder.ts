@@ -33,13 +33,43 @@ export interface StreamingParquetResult {
   filePath: string;
   rowCount: number;
   byteSize: number;
+  /** Rows arrived past `rowLimit` and were dropped (only with `onRowLimit: "truncate"`). */
+  truncated: boolean;
 }
 
 export interface StreamingParquetOptions {
   filenameBase?: string;
   rowLimit?: number;
+  /**
+   * What to do when the source yields more than `rowLimit` rows.
+   * `truncate` (default) keeps the first `rowLimit` rows and reports
+   * `truncated: true` — right where the limit is a declared cap the reader
+   * chose. `fail` throws ParquetRowLimitError and builds nothing — right where
+   * the artifact is read as the whole result, so a cut would be summed as if
+   * complete.
+   */
+  onRowLimit?: "truncate" | "fail";
   fields?: FieldMeta[];
   onBatchInserted?: (totalRows: number) => Promise<void>;
+}
+
+/**
+ * The source yielded more rows than the artifact may hold, and the caller
+ * asked for no truncated artifact. Thrown from inside the batch callback, so
+ * the query stops streaming; drivers report it as the stream's failure.
+ */
+export class ParquetRowLimitError extends Error {
+  readonly rowLimit: number;
+  constructor(rowLimit: number) {
+    super(
+      `Query returned more than ${rowLimit.toLocaleString("en-US")} rows, the most one ` +
+        `parquet artifact may hold. Nothing was stored, so readers keep the previous ` +
+        `build rather than a silently truncated one. Narrow the query, or split it ` +
+        `into several bindings that each stay under the limit.`,
+    );
+    this.name = "ParquetRowLimitError";
+    this.rowLimit = rowLimit;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -47,11 +77,7 @@ export interface StreamingParquetOptions {
 // ---------------------------------------------------------------------------
 
 type DuckDBColumnType =
-  | "BIGINT"
-  | "DOUBLE"
-  | "BOOLEAN"
-  | "TIMESTAMP"
-  | "VARCHAR";
+  "BIGINT" | "DOUBLE" | "BOOLEAN" | "TIMESTAMP" | "VARCHAR";
 
 /**
  * Map a driver-reported type string to a DuckDB column type.
@@ -250,6 +276,8 @@ export async function buildParquetFromBatches(
     DEFAULT_DUCKDB_THREADS,
   );
   let totalRows = 0;
+  let truncated = false;
+  let limitExceeded: ParquetRowLimitError | null = null;
   let tableCreated = false;
   let columns: string[] = [];
   let columnTypeMap = new Map<string, DuckDBColumnType>();
@@ -266,7 +294,14 @@ export async function buildParquetFromBatches(
 
       const limit = options.rowLimit ?? 500000;
       const remaining = limit - totalRows;
-      if (remaining <= 0) return;
+      if (remaining < rows.length) {
+        if (options.onRowLimit === "fail") {
+          limitExceeded = new ParquetRowLimitError(limit);
+          throw limitExceeded;
+        }
+        truncated = true;
+        if (remaining <= 0) return;
+      }
       const batch = remaining < rows.length ? rows.slice(0, remaining) : rows;
 
       if (!tableCreated) {
@@ -335,6 +370,9 @@ export async function buildParquetFromBatches(
     };
 
     await options.streamBatches(insertBatch);
+    // A driver that swallowed the throw above must not turn it into a
+    // complete-looking artifact.
+    if (limitExceeded) throw limitExceeded;
 
     if (!tableCreated) {
       // Zero rows: the query's schema (from the probe) still defines the
@@ -363,8 +401,15 @@ export async function buildParquetFromBatches(
 
     const stat = await fsPromises.stat(parquetPath);
 
+    if (truncated) {
+      logger.warn("Parquet artifact truncated at its row limit", {
+        filenameBase: safeBase,
+        rowLimit: options.rowLimit ?? 500000,
+      });
+    }
     logger.info("Built parquet file via streaming DuckDB pipeline", {
       rowCount: totalRows,
+      truncated,
       byteSize: stat.size,
       parquetPath,
       duckDbMemoryLimitMb,
@@ -375,6 +420,7 @@ export async function buildParquetFromBatches(
       filePath: parquetPath,
       rowCount: totalRows,
       byteSize: stat.size,
+      truncated,
     };
   } finally {
     try {
