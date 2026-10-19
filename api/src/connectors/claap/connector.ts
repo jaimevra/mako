@@ -1050,7 +1050,8 @@ export class ClaapConnector extends BaseConnector {
   getWebhookEventsForEntities(entities: string[]): string[] {
     if (entities.length === 0) return this.getSupportedWebhookEvents();
     const normalized = new Set(entities.map(e => e.toLowerCase()));
-    if (normalized.has("recordings")) {
+    // Transcripts ride on the recording events (enrichWebhookCdcRecords).
+    if (normalized.has("recordings") || normalized.has(TRANSCRIPTS_ENTITY)) {
       return this.getSupportedWebhookEvents();
     }
     return [];
@@ -1096,6 +1097,41 @@ export class ClaapConnector extends BaseConnector {
           ? (event as { eventId: string }).eventId
           : `${eventType || "claap.event"}:${record.entity}:${record.recordId}`),
     }));
+  }
+
+  /**
+   * `recording_added` / `recording_updated` carry the recording's transcript
+   * links, valid for 24 hours. When the flow syncs `recording_transcripts`,
+   * download them now and emit one transcript record per language next to
+   * the recording, so every new call lands with its text and no poll is
+   * needed.
+   */
+  async enrichWebhookCdcRecords(
+    records: NormalizedCdcRecord[],
+    options: { isEntityEnabled: (entity: string) => boolean },
+  ): Promise<NormalizedCdcRecord[]> {
+    if (!options.isEntityEnabled(TRANSCRIPTS_ENTITY)) return records;
+
+    const enriched = [...records];
+    for (const record of records) {
+      if (record.entity !== "recordings" || record.operation !== "upsert") {
+        continue;
+      }
+      const recording = (record.payload ?? {}) as Record<string, unknown>;
+      const rows = await this.fetchRecordingTranscripts(recording);
+      for (const row of rows) {
+        enriched.push({
+          entity: TRANSCRIPTS_ENTITY,
+          recordId: String(row.id),
+          operation: "upsert",
+          payload: row,
+          sourceTs: new Date(String(row.fetchedAt)),
+          source: "webhook",
+          changeId: `${record.changeId || record.recordId}:${TRANSCRIPTS_ENTITY}:${row.id}`,
+        });
+      }
+    }
+    return enriched;
   }
 
   normalizeBackfillRecord(
