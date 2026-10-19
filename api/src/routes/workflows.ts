@@ -395,9 +395,10 @@ function testerOf(c: AuthenticatedContext): Worker | null {
   const workspace = c.get("workspace");
   const kind = c.get("authType");
   if (kind !== "apiKey" && kind !== "mcpOAuth") return null;
-  if (!getRequestContext()?.testedWorkflow || !user?.id || !workspace) {
-    return null;
-  }
+  const workflow = getRequestContext()?.testedWorkflow;
+  // Only for a workflow the workspace has deployed: a name is not a pass.
+  const deployed = workspace?.workflows?.live?.names ?? [];
+  if (!workflow || !deployed.includes(workflow) || !user?.id) return null;
   return { workspaceId: workspace._id.toString(), userId: String(user.id) };
 }
 

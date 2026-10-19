@@ -218,12 +218,11 @@ async function main() {
     assert.match(workflowOnly.body.error, /You can write only to/);
     assert.equal(await rowsIn("workflow_only"), 1, "only the worker's write");
 
-    // Naming a workflow that is not deployed narrows to nothing it may do.
-    const undeployed = await query(PERSON_KEY, WRITE("both"), "draft-flow");
-    assert.equal(undeployed.status, 400);
-    assert.match(
-      undeployed.body.error,
-      /workflow:draft-flow is not allowed to write/,
+    // A workflow the workspace has not deployed opens nothing.
+    const undeployed = await query(PERSON_KEY, "SELECT 1", "draft-flow");
+    assert.deepEqual(
+      [undeployed.status, undeployed.body.error],
+      [401, "Invalid worker key"],
     );
 
     // Without the header a person is not a worker: the routes stay closed.
