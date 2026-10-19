@@ -87,6 +87,18 @@ export default wf;
 `,
 );
 
+// A model call Mako refuses (as prod refuses a key it does not accept here).
+write(
+  "model",
+  `import { generateText } from "ai";
+import { hatchet } from "../hatchet";
+import { model } from "../lib/mako";
+const wf = hatchet.workflow({ name: "model" });
+wf.task({ name: "ask", fn: async () => ({ text: (await generateText({ model: model("anthropic/claude-haiku-4.5"), prompt: "hi" })).text }) });
+export default wf;
+`,
+);
+
 const seen = [];
 const server = http.createServer((req, res) => {
   let body = "";
@@ -98,6 +110,15 @@ const server = http.createServer((req, res) => {
       body: JSON.parse(body || "{}"),
     });
     res.setHeader("Content-Type", "application/json");
+    if (req.url.startsWith("/api/workflows/runtime/ai/")) {
+      res.statusCode = 403;
+      res.end(
+        JSON.stringify({
+          error: "MCP OAuth tokens are restricted to the /api/mcp endpoint",
+        }),
+      );
+      return;
+    }
     res.end(JSON.stringify({ rows: [{ one: 1 }], rowCount: 1 }));
   });
 });
@@ -217,4 +238,31 @@ test("mako workflow run: real lib/mako calls with the key and the workflow's nam
     "*\n",
   );
   assert.ok(logged.at(-1).startsWith("COMPLETED."));
+});
+
+test("a model call names the workflow, and Mako's refusal reads as Mako wrote it", async () => {
+  const cwd = process.cwd();
+  process.chdir(repo);
+  process.env.MAKO_API_KEY = "test-key";
+  const logged = [];
+  try {
+    const code = await main(["workflow", "run", "model", "--api-url", apiUrl], {
+      log: l => logged.push(l),
+    });
+    assert.equal(code, 1);
+  } finally {
+    process.chdir(cwd);
+    delete process.env.MAKO_API_KEY;
+  }
+  const call = seen.find(
+    s => s.path === "/api/workflows/runtime/ai/language-model",
+  );
+  assert.equal(call.headers["x-mako-workflow"], "model");
+  const result = JSON.parse(
+    fs.readFileSync(path.join(repo, ".mako", "runs", "model.json"), "utf8"),
+  );
+  assert.match(
+    result.tasks[0].error,
+    /Mako refused the model call \(403\): MCP OAuth tokens are restricted to the \/api\/mcp endpoint/,
+  );
 });

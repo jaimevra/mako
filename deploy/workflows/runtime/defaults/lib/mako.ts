@@ -36,10 +36,37 @@ export async function agent(
   return body;
 }
 
+/**
+ * The gateway's requests to Mako: they name the workflow, as every call from
+ * workflow code does, and a refusal by Mako (a key it does not accept) reads
+ * as Mako wrote it, not as a malformed gateway error.
+ */
+const modelFetch: typeof fetch = async (input, init) => {
+  const headers = new Headers(init?.headers);
+  const workflow = workflowName();
+  if (workflow) headers.set("X-Mako-Workflow", workflow);
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401 || res.status === 403) {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as {
+      error?: unknown;
+    } | null;
+    if (typeof body?.error === "string") {
+      throw new Error(
+        `Mako refused the model call (${res.status}): ${body.error}`,
+      );
+    }
+  }
+  return res;
+};
+
 /** A model, e.g. `model("anthropic/claude-sonnet-4.5")`. Counted in the workspace's usage. */
 export const model = createGateway({
   baseURL: `${url}/api/workflows/runtime/ai`,
   apiKey: key,
+  fetch: modelFetch,
 });
 
 /**
