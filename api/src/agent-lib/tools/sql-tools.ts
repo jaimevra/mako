@@ -4,7 +4,8 @@
  */
 
 import {
-  actingPrincipal,
+  actingPrincipals,
+  allListed,
   notAWriterRefusal,
   recordWrite,
 } from "../../access/connection-writes";
@@ -922,10 +923,7 @@ export function effectiveSqlQueryAccess(
   // Being on the connection's writers list is the same opt-in, for that
   // principal only; where it may write is checked when the query runs
   // (access/connection-writes.ts).
-  const acting = actingPrincipal();
-  return acting && connection.writers?.some(w => w.principal === acting)
-    ? "write"
-    : "read";
+  return allListed(connection.writers, actingPrincipals()) ? "write" : "read";
 }
 
 /** A SQL query cleared to run: its connection, and how to run it there. */
@@ -971,7 +969,10 @@ export async function resolveSqlQueryTarget(
       // The key may write, the connection's writers list decides who: say
       // who Mako saw, and record the refusal so the Access tab offers Allow.
       // Agents relay this verbatim, so the error is the docs.
-      const principal = actingPrincipal();
+      const principals = actingPrincipals();
+      const principal =
+        principals.find(p => !allListed(database.writers, [p])) ??
+        principals[0];
       if (principal) recordWrite(database, principal, query, false);
       throw new Error(notAWriterRefusal(principal, database.name));
     }

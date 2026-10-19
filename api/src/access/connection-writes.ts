@@ -168,17 +168,33 @@ export const WORKFLOW_WORKER = "worker:workflows";
 
 /**
  * Who is acting: given explicitly (a scheduled console runs as its owner),
- * or the workflow or person of the request being served. Nobody for work
- * no request started: the system's, never checked.
+ * or the workflow or person of the request being served. Nobody (empty) for
+ * work no request started: the system's, never checked. A person testing a
+ * workflow acts as both, and every check needs both: naming a workflow can
+ * only narrow what a person may do, never widen it.
  */
-export function actingPrincipal(explicit?: string): string | undefined {
-  if (explicit) return explicit;
+export function actingPrincipals(explicit?: string): string[] {
+  if (explicit) return [explicit];
   const context = getRequestContext();
-  if (context?.workflow) return `workflow:${context.workflow}`;
+  if (context?.workflow) return [`workflow:${context.workflow}`];
   // The worker's key naming no deployed workflow: never on a writers list.
-  if (context?.workflowWorker) return WORKFLOW_WORKER;
-  if (context?.userId) return `user:${context.userId}`;
-  return undefined;
+  if (context?.workflowWorker) return [WORKFLOW_WORKER];
+  if (!context?.userId) return [];
+  const person = `user:${context.userId}`;
+  return context.testedWorkflow
+    ? [person, `workflow:${context.testedWorkflow}`]
+    : [person];
+}
+
+/** Whether each of `principals` is on the writers list at all. */
+export function allListed(
+  writers: { principal: string }[] | undefined,
+  principals: string[],
+): boolean {
+  return (
+    principals.length > 0 &&
+    principals.every(p => writers?.some(w => w.principal === p))
+  );
 }
 
 export type WriteDecision =
@@ -313,9 +329,9 @@ export async function checkConnectionWrite(
 ): Promise<WriteCheck> {
   if (options.readOnly || options.writeChecked) return {};
   if (!database._id || !database.workspaceId) return {}; // a connection being tested
-  const principal = actingPrincipal(options.actor);
+  const principals = actingPrincipals(options.actor);
   const write = isWrite(database.type, query);
-  if (!principal) {
+  if (principals.length === 0) {
     // A request that identifies no one writes nothing, unless the code
     // serving it marked the work as Mako's own (asSystem).
     if (!write || isSystemWork()) return {};
@@ -329,14 +345,18 @@ export async function checkConnectionWrite(
   }
   if (!write) {
     if (!READ_ONLY_TRANSACTION.has(database.type)) return {};
-    if (covers(database.writers, principal, null)) return {};
+    if (principals.every(p => covers(database.writers, p, null))) return {};
     return { readOnlyTransaction: true };
   }
 
-  const decision = decideWrite(database.writers, principal, query);
-  recordWrite(database, principal, query, decision.allowed, decision.target);
-  if (decision.allowed) return {};
-  return { refused: refusal(decision, database.name) };
+  // Each principal decides; the first that may not write is the answer.
+  let refused: string | undefined;
+  for (const principal of principals) {
+    const decision = decideWrite(database.writers, principal, query);
+    recordWrite(database, principal, query, decision.allowed, decision.target);
+    refused ??= decision.allowed ? undefined : refusal(decision, database.name);
+  }
+  return refused ? { refused } : {};
 }
 
 /**
