@@ -29,7 +29,7 @@ const TRANSCRIPTS_ENTITY = "recording_transcripts";
 // Every recording on a page triggers one download per language, so transcript
 // pages are kept small: each page is one batch (and one heartbeat) of roughly
 // this many downloads.
-const TRANSCRIPT_PAGE_LIMIT = 25;
+const TRANSCRIPT_PAGE_LIMIT = 50;
 // A poll re-lists recordings created this long before `since`, so transcripts
 // that finish processing (or translations added) after the recording first
 // appeared are still picked up, and failed downloads are retried.

@@ -327,7 +327,7 @@ async function testTranscriptsDownloadedWithinTheChunk() {
   });
 
   assert.equal(listParams.length, 1);
-  assert.equal(listParams[0].limit, 25);
+  assert.equal(listParams[0].limit, 50);
   assert.equal(listParams[0].returnAiFields, undefined);
   assert.equal(listParams[0].createdAfter, "2026-10-08T00:00:00.000Z");
   assert.equal(state.hasMore, false);
