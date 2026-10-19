@@ -9,6 +9,7 @@ import { connector } from "./connector.js";
 import { dbt } from "./dbt.js";
 import { sync } from "./sync.js";
 import { whoami } from "./whoami.js";
+import { workflow } from "./workflow.js";
 
 const HELP = `mako — Mako from your terminal
 
@@ -26,6 +27,9 @@ const HELP = `mako — Mako from your terminal
                                                   edits included); default: your personal environment
   mako sync ls | status <sync> | backfill <sync> | set <sync> [--poll <cron|off>] [--webhook on|off] [--resync <cron|off>]
                                                   the workspace's syncs: list, per-entity status, backfill now, triggers
+  mako workflow run <name> [--input '<json>'] [--task <step>] [--out <file>]
+                                                  test-run workflows/<name> here against real Mako (no engine);
+                                                  --task reruns one step from the last run's saved outputs
 
 Run inside a workspace checkout; the host comes from --api-url, MAKO_API_URL,
 the repo's .env, or defaults to https://app.mako.ai. An API key in .env
@@ -64,6 +68,8 @@ export async function main(argv, io = { log: console.log }) {
       return dbt(ctx, positional, flags, io);
     case "sync":
       return sync(ctx, positional, flags, io);
+    case "workflow":
+      return workflow(ctx, positional, flags, io);
     default:
       io.log(`unknown command "${command}"\n\n${HELP}`);
       return 2;

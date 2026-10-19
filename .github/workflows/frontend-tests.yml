@@ -53,3 +53,29 @@ jobs:
 
       - name: Frontend tests
         run: pnpm --filter app run test:unit
+
+  # The CLI (`mako login`, `mako dev`, `mako workflow run`, …) is published to
+  # npm from packages/cli; its node:test suite needs only the install too.
+  cli:
+    name: CLI tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: CLI tests
+        run: pnpm --filter @makoai/cli test
