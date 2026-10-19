@@ -56,6 +56,7 @@ import {
 } from "@mako/schemas";
 import { useWorkspace } from "../contexts/workspace-context";
 import { useFlowStore } from "../store/flowStore";
+import { SyncStatusLine } from "./SyncStatusLine";
 import { useSchemaStore, type TreeNode } from "../store/schemaStore";
 import {
   useConnectorCatalogStore,
@@ -217,7 +218,10 @@ export function SyncFlowForm({
     fetchConnectors,
     provisionFlowWebhook,
     resyncCdcFlow,
+    backfillFlow,
   } = useFlowStore();
+  const [backfillStarting, setBackfillStarting] = useState(false);
+  const [backfillNotice, setBackfillNotice] = useState<string | null>(null);
 
   const connectorTypes = useConnectorCatalogStore(state => state.types);
   const fetchCatalog = useConnectorCatalogStore(state => state.fetchCatalog);
@@ -389,6 +393,8 @@ export function SyncFlowForm({
     !isNewMode && Boolean(currentFlowId) && Boolean(provisioning?.supported);
   const provisionProviderLabel = provisioning?.providerLabel ?? "Provider";
   // Stored by the server when provisioning on save was refused.
+  // The saved flow, for the status line (what runs now, not the form's edits).
+  const existingFlowForStatus = flows.find(flow => flow._id === currentFlowId);
   const provisionErrorMessage = (
     flows.find(flow => flow._id === currentFlowId)?.webhookConfig as
       { provisionError?: { message?: string } | null } | undefined
@@ -539,7 +545,10 @@ export function SyncFlowForm({
   // full reconcile" both mean "run a complete backfill on this cadence" —
   // the same underlying operation exposed as two controls. Collapse to the
   // single reconcile cron below and hide the redundant Scheduled trigger.
-  const showScheduleTrigger = !(isCdcCapableDest && watchSyncMode === "full");
+  // Poll is always shown and never switched off behind the user's back: a
+  // Full Refresh sync whose only trigger is its poll (Sway, WordPress…) must
+  // keep it. Redundancy with the full resync is fine.
+  const showScheduleTrigger = true;
   const reconcileDescription =
     watchSyncMode === "full" && watchWriteMode === "overwrite"
       ? "Refreshes an exact snapshot each run — additions, edits, and deletions at the source are all reflected."
@@ -587,19 +596,6 @@ export function SyncFlowForm({
     connectorSupportsWebhook,
     setValue,
   ]);
-
-  // The Scheduled trigger is hidden (see showScheduleTrigger) once Full
-  // Refresh + a CDC destination make it redundant with the reconcile cron —
-  // disable it too so it doesn't keep firing invisibly in the background.
-  useEffect(() => {
-    if (
-      !showScheduleTrigger &&
-      watchScheduleEnabled &&
-      formTouchedRef.current
-    ) {
-      setValue("scheduleEnabled", false);
-    }
-  }, [showScheduleTrigger, watchScheduleEnabled, setValue]);
 
   // Incremental requires at least one selected entity to do better than a
   // full re-pull; fall back to Full Refresh | Deduped when the connector (or
@@ -2310,6 +2306,79 @@ export function SyncFlowForm({
               {renderStepHeader(4)}
               <AccordionDetails>
                 <Stack spacing={2}>
+                  {/* How the sync is doing, and a full read now. */}
+                  {!isNewMode && currentWorkspace?.id && currentFlowId && (
+                    <Stack
+                      direction="row"
+                      spacing={2}
+                      sx={{
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <SyncStatusLine
+                        workspaceId={currentWorkspace.id}
+                        flowId={currentFlowId}
+                        poll={Boolean(
+                          existingFlowForStatus?.schedule?.enabled &&
+                          existingFlowForStatus?.schedule?.cron,
+                        )}
+                        webhook={Boolean(
+                          existingFlowForStatus?.webhookConfig?.enabled &&
+                          existingFlowForStatus?.webhookConfig?.endpoint,
+                        )}
+                        resync={Boolean(
+                          existingFlowForStatus?.backfillSchedule?.enabled,
+                        )}
+                        lastPollAt={existingFlowForStatus?.lastRunAt}
+                        lastResyncAt={
+                          existingFlowForStatus?.backfillSchedule?.lastRunAt
+                        }
+                      />
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={backfillStarting}
+                        onClick={async () => {
+                          setBackfillStarting(true);
+                          setBackfillNotice(null);
+                          try {
+                            await backfillFlow(
+                              currentWorkspace.id,
+                              currentFlowId,
+                            );
+                            // backfillFlow reports failures in the store,
+                            // it does not throw.
+                            const failed =
+                              useFlowStore.getState().error[
+                                currentWorkspace.id
+                              ];
+                            setBackfillNotice(
+                              failed
+                                ? `Backfill not started: ${failed}`
+                                : "Backfill started: every record is read again.",
+                            );
+                          } catch (e) {
+                            setBackfillNotice(
+                              e instanceof Error ? e.message : String(e),
+                            );
+                          } finally {
+                            setBackfillStarting(false);
+                          }
+                        }}
+                      >
+                        {backfillStarting ? "Starting…" : "Backfill now"}
+                      </Button>
+                    </Stack>
+                  )}
+                  {backfillNotice && (
+                    <Alert
+                      severity="info"
+                      onClose={() => setBackfillNotice(null)}
+                    >
+                      {backfillNotice}
+                    </Alert>
+                  )}
                   {!watchScheduleEnabled &&
                     !watchWebhookEnabled &&
                     !(isCdcCapableDest && watchBackfillScheduleEnabled) && (
@@ -2319,6 +2388,19 @@ export function SyncFlowForm({
                       </Alert>
                     )}
 
+                  {/* Live updates: polling and webhooks. Polling runs
+                      whenever it is on; webhooks only add speed on top. */}
+                  <Box>
+                    <Typography variant="subtitle1">Live updates</Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.secondary" }}
+                    >
+                      Polling keeps running when webhooks are on: webhooks only
+                      make changes arrive sooner, and the full resync repairs
+                      whatever both miss.
+                    </Typography>
+                  </Box>
                   {/* Scheduled trigger. Hidden for Full Refresh on CDC
                       destinations: "poll on a cron" and "periodic full
                       reconcile" are the same operation there (a full
@@ -2348,7 +2430,7 @@ export function SyncFlowForm({
                             label={
                               <Box>
                                 <Typography variant="subtitle2">
-                                  Scheduled
+                                  Poll
                                 </Typography>
                                 <Typography
                                   variant="caption"
@@ -2356,7 +2438,8 @@ export function SyncFlowForm({
                                     color: "text.secondary",
                                   }}
                                 >
-                                  Poll the source on a cron cadence.
+                                  Read changes from the source on a cron
+                                  cadence.
                                 </Typography>
                               </Box>
                             }
@@ -2469,7 +2552,7 @@ export function SyncFlowForm({
                             label={
                               <Box>
                                 <Typography variant="subtitle2">
-                                  Webhook
+                                  Webhooks
                                 </Typography>
                                 <Typography
                                   variant="caption"
@@ -2477,7 +2560,8 @@ export function SyncFlowForm({
                                     color: "text.secondary",
                                   }}
                                 >
-                                  Receive pushed changes in real time
+                                  Receive changes as they happen, on top of
+                                  polling
                                   {connectorSupportsWebhook
                                     ? "."
                                     : " (unavailable for this connector)."}
@@ -2629,8 +2713,8 @@ export function SyncFlowForm({
                               <Box>
                                 <Typography variant="subtitle2">
                                   {showScheduleTrigger
-                                    ? "Periodic full reconcile"
-                                    : "Schedule (periodic full reconcile)"}
+                                    ? "Full resync"
+                                    : "Schedule (full resync)"}
                                   {suggestReconcile ? " (recommended)" : ""}
                                 </Typography>
                                 <Typography

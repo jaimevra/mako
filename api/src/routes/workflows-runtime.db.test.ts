@@ -253,6 +253,76 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 100));
       assert.equal(await LlmUsage.countDocuments({ workspaceId: id }), 1);
 
+      // A language model goes to the gateway path of the spec version the
+      // client states. `@ai-sdk/gateway` 3 (ai@6, the runtime's) passes the
+      // body through, and only `/v3/ai` answers in the per-side usage shape
+      // ai@6 reads; `/v1/ai` answers with flat numbers, read as 0 tokens.
+      // The reply is the gateway's real `/v3/ai` answer for gpt-4o-mini.
+      gatewayReply = () =>
+        new Response(
+          JSON.stringify({
+            content: [{ type: "text", text: "Hi" }],
+            finishReason: "stop",
+            usage: {
+              inputTokens: {
+                total: 13,
+                noCache: 13,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 3, text: 3, reasoning: 0 },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      const generate = (specificationVersion?: string) =>
+        app.request("/api/workflows/runtime/ai/language-model", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${WORKER_KEY}`,
+            "content-type": "application/json",
+            "ai-language-model-id": "openai/gpt-4o-mini",
+            "ai-language-model-streaming": "false",
+            ...(specificationVersion
+              ? {
+                  "ai-language-model-specification-version":
+                    specificationVersion,
+                }
+              : {}),
+          },
+          body: JSON.stringify({ prompt: [] }),
+        });
+      const generated = await generate("3");
+      assert.equal(generated.status, 200);
+      assert.equal(
+        gatewayCalls.at(-1)?.url,
+        "https://ai-gateway.vercel.sh/v3/ai/language-model",
+      );
+      const generatedBody = (await generated.json()) as {
+        usage: { inputTokens: { total: number } };
+      };
+      assert.equal(generatedBody.usage.inputTokens.total, 13);
+      assert.equal(await usageRows(2), 2);
+      const lmRow = await LlmUsage.findOne({
+        workspaceId: id,
+        modelId: "openai/gpt-4o-mini",
+      }).lean();
+      assert.equal(lmRow?.inputTokens, 13);
+      assert.equal(lmRow?.outputTokens, 3);
+      // A client stating ai@7's spec goes to /v4/ai; one stating none keeps
+      // the configured base.
+      await generate("4");
+      assert.equal(
+        gatewayCalls.at(-1)?.url,
+        "https://ai-gateway.vercel.sh/v4/ai/language-model",
+      );
+      await generate();
+      assert.equal(
+        gatewayCalls.at(-1)?.url,
+        "https://ai-gateway.vercel.sh/v1/ai/language-model",
+      );
+      await usageRows(4);
+
       // Over its plan's limit, the call is refused before the gateway.
       process.env.BILLING_ENABLED = "true";
       await Workspace.updateOne(

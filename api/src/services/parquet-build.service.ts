@@ -79,6 +79,8 @@ export interface BuildQueryParquetFileInput {
   databaseName?: string;
   /** Capped at PARQUET_ROW_LIMIT-style limits by the caller; default 500k. */
   rowLimit?: number;
+  /** See StreamingParquetOptions.onRowLimit; default `truncate`. */
+  onRowLimit?: "truncate" | "fail";
   /** Local temp-file name base, e.g. `app-{appId}-{bindingId}`. */
   filenameBase: string;
   /**
@@ -155,6 +157,7 @@ export async function buildQueryParquetFile(
   return await buildParquetFromBatches({
     filenameBase,
     rowLimit: input.rowLimit ?? PARQUET_ROW_LIMIT,
+    onRowLimit: input.onRowLimit,
     fields,
     onBatchInserted,
     streamBatches: async insertBatch => {

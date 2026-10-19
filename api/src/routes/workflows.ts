@@ -20,6 +20,7 @@ import { repoDirFor, resolveCommit } from "../apps/repository.service";
 import { listFiles, readFile } from "../apps/worktree.service";
 import {
   hasWorkspaceApiKeyScope,
+  queryAccessFromScopes,
   resolveWorkspaceApiKeyScopes,
 } from "../auth/api-key-scopes";
 import { unifiedAuthMiddleware } from "../auth/unified-auth.middleware";
@@ -40,6 +41,12 @@ import {
   requireTenant,
   startRun,
 } from "../workflows/hatchet";
+import {
+  WORKFLOW_QUERY_MAX_ROWS,
+  WORKFLOW_QUERY_MAX_TIMEOUT_MS,
+  WorkflowQueryError,
+  runWorkflowQuery,
+} from "../workflows/query";
 import { WORKFLOWS_ADMIN_ONLY, mayChangeWorkflows } from "../workflows/policy";
 import { runSandboxToEnd, startSandboxRun } from "../workflows/sandbox";
 import { readStatus, waitForRun } from "../workflows/status";
@@ -374,6 +381,23 @@ const DECISION_GATEWAY_BASE_URL = GATEWAY_BASE_URL.replace(
 );
 const GATEWAY_PROTOCOL_VERSION = "0.0.1";
 
+/**
+ * Where a language-model call goes. The gateway answers in the shape of the
+ * spec version its path names: `/v1/ai` returns flat token counts
+ * (`inputTokens: 13`), `/v3/ai` the per-side objects (`inputTokens:
+ * { total: 13 }`) that ai@6 reads. `@ai-sdk/gateway` passes the gateway's
+ * result through untouched, so a v3 client sent to `/v1/ai` read every
+ * call's usage as 0 tokens. Follow the version the client states; a client
+ * that states none (a plain fetch) keeps the configured base.
+ */
+export function languageModelGatewayBase(
+  specificationVersion: string | undefined,
+): string {
+  const version = Number(specificationVersion);
+  if (!Number.isInteger(version) || version < 3) return GATEWAY_BASE_URL;
+  return GATEWAY_BASE_URL.replace(/\/v\d+\/ai$/, `/v${version}/ai`);
+}
+
 type Worker = { workspaceId: string; userId: string };
 
 // Mako's own auth resolves the key; a session or a key without the worker's
@@ -492,7 +516,11 @@ async function forwardToGateway(
     // `@ai-sdk/gateway` sends it; a plain fetch from a step does not.
     headers.set("ai-gateway-protocol-version", GATEWAY_PROTOCOL_VERSION);
   }
-  const base = decision ? DECISION_GATEWAY_BASE_URL : GATEWAY_BASE_URL;
+  const base = decision
+    ? DECISION_GATEWAY_BASE_URL
+    : languageModelGatewayBase(
+        c.req.header("ai-language-model-specification-version"),
+      );
   const res = await fetch(`${base}/${kind}`, {
     method: "POST",
     headers,
@@ -591,6 +619,80 @@ workflowRuntimeRoutes.post(
         maxSteps: typeof body.maxSteps === "number" ? body.maxSteps : undefined,
       }),
     );
+  }),
+);
+
+// SQL for a step (lib/mako `query()` / `execute()`): the statement runs
+// once and its rows come back as the driver returns them, up to a cap, after
+// the same checks as the agent's sql_execute_query (workflows/query.ts). A
+// refused, failed, capped or timed-out query is a 400 with its reason.
+workflowRuntimeRoutes.post(
+  "/query",
+  asWorker(async (c, worker) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      connectionId?: unknown;
+      query?: unknown;
+      database?: unknown;
+      maxRows?: unknown;
+      timeoutMs?: unknown;
+    } | null;
+    if (typeof body?.connectionId !== "string" || !body.connectionId) {
+      return c.json({ error: "A connectionId is required" }, 400);
+    }
+    if (typeof body.query !== "string" || !body.query.trim()) {
+      return c.json({ error: "A query is required" }, 400);
+    }
+    const whole = (value: unknown, max: number) =>
+      value === undefined ||
+      (typeof value === "number" &&
+        Number.isInteger(value) &&
+        value >= 1 &&
+        value <= max);
+    if (!whole(body.maxRows, WORKFLOW_QUERY_MAX_ROWS)) {
+      return c.json(
+        {
+          error: `maxRows must be a whole number from 1 to ${WORKFLOW_QUERY_MAX_ROWS}`,
+        },
+        400,
+      );
+    }
+    if (!whole(body.timeoutMs, WORKFLOW_QUERY_MAX_TIMEOUT_MS)) {
+      return c.json(
+        {
+          error: `timeoutMs must be a whole number of milliseconds up to ${WORKFLOW_QUERY_MAX_TIMEOUT_MS}`,
+        },
+        400,
+      );
+    }
+    const key = c.get("apiKey") as { scopes?: string[] } | undefined;
+    try {
+      return c.json(
+        await runWorkflowQuery(
+          {
+            ...worker,
+            queryAccess: queryAccessFromScopes(
+              resolveWorkspaceApiKeyScopes(key?.scopes),
+            ),
+          },
+          {
+            connectionId: body.connectionId,
+            query: body.query,
+            database:
+              typeof body.database === "string" && body.database
+                ? body.database
+                : undefined,
+            maxRows: body.maxRows as number | undefined,
+            timeoutMs: body.timeoutMs as number | undefined,
+          },
+          c.req.raw.signal,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof WorkflowQueryError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
   }),
 );
 

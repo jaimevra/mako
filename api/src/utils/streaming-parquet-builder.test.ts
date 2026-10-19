@@ -5,6 +5,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import {
   inferDuckDBType,
   buildParquetFromBatches,
+  ParquetRowLimitError,
   type FieldMeta,
 } from "./streaming-parquet-builder";
 
@@ -339,6 +340,113 @@ async function testEmptyResultKeepsProbedSchema() {
 }
 
 // ---------------------------------------------------------------------------
+// Row limit: truncate (declared cap) vs fail (artifact read as the whole)
+// ---------------------------------------------------------------------------
+
+const ROW_FIELDS: FieldMeta[] = [{ name: "id", type: "INTEGER" }];
+const idRows = (from: number, n: number) =>
+  Array.from({ length: n }, (_, i) => ({ id: from + i }));
+
+/** Stream `batches` batches of `size` rows each into a builder. */
+function streamOf(batches: number, size: number) {
+  return async (
+    insertBatch: (rows: Record<string, unknown>[]) => Promise<void>,
+  ) => {
+    for (let b = 0; b < batches; b++) await insertBatch(idRows(b * size, size));
+  };
+}
+
+async function testRowLimitTruncatesByDefaultAndSaysSo() {
+  console.log(
+    "  buildParquetFromBatches: past rowLimit, the default keeps the first rows and reports truncated",
+  );
+  const result = await buildParquetFromBatches({
+    filenameBase: "test-row-limit-truncate",
+    rowLimit: 250,
+    fields: ROW_FIELDS,
+    streamBatches: streamOf(3, 100),
+  });
+  try {
+    assert.equal(result.rowCount, 250);
+    assert.equal(result.truncated, true);
+  } finally {
+    await fsPromises.rm(result.filePath, { force: true });
+  }
+}
+
+async function testRowLimitFailBuildsNothing() {
+  console.log(
+    "  buildParquetFromBatches: onRowLimit fail throws ParquetRowLimitError and stops the stream",
+  );
+  let batchesOffered = 0;
+  await assert.rejects(
+    buildParquetFromBatches({
+      filenameBase: "test-row-limit-fail",
+      rowLimit: 250,
+      onRowLimit: "fail",
+      fields: ROW_FIELDS,
+      streamBatches: async insertBatch => {
+        for (let b = 0; b < 5; b++) {
+          batchesOffered++;
+          await insertBatch(idRows(b * 100, 100));
+        }
+      },
+    }),
+    (err: unknown) => {
+      assert.ok(err instanceof ParquetRowLimitError);
+      assert.equal(err.rowLimit, 250);
+      assert.match(err.message, /more than 250 rows/);
+      return true;
+    },
+  );
+  // The third batch crosses the limit; the throw ends the stream there.
+  assert.equal(batchesOffered, 3);
+}
+
+async function testRowLimitFailEvenWhenTheDriverSwallowsTheThrow() {
+  console.log(
+    "  buildParquetFromBatches: a stream that catches the limit error still fails the build",
+  );
+  await assert.rejects(
+    buildParquetFromBatches({
+      filenameBase: "test-row-limit-swallowed",
+      rowLimit: 150,
+      onRowLimit: "fail",
+      fields: ROW_FIELDS,
+      streamBatches: async insertBatch => {
+        try {
+          await streamOf(2, 100)(insertBatch);
+        } catch {
+          /* a driver that reports the failure some other way, or not at all */
+        }
+      },
+    }),
+    ParquetRowLimitError,
+  );
+}
+
+async function testRowLimitExactlyAtLimitIsWhole() {
+  console.log(
+    "  buildParquetFromBatches: exactly rowLimit rows is the whole result, not a cut",
+  );
+  for (const onRowLimit of ["truncate", "fail"] as const) {
+    const result = await buildParquetFromBatches({
+      filenameBase: `test-row-limit-exact-${onRowLimit}`,
+      rowLimit: 200,
+      onRowLimit,
+      fields: ROW_FIELDS,
+      streamBatches: streamOf(2, 100),
+    });
+    try {
+      assert.equal(result.rowCount, 200);
+      assert.equal(result.truncated, false);
+    } finally {
+      await fsPromises.rm(result.filePath, { force: true });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -359,6 +467,14 @@ async function main() {
   await testBuildParquetStripsNulBytesInVarcharColumns();
   console.log("  PASSED");
   await testEmptyResultKeepsProbedSchema();
+  console.log("  PASSED");
+  await testRowLimitTruncatesByDefaultAndSaysSo();
+  console.log("  PASSED");
+  await testRowLimitFailBuildsNothing();
+  console.log("  PASSED");
+  await testRowLimitFailEvenWhenTheDriverSwallowsTheThrow();
+  console.log("  PASSED");
+  await testRowLimitExactlyAtLimitIsWhole();
   console.log("  PASSED\n");
 
   console.log("All tests passed.");
