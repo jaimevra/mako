@@ -6,8 +6,8 @@
  * provides a full working vegaLiteSpec, an example SQL pattern, and notes
  * about constraints and gotchas.
  *
- * Used by both the dashboard agent (via agent-tools.ts) and the console
- * agent (via Chat.tsx onToolCall).
+ * Executed client-side for the console chart agent (console-agent-tools.ts);
+ * the tool schema lives in @mako/agent-tools (chart-tools.ts).
  */
 
 export interface ChartTemplate {
@@ -224,46 +224,6 @@ const templates: ChartTemplate[] = [
       "innerRadius: 50 creates the donut hole. Set to 0 for a full pie chart.",
       "Keep categories under 8 for readability. Aggregate smaller values into 'Other' in SQL.",
       "For percentage labels, add a calculate transform: { calculate: 'datum.value / sum(datum.value)', as: 'pct' } and use text encoding.",
-      "In dashboard cross-filter mode, clicking a slice filters other widgets by that category.",
-    ],
-  },
-  {
-    id: "kpi-sparkline",
-    name: "KPI with Sparkline",
-    description:
-      "Two-layer chart combining a large KPI text value with a small trend sparkline. Use for dashboard headline metrics.",
-    sqlPattern: [
-      "-- Two queries needed:",
-      "-- KPI widget: SELECT {{agg}}({{value_col}}) AS value FROM {{table}}",
-      "-- Sparkline: SELECT {{date_col}} AS period, {{agg}}({{value_col}}) AS value FROM {{table}} GROUP BY 1 ORDER BY 1",
-    ].join("\n"),
-    vegaLiteSpec: {
-      mark: {
-        type: "area",
-        line: true,
-        opacity: 0.15,
-        color: "#3498db",
-        tooltip: true,
-      },
-      encoding: {
-        x: { field: "period", type: "temporal", axis: null },
-        y: {
-          field: "value",
-          type: "quantitative",
-          axis: null,
-          scale: { zero: false },
-        },
-        tooltip: [
-          { field: "period", type: "temporal" },
-          { field: "value", type: "quantitative" },
-        ],
-      },
-    },
-    notes: [
-      "This template is for the sparkline chart widget. Pair it with a separate KPI widget (type: 'kpi') for the headline number.",
-      "axis: null hides both axes for a clean sparkline appearance.",
-      "scale: { zero: false } on y ensures the sparkline fills the vertical space.",
-      "Use a small layout (w: 3, h: 2) and place it next to the KPI card.",
     ],
   },
 ];
