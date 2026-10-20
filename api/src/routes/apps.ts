@@ -97,7 +97,9 @@ import {
   findAppInSnapshot,
   loadAppsIndex,
   resolveAppRef,
+  resolveIndexedAppRef,
 } from "../apps/app-index.service";
+import { getThumbnailVariant } from "../apps/thumbnail-variants.service";
 import {
   acceptUsageBeat,
   classifyUserAgent,
@@ -277,6 +279,7 @@ for (const [route, label] of [
   ["/usage", "apps.usage"],
   ["/recent", "apps.recent"],
   ["/search", "apps.search"],
+  ["/:id/thumbnail", "apps.thumbnail"],
 ] as const) {
   appsRoutes.on("GET", route, serverTiming(label));
 }
@@ -4213,9 +4216,14 @@ appsRoutes.openapi(
       const loaded = await loadProject(c, { write: false });
       if ("errorResponse" in loaded) return loaded.errorResponse;
       const workspaceId = loaded.project.workspaceId.toString();
-      const row = await resolveAppRef(
-        workspaceId,
-        loaded.project._id.toString(),
+      const appId = loaded.project._id.toString();
+      // The persisted index first: a fresh instance must not clone the
+      // mirror just to learn a blob oid the store already has a variant of.
+      const row = await timed(
+        "app.lookup",
+        async () =>
+          (await resolveIndexedAppRef(workspaceId, appId)) ??
+          (await resolveAppRef(workspaceId, appId)),
       );
       const thumbnail = row?.thumbnail;
       const { v, w } = c.req.valid("query");
@@ -4229,6 +4237,11 @@ appsRoutes.openapi(
               const repoDir = await boundRepoDirIfExists(workspaceId);
               return repoDir ? readThumbnailBlob(repoDir, thumbnail) : null;
             },
+            variant: width =>
+              getThumbnailVariant(workspaceId, thumbnail, {
+                kind: "width",
+                width,
+              }),
           })
         : null;
       if (!res) {

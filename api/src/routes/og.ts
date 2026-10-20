@@ -12,6 +12,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { OPEN_RESPONSES, createRouter } from "../openapi/core";
 import { loggers } from "../logging";
+import { serverTiming, timed } from "../middleware/server-timing";
 import {
   previewableWorkspaceApp,
   rasterThumbnail,
@@ -20,6 +21,10 @@ import {
 const logger = loggers.api("og");
 
 export const ogRoutes = createRouter();
+
+// Step timings (Server-Timing + a log line when slow): crawlers give up at
+// ~5 s, so a slow preview image must be visible from its response.
+ogRoutes.use("/app-image/*", serverTiming("og.appImage"));
 
 const AppImageParams = z.object({
   workspaceId: z
@@ -47,9 +52,8 @@ ogRoutes.openapi(
   async c => {
     try {
       const { workspaceId, appId } = c.req.valid("param");
-      const row = await previewableWorkspaceApp(
-        workspaceId.toLowerCase(),
-        appId.toLowerCase(),
+      const row = await timed("app.lookup", () =>
+        previewableWorkspaceApp(workspaceId.toLowerCase(), appId.toLowerCase()),
       );
       // The ref must resolve to THIS id: a slug or path is not accepted here.
       const image =
