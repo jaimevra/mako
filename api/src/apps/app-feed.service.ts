@@ -16,7 +16,13 @@ import { Types } from "mongoose";
 import { AppFeedSnapshot } from "../database/workspace-schema";
 import { User } from "../database/schema";
 import { loggers } from "../logging";
-import { listDiscoveryApps, type DiscoveryApp } from "./app-discovery.service";
+import { timed } from "../middleware/server-timing";
+import type { DiscoveryApp } from "./app-discovery.service";
+import {
+  feedSignalsFrom,
+  listHomeDiscoveryApps,
+  loadHomeBase,
+} from "./app-home-base.service";
 import {
   buildFeedOrder,
   coUsageScores,
@@ -108,8 +114,8 @@ export async function loadFeedSignals(
       new Date(now.getTime() - (DEFAULT_USAGE_WINDOW_DAYS - 1) * DAY_MS),
     );
     const [rollups, authors] = await Promise.all([
-      loadUsageRollups(workspaceId, since),
-      getAppAuthors(workspaceId),
+      timed("feed.rollups", () => loadUsageRollups(workspaceId, since)),
+      timed("feed.authors", () => getAppAuthors(workspaceId)),
     ]);
     // Popularity is the Popular shelf's score exactly: the 28-day window.
     const windowed = rollups
@@ -141,14 +147,33 @@ export async function loadFeedSignals(
   }
 }
 
+/**
+ * The home's signals, from the shared memo (app-home-base.service) — the
+ * same rollups the Popular shelf and /usage read, one computation for all.
+ */
+async function memoizedFeedSignals(
+  workspaceId: string,
+  viewer: FeedViewer,
+): Promise<FeedSignals> {
+  try {
+    return feedSignalsFrom(await loadHomeBase(workspaceId), viewer);
+  } catch (error) {
+    logger.warn("Feed usage signals unavailable", {
+      workspaceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return EMPTY_SIGNALS;
+  }
+}
+
 export const defaultFeedDeps: FeedDeps = {
-  listApps: listDiscoveryApps,
+  listApps: listHomeDiscoveryApps,
   loadViewer: async userId => {
     if (!userId || !Types.ObjectId.isValid(userId)) return { id: userId };
     const user = await User.findById(userId).select("email").lean();
     return { id: userId, email: user?.email ?? undefined };
   },
-  loadSignals: loadFeedSignals,
+  loadSignals: memoizedFeedSignals,
   saveSnapshot: async (snapshot, now) => {
     const doc = await AppFeedSnapshot.create({
       workspaceId: new Types.ObjectId(snapshot.workspaceId),
@@ -189,7 +214,9 @@ export async function getFeedPage(
     1,
     Math.min(options.limit ?? FEED_PAGE_DEFAULT, FEED_PAGE_MAX),
   );
-  const visible = await deps.listApps(workspaceId, userId, role);
+  const visible = await timed("feed.list", () =>
+    deps.listApps(workspaceId, userId, role),
+  );
   const byId = new Map(visible.map(a => [a.id, a]));
   const hydrate = (ids: readonly string[]) =>
     ids.flatMap(id => {
@@ -219,12 +246,13 @@ export async function getFeedPage(
     order = stored;
     offset = cursor.offset;
   } else {
-    const viewer = await deps.loadViewer(userId);
-    const signals = await deps.loadSignals(workspaceId, viewer, now);
+    const viewer = await timed("feed.viewer", () => deps.loadViewer(userId));
+    const signals = await timed("feed.signals", () =>
+      deps.loadSignals(workspaceId, viewer, now),
+    );
     order = buildFeedOrder(visible, signals, viewer, now);
-    snapshotId = await deps.saveSnapshot(
-      { workspaceId, userId: userId ?? null, ...order },
-      now,
+    snapshotId = await timed("feed.save", () =>
+      deps.saveSnapshot({ workspaceId, userId: userId ?? null, ...order }, now),
     );
     offset = 0;
   }

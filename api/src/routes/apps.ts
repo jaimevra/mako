@@ -67,7 +67,6 @@ import {
   fileVersions,
   forgetBoxCaches,
   gitPathsAction,
-  listAppFolders,
   listBranches,
   listFiles,
   mergeBranchToMain,
@@ -89,7 +88,6 @@ import {
   createAppFolder,
   deleteAppFolder,
   folderTargetFromPath,
-  listAppFolderPaths,
   moveAppFolder,
   moveProject,
   stampAppId,
@@ -103,18 +101,18 @@ import {
 import {
   acceptUsageBeat,
   classifyUserAgent,
-  getAppUsageStats,
   getRecentlyViewedApps,
   recordAppUsage,
   recordServedOpen,
-  visibleIndexedAppIds,
 } from "../apps/app-usage.service";
+import {
+  homeUsageStats,
+  listHomeDiscoveryApps,
+  visibleHomeAppIds,
+} from "../apps/app-home-base.service";
 import { appTreeRoot, parseAppRepoPath } from "../apps/app-paths";
 import { loadOwnerDirectory } from "../apps/user-handles.service";
-import {
-  listDiscoveryApps,
-  searchDiscoveryApps,
-} from "../apps/app-discovery.service";
+import { searchDiscoveryApps } from "../apps/app-discovery.service";
 import { appUsageScores } from "../apps/app-search.service";
 import { FeedCursorError, getFeedPage } from "../apps/app-feed.service";
 import {
@@ -224,6 +222,7 @@ import {
 import { getArtifactStore } from "../services/artifact-store.service";
 import { serveParquetArtifact } from "../services/artifact-delivery.service";
 import { AUTH_SECURITY, OPEN_RESPONSES, createRouter } from "../openapi/core";
+import { serverTiming, timed } from "../middleware/server-timing";
 import {
   concurrencyLimit,
   repoWorkPool,
@@ -269,6 +268,19 @@ const ProjectParam = WorkspaceParam.extend({
 // viewer page instead of a 401: the page signs people in, and its HTML
 // carries the app's link-preview tags (share-og.service). Only the app's
 // top-level page, only for browsers and crawlers; API clients still get 401.
+// Step timings (Server-Timing + a log line when slow) for the Apps home's
+// reads — registered first so the total includes auth.
+for (const [route, label] of [
+  ["/", "apps.list"],
+  ["/discovery", "apps.discovery"],
+  ["/feed", "apps.feed"],
+  ["/usage", "apps.usage"],
+  ["/recent", "apps.recent"],
+  ["/search", "apps.search"],
+] as const) {
+  appsRoutes.on("GET", route, serverTiming(label));
+}
+
 appsRoutes.use("/:id/live/*", anonymousLiveLinkToViewer);
 appsRoutes.use("/:id/live", anonymousLiveLinkToViewer);
 
@@ -293,8 +305,9 @@ appsRoutes.use("*", async (c: AuthenticatedContext, next) => {
       // A stranger from a trusted domain joins here — this is the request
       // their first click on a published app's link makes (apps.md §28).
       const member =
-        (await workspaceService.getMember(workspaceId, user.id)) ??
-        (await ensureAutoJoin(workspaceId, user));
+        (await timed("auth.member", () =>
+          workspaceService.getMember(workspaceId, user.id),
+        )) ?? (await ensureAutoJoin(workspaceId, user));
       if (!member) {
         return c.json(
           { success: false, error: "Access denied to workspace" },
@@ -327,7 +340,9 @@ async function memberRoleFor(
   userId: string | undefined,
 ): Promise<string | undefined> {
   if (!userId) return undefined;
-  const member = await workspaceService.getMember(workspaceId, userId);
+  const member = await timed("auth.role", () =>
+    workspaceService.getMember(workspaceId, userId),
+  );
   return member?.role;
 }
 
@@ -801,7 +816,9 @@ appsRoutes.openapi(
     try {
       const { workspaceId } = c.req.valid("param");
       const userId = actingUserId(c);
-      const role = await memberRoleFor(workspaceId, userId);
+      const role =
+        (c.get("memberRole") as string | undefined) ??
+        (await memberRoleFor(workspaceId, userId));
 
       // The REPO is the list. An app exists because a folder with a
       // `mako.json` exists (anywhere under apps/ or users/<handle>/apps/), so a
@@ -809,18 +826,26 @@ appsRoutes.openapi(
       // step (§13). Mongo is consulted only for what cannot live in a repo
       // the customer can clone: visibility, the deployed sha, the share
       // token — and the derived index that makes this read one query.
-      const [folders, folderPaths] = await Promise.all([
-        listAppFolders(workspaceId),
-        listAppFolderPaths(workspaceId),
-      ]);
+      // One index read for both (each used to fetch and rev-parse on its own).
+      const snapshot = await timed("list.index", () =>
+        loadAppsIndex(workspaceId),
+      );
+      const folders = snapshot.apps.map(app => ({ ...app, id: app.appId }));
+      const folderPaths = snapshot.folders;
       // Keep the repo's agent-facing template current for whoever is looking
       // at it (throttled, off the request path — see workspace-template.ts).
       repoForWorkspace(workspaceId)
         .then(repoDir => ensureWorkspaceTemplateSoon(workspaceId, repoDir))
         .catch(() => undefined);
       const [docs, verified] = await Promise.all([
-        AppProject.find({ workspaceId: new Types.ObjectId(workspaceId) }),
-        verifiedAppIds(workspaceId),
+        timed("list.projects", () =>
+          AppProject.find({ workspaceId: new Types.ObjectId(workspaceId) })
+            .select(
+              "_id access workspaceRole sharedWith owner_id createdBy publicShare publishedSha publishedAt chatEnabled",
+            )
+            .lean(),
+        ),
+        timed("list.verified", () => verifiedAppIds(workspaceId)),
       ]);
       const stateById = new Map(docs.map(d => [d._id.toString(), d]));
 
@@ -865,9 +890,9 @@ appsRoutes.openapi(
       // Folders of the two trees the caller can see: the workspace tree, and
       // their own personal tree (never anyone else's) — by the handle
       // mapping, not by what the folder is called.
-      const directory = await loadOwnerDirectory(workspaceId, {
-        forUserId: userId,
-      });
+      const directory = await timed("list.directory", () =>
+        loadOwnerDirectory(workspaceId, { forUserId: userId }),
+      );
       const handle = directory.handleOf(userId);
       const personalRoot = handle ? appTreeRoot("private", handle) : undefined;
       const visibleFolders = folderPaths.filter(p => {
@@ -1167,8 +1192,10 @@ appsRoutes.openapi(
         (c.get("memberRole") as string | undefined) ??
         (await memberRoleFor(workspaceId, userId));
       const [stats, visible] = await Promise.all([
-        getAppUsageStats(workspaceId, { days }),
-        visibleIndexedAppIds(workspaceId, userId, role),
+        timed("usage.stats", () => homeUsageStats(workspaceId, { days })),
+        timed("usage.visible", () =>
+          visibleHomeAppIds(workspaceId, userId, role),
+        ),
       ]);
       const apps = [...stats.values()].filter(s => visible.has(s.appId));
       return c.json({ success: true as const, apps }, 200);
@@ -1210,7 +1237,7 @@ appsRoutes.openapi(
         getRecentlyViewedApps(workspaceId, userId, {
           limit: Math.min(100, limit + 20),
         }),
-        visibleIndexedAppIds(workspaceId, userId, role),
+        visibleHomeAppIds(workspaceId, userId, role),
       ]);
       const apps = recent.filter(r => visible.has(r.appId)).slice(0, limit);
       return c.json({ success: true as const, apps }, 200);
@@ -1334,8 +1361,10 @@ appsRoutes.openapi(
     try {
       const { workspaceId } = c.req.valid("param");
       const userId = actingUserId(c);
-      const role = await memberRoleFor(workspaceId, userId);
-      const apps = await listDiscoveryApps(workspaceId, userId, role);
+      const role =
+        (c.get("memberRole") as string | undefined) ??
+        (await memberRoleFor(workspaceId, userId));
+      const apps = await listHomeDiscoveryApps(workspaceId, userId, role);
       return c.json({ success: true as const, apps }, 200);
     } catch (error) {
       if (error instanceof RepoRequiredError) {
@@ -1522,7 +1551,9 @@ appsRoutes.openapi(
       const { workspaceId } = c.req.valid("param");
       const { cursor, limit } = c.req.valid("query");
       const userId = actingUserId(c);
-      const role = await memberRoleFor(workspaceId, userId);
+      const role =
+        (c.get("memberRole") as string | undefined) ??
+        (await memberRoleFor(workspaceId, userId));
       const page = await getFeedPage(workspaceId, userId, role, {
         cursor: cursor || null,
         limit,
@@ -1587,9 +1618,11 @@ appsRoutes.openapi(
       const { workspaceId } = c.req.valid("param");
       const { q, limit } = c.req.valid("query");
       const userId = actingUserId(c);
-      const role = await memberRoleFor(workspaceId, userId);
+      const role =
+        (c.get("memberRole") as string | undefined) ??
+        (await memberRoleFor(workspaceId, userId));
       const [visible, usage] = await Promise.all([
-        listDiscoveryApps(workspaceId, userId, role),
+        listHomeDiscoveryApps(workspaceId, userId, role),
         appUsageScores(workspaceId),
       ]);
       const apps = searchDiscoveryApps(visible, q, {
