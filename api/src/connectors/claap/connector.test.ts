@@ -420,10 +420,10 @@ function testTranscriptEntityIsDeclared() {
     connector.getIncrementalCapabilities().perEntity?.recording_transcripts,
     { mode: "created-anchor", anchorField: "createdAfter" },
   );
-  // Transcripts are polled; webhooks keep feeding recordings only.
+  // Transcripts ride on the recording webhooks.
   assert.deepEqual(
     connector.getWebhookEventsForEntities(["recording_transcripts"]),
-    [],
+    ["recording_added", "recording_updated"],
   );
   return connector.resolveSchema("recording_transcripts").then(schema => {
     assert.deepEqual(schema?.keyColumns, ["id"]);
@@ -431,6 +431,62 @@ function testTranscriptEntityIsDeclared() {
     assert.equal(schema?.fields.segments?.type, "json");
     assert.equal(schema?.fields.fetchedAt?.type, "timestamp");
   });
+}
+
+async function testWebhookRecordingGetsItsTranscripts() {
+  const connector = createTranscriptConnector(
+    () => Promise.reject(new Error("no API call expected")),
+    url => {
+      assert.equal(url, "https://files.example.test/fr.json");
+      return Promise.resolve(
+        JSON.stringify({
+          segments: [
+            { startedAt: 3, endedAt: 4, speaker: "speaker_1", text: "Salut" },
+          ],
+        }),
+      );
+    },
+  );
+  const event = {
+    eventId: "evt_9",
+    event: {
+      type: "recording_added",
+      recording: {
+        id: "rec_9",
+        createdAt: "2026-10-19T08:00:00.000Z",
+        transcripts: [
+          {
+            langIso2: "fr",
+            isTranscript: true,
+            isActive: true,
+            url: "https://files.example.test/fr.json",
+          },
+        ],
+      },
+    },
+  };
+  const extracted = connector.extractWebhookCdcRecords(
+    event,
+    "recording_added",
+  );
+
+  const enriched = await connector.enrichWebhookCdcRecords(extracted, {
+    isEntityEnabled: () => true,
+  });
+  assert.equal(enriched.length, 2);
+  assert.equal(enriched[0].entity, "recordings");
+  const transcript = enriched[1];
+  assert.equal(transcript.entity, "recording_transcripts");
+  assert.equal(transcript.recordId, "rec_9:fr");
+  assert.equal(transcript.operation, "upsert");
+  assert.equal(transcript.payload?.transcriptText, "00:03 speaker_1: Salut");
+  assert.equal(transcript.changeId, "evt_9:recording_transcripts:rec_9:fr");
+
+  // A flow that does not sync transcripts downloads nothing.
+  const untouched = await connector.enrichWebhookCdcRecords(extracted, {
+    isEntityEnabled: entity => entity !== "recording_transcripts",
+  });
+  assert.equal(untouched, extracted);
 }
 
 function testSupportsResumableFetching() {
@@ -465,6 +521,7 @@ async function main() {
   await testTranscriptsDownloadedWithinTheChunk();
   await testTranscriptsStopBeforeDailyQuotaRunsOut();
   await testTranscriptEntityIsDeclared();
+  await testWebhookRecordingGetsItsTranscripts();
 }
 
 main().catch((error: unknown) => {
