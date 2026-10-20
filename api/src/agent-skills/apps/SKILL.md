@@ -238,17 +238,15 @@ version the app has. Apps created before 2026-09 may still import an older
 alias or a `file:` path: keep whatever the app's `package.json` already uses
 unless you are migrating it.
 
-## Thumbnail (the app's card on the Apps home)
+## Thumbnail (Apps home card + link preview)
 
-The card shows `thumbnail.png` from the app's root (also `.webp`, `.jpg`,
-`.jpeg`, `.svg`; first match wins), 1200×750 (16:10), under 3 MB. Nothing
-screenshots apps: the builder ships the picture. New apps start with a
-placeholder `thumbnail.svg` (title + Mako mark). When an app is worth
-sharing, replace it with a marketing-style showcase of what it does — the
-headline number, a stylised chart, the brand colours — designed as SVG
-(then exported to PNG if it uses fonts or filters) or generated with an
-image model. Delete the placeholder when you add a PNG. An SVG is shown as
-an `<img>`: no scripts, no external fonts or images.
+Each app ships its own poster: `thumbnail.png`, 1200×750, at the app's root
+(also `.webp`/`.jpg`/`.svg`, first match wins). Nothing screenshots apps. PNG,
+because it is also the link preview of the app's public share (previews
+ignore SVG and crop to the centred 1200×630). New apps start with a
+placeholder `thumbnail.svg`. Before designing or replacing one, read
+`references/thumbnails.md` (`read_skill_resource("apps",
+"references/thumbnails.md")`): the recipe, the rules and how to render it.
 
 ## Styling & UI components
 
