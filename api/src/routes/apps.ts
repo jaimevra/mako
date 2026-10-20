@@ -110,6 +110,13 @@ import {
 import { appTreeRoot, parseAppRepoPath } from "../apps/app-paths";
 import { loadOwnerDirectory } from "../apps/user-handles.service";
 import {
+  listDiscoveryApps,
+  searchDiscoveryApps,
+} from "../apps/app-discovery.service";
+import { appUsageScores } from "../apps/app-search.service";
+import { readThumbnailBlob, thumbnailHeaders } from "../apps/app-thumbnail";
+import { boundRepoDirIfExists } from "../apps/workspace-repo-required";
+import {
   authorizeAppMove,
   authorizeFolderTarget,
   canSeeIndexedApp,
@@ -1228,6 +1235,90 @@ appsRoutes.openapi(
       });
       return c.body(null, 204);
     } catch (error) {
+      return handleError(c, error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Discovery — the Apps home and its search. Static paths, registered before
+// /{id} so the param route can't shadow them.
+// ---------------------------------------------------------------------------
+
+appsRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/discovery",
+    tags: ["Apps"],
+    summary: "Apps home: every visible app with its discovery facts",
+    description:
+      "Owner, creation date, deployment, thumbnail, data freshness and health (failed deploy, failed binding refreshes) for every app the caller can see — the same visibility as the list. Popularity is the usage API's, joined on the id by the client.",
+    security: AUTH_SECURITY,
+    request: { params: WorkspaceParam },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    try {
+      const { workspaceId } = c.req.valid("param");
+      const userId = actingUserId(c);
+      const role = await memberRoleFor(workspaceId, userId);
+      const apps = await listDiscoveryApps(workspaceId, userId, role);
+      return c.json({ success: true as const, apps }, 200);
+    } catch (error) {
+      if (error instanceof RepoRequiredError) {
+        return c.json({ success: true as const, apps: [] }, 200);
+      }
+      return handleError(c, error);
+    }
+  },
+);
+
+appsRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/search",
+    tags: ["Apps"],
+    summary: "Search apps",
+    description:
+      "Free-text search over each visible app's title, description, path, owner and the warehouse tables its bindings read (FROM/JOIN identifiers in bindings/*.sql, indexed per push). Every term must match somewhere; results are ranked, best first, with the fields that matched.",
+    security: AUTH_SECURITY,
+    request: {
+      params: WorkspaceParam,
+      query: z.object({
+        q: z
+          .string()
+          .max(200)
+          .openapi({ param: { name: "q", in: "query" } }),
+        limit: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .openapi({ param: { name: "limit", in: "query" } }),
+      }),
+    },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    try {
+      const { workspaceId } = c.req.valid("param");
+      const { q, limit } = c.req.valid("query");
+      const userId = actingUserId(c);
+      const role = await memberRoleFor(workspaceId, userId);
+      const [visible, usage] = await Promise.all([
+        listDiscoveryApps(workspaceId, userId, role),
+        appUsageScores(workspaceId),
+      ]);
+      const apps = searchDiscoveryApps(visible, q, {
+        limit: limit ?? 50,
+        usage,
+      });
+      return c.json({ success: true as const, apps }, 200);
+    } catch (error) {
+      if (error instanceof RepoRequiredError) {
+        return c.json({ success: true as const, apps: [] }, 200);
+      }
       return handleError(c, error);
     }
   },
@@ -3589,6 +3680,50 @@ appsRoutes.openapi(
           },
         },
       );
+    } catch (error) {
+      return handleError(c, error);
+    }
+  },
+);
+
+appsRoutes.openapi(
+  createRoute({
+    method: "get",
+    path: "/{id}/thumbnail",
+    tags: ["Apps"],
+    summary: "The app's own thumbnail image",
+    description:
+      "The image the app ships at its root (thumbnail.png, or .webp/.jpg/.jpeg/.svg) as of main, served by blob oid with immutable caching; /apps/discovery says which apps have one (and its oid, the cache version). 404 when the app ships none. SVG is served with a script-free, sandboxed CSP.",
+    security: AUTH_SECURITY,
+    request: { params: ProjectParam },
+    responses: OPEN_RESPONSES,
+  }),
+  async c => {
+    try {
+      const loaded = await loadProject(c, { write: false });
+      if ("errorResponse" in loaded) return loaded.errorResponse;
+      const workspaceId = loaded.project.workspaceId.toString();
+      const row = await resolveAppRef(
+        workspaceId,
+        loaded.project._id.toString(),
+      );
+      const repoDir = row?.thumbnail
+        ? await boundRepoDirIfExists(workspaceId)
+        : null;
+      const bytes =
+        row?.thumbnail && repoDir
+          ? await readThumbnailBlob(repoDir, row.thumbnail)
+          : null;
+      if (!row?.thumbnail || !bytes) {
+        return c.json(
+          { success: false, error: "This app has no thumbnail" },
+          404,
+        );
+      }
+      return new Response(new Uint8Array(bytes), {
+        status: 200,
+        headers: thumbnailHeaders(row.thumbnail.file, bytes.length),
+      });
     } catch (error) {
       return handleError(c, error);
     }

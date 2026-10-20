@@ -61,6 +61,11 @@ import {
 } from "./worktree.service";
 import { appFolderChanged } from "./deploy-on-push";
 import { getAppAuthors, visibleIndexedAppIds } from "./app-usage.service";
+import {
+  listDiscoveryApps,
+  searchDiscoveryApps,
+} from "./app-discovery.service";
+import { readThumbnailBlob, thumbnailHeaders } from "./app-thumbnail";
 import { runGit } from "./git";
 import { canReadResource } from "../utils/resource-acl";
 import { up as isolateAppIds } from "../migrations/2026-09-16-190000_app_identity_isolation";
@@ -301,6 +306,112 @@ describe("personal trees resolve through the handle mapping only", () => {
       folder: { scope: "private", folderSegments: [] },
     });
     expect(mine.path).toBe(`users/${HANDLE}/apps/mine`);
+  });
+});
+
+describe("discovery facts", () => {
+  it("indexes the tables bindings read and who added each app, and keeps the date across a move", async () => {
+    await externalCommit({
+      "apps/Sales/CH/b/bindings/leads.sql":
+        "-- connection: c1\nSELECT * FROM analytics.fct_leads l JOIN dim_agents a ON a.id = l.agent\n",
+      "apps/d/mako.json": manifest("D"),
+    });
+    const snapshot = await loadAppsIndex(WS);
+    const b = snapshot.apps.find(a => a.path === "apps/Sales/CH/b");
+    expect(b?.tables).toEqual(["analytics.fct_leads", "dim_agents"]);
+    const d = snapshot.apps.find(a => a.path === "apps/d");
+    expect(d?.authorEmail).toBe("laptop@example.com");
+    expect(d?.firstCommitAt).toBeTruthy();
+    // The seed commit dated the others.
+    expect(
+      snapshot.apps.find(a => a.path === "apps/a")?.firstCommitAt,
+    ).toBeTruthy();
+
+    const firstAt = b?.firstCommitAt;
+    await externalCommit(
+      {
+        "apps/Moved/b/mako.json": manifest("B", B_ID),
+        "apps/Moved/b/bindings/rows.sql": "select 1\n",
+      },
+      [
+        "apps/Sales/CH/b/mako.json",
+        "apps/Sales/CH/b/bindings/rows.sql",
+        "apps/Sales/CH/b/bindings/leads.sql",
+      ],
+    );
+    const moved = (await loadAppsIndex(WS)).apps.find(a => a.appId === B_ID);
+    expect(moved?.path).toBe("apps/Moved/b");
+    // A move is not a new app.
+    expect(moved?.firstCommitAt).toBe(firstAt);
+    expect(moved?.tables).toEqual([]);
+  });
+
+  it("credits the first human, not the platform commit that created the folder", async () => {
+    await commitBlobsOnBranch(
+      repoDirFor(WS),
+      DEFAULT_BRANCH,
+      { writes: { "apps/e/mako.json": manifest("E") }, deletes: [] },
+      {
+        message: "import",
+        author: { name: "Mako", email: "bot@mako.ai" },
+      },
+    );
+    await externalCommit({ "apps/e/src/main.tsx": "export {}\n" });
+    invalidateAppsIndexCache(WS);
+    const e = (await loadAppsIndex(WS)).apps.find(a => a.path === "apps/e");
+    expect(e?.authorEmail).toBe("laptop@example.com");
+    expect(e?.firstCommitAt).toBeTruthy();
+  });
+
+  it("indexes the app's own thumbnail (png before svg) and serves it inert", async () => {
+    await externalCommit({
+      "apps/a/thumbnail.svg": '<svg xmlns="http://www.w3.org/2000/svg"/>',
+      "apps/a/thumbnail.png": "PNGBYTES",
+      // Not at the app root: not the app's thumbnail.
+      "apps/Sales/CH/b/public/thumbnail.png": "nope",
+    });
+    const snapshot = await loadAppsIndex(WS);
+    const a = snapshot.apps.find(x => x.path === "apps/a");
+    expect(a?.thumbnail?.file).toBe("thumbnail.png");
+    expect(
+      snapshot.apps.find(x => x.path === "apps/Sales/CH/b")?.thumbnail,
+    ).toBeUndefined();
+    const bytes = await readThumbnailBlob(repoDirFor(WS), a!.thumbnail!);
+    expect(bytes?.toString()).toBe("PNGBYTES");
+    const discovered = await listDiscoveryApps(WS, USER, "member");
+    expect(discovered.find(x => x.path === "apps/a")?.thumbnail?.oid).toBe(
+      a?.thumbnail?.oid,
+    );
+    const svg = thumbnailHeaders("thumbnail.svg", 10);
+    expect(svg["Content-Type"]).toBe("image/svg+xml");
+    expect(svg["Content-Security-Policy"]).toContain("sandbox");
+    expect(svg["Content-Security-Policy"]).toContain("default-src 'none'");
+  });
+
+  it("lists and searches with the list's visibility", async () => {
+    const other = new Types.ObjectId().toString();
+    const mine = await listDiscoveryApps(WS, USER, "member");
+    expect(mine.map(a => a.path).sort()).toEqual([
+      "apps/Sales/CH/b",
+      "apps/a",
+      `users/${HANDLE}/apps/c`,
+    ]);
+    // Someone else's personal tree is not theirs to discover.
+    const theirs = await listDiscoveryApps(WS, other, "member");
+    expect(theirs.map(a => a.path)).not.toContain(`users/${HANDLE}/apps/c`);
+    const c = mine.find(a => a.path === `users/${HANDLE}/apps/c`);
+    expect(c?.ownerId).toBe(USER);
+    expect(c?.ownerHandle).toBe(HANDLE);
+    expect(searchDiscoveryApps(mine, HANDLE).map(a => a.path)).toEqual([
+      `users/${HANDLE}/apps/c`,
+    ]);
+    expect(c?.health.bindingErrors).toEqual([]);
+    expect(c?.verified).toBe(false);
+
+    expect(searchDiscoveryApps(theirs, "laptop").map(a => a.path)).toEqual([]);
+    expect(searchDiscoveryApps(mine, "sales").map(a => a.path)).toEqual([
+      "apps/Sales/CH/b",
+    ]);
   });
 });
 

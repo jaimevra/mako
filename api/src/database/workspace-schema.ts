@@ -5097,6 +5097,17 @@ export interface IAppIndexEntry extends Document {
   duplicateOf?: string;
   /** Scheduled bindings, so the scheduler never opens the repo. */
   schedules: Array<{ binding: string; cron: string; timezone?: string }>;
+  /** Tables the app's bindings read (`FROM`/`JOIN`) — search input. */
+  tables?: string[];
+  /** Who first committed the app's manifest, and when (discovery). */
+  authorEmail?: string;
+  firstCommitAt?: Date;
+  /**
+   * The app's own `thumbnail.{png,webp,jpg,jpeg,svg}` at its root, when it
+   * ships one: the file name and its blob oid (content-addressed, so the
+   * Apps home caches it forever under `?v=<oid>`).
+   */
+  thumbnail?: { file: string; oid: string };
   /** The main commit this row was built from. */
   indexedSha: string;
   createdAt: Date;
@@ -5136,6 +5147,19 @@ const AppIndexEntrySchema = new Schema<IAppIndexEntry>(
         ),
       ],
       default: [],
+    },
+    tables: { type: [String], default: undefined },
+    authorEmail: { type: String },
+    firstCommitAt: { type: Date },
+    thumbnail: {
+      type: new Schema(
+        {
+          file: { type: String, required: true },
+          oid: { type: String, required: true },
+        },
+        { _id: false },
+      ),
+      default: undefined,
     },
     indexedSha: { type: String, required: true },
   },
