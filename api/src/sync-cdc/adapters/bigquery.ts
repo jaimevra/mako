@@ -1,5 +1,5 @@
 import { promises as fs } from "fs";
-import { BigQuery } from "@google-cloud/bigquery";
+import { BigQuery, type JobLoadMetadata } from "@google-cloud/bigquery";
 import {
   isLocalBigQueryEmulator,
   bigQueryEmulatorEndpoint,
@@ -11,6 +11,8 @@ import {
   type IDatabaseConnection,
 } from "../../database/workspace-schema";
 import { databaseConnectionService } from "../../services/database-connection.service";
+import { bigQueryJobLabels } from "../../services/bigquery-labels";
+import { canLabelLoadJobs, enableLoadJobLabels } from "./bigquery-load-labels";
 import { loggers } from "../../logging";
 import {
   buildParquetFromBatches,
@@ -1418,6 +1420,8 @@ export class BigQueryDestinationAdapter implements CdcDestinationAdapter {
       }
     }
     const bq = new BigQuery(bqOptions);
+    // Emulator jobs cost nothing; only a real client gets labelled loads.
+    if (!isLocalBigQueryEmulator(apiBaseUrl)) enableLoadJobLabels(bq);
 
     if (!this._datasetLocation) {
       try {
@@ -1453,18 +1457,28 @@ export class BigQueryDestinationAdapter implements CdcDestinationAdapter {
     stagingTable: string,
     options?: { skipParquetCleanup?: boolean },
   ): Promise<{ loaded: number }> {
-    const { bq, dataset, datasetLocation } = await this.resolveBqClient();
+    const { bq, dataset, datasetLocation, destination } =
+      await this.resolveBqClient();
+    const loadMetadata: JobLoadMetadata & { labels?: Record<string, string> } =
+      {
+        sourceFormat: "PARQUET",
+        writeDisposition: "WRITE_APPEND",
+        schemaUpdateOptions: ["ALLOW_FIELD_ADDITION"],
+      };
+    // Moved to configuration.labels by bigquery-load-labels.ts.
+    if (canLabelLoadJobs(bq)) {
+      loadMetadata.labels = bigQueryJobLabels({
+        workspaceId: destination.workspaceId,
+      });
+    }
 
     const jobMeta = await retryOnQuota(
       async () => {
         const [metadata] = await bq
           .dataset(dataset, { location: datasetLocation })
           .table(stagingTable)
-          .load(parquetPath, {
-            sourceFormat: "PARQUET",
-            writeDisposition: "WRITE_APPEND",
-            schemaUpdateOptions: ["ALLOW_FIELD_ADDITION"],
-          });
+          // A fresh copy per attempt: the SDK mutates what it is given.
+          .load(parquetPath, { ...loadMetadata });
 
         const meta = metadata as Record<string, any>;
         if (meta?.status?.errorResult) {
