@@ -23,14 +23,20 @@ import {
   bindTestWorkspaceRepo,
   unbindTestWorkspaceRepo,
 } from "../apps/bind-test-workspace-repo";
-import { invalidateAppsIndexCache } from "../apps/app-index.service";
+import {
+  invalidateAppsIndexCache,
+  loadAppsIndex,
+} from "../apps/app-index.service";
 import { anonymousViewerRedirect } from "../apps/live-viewer-redirect";
 import { publicShareRoutes } from "../routes/public-share";
 import { ogRoutes } from "../routes/og";
 import { OG_MAX_BYTES } from "../apps/image-variants";
+import { appsRoutes } from "../routes/apps";
+import { Hono } from "hono";
 import {
   GENERIC_SHARE_TITLE,
   appLinkFromPath,
+  clearTabRefCache,
   imageSize,
   injectOgTags,
   ogTagsForPath,
@@ -384,6 +390,134 @@ describe("in-app link previews", () => {
         userAgent: "WhatsApp/2.23",
       }),
     ).toBeNull();
+  });
+});
+
+describe("app tab links (/apps/<ref>)", () => {
+  const OTHER_WS = new Types.ObjectId();
+  beforeEach(async () => {
+    clearTabRefCache();
+    await loadAppsIndex(WS); // the index rows the lookup reads
+    await Workspace.deleteOne({ _id: OTHER_WS });
+  });
+
+  it("resolves an id to its own workspace", async () => {
+    const tags = await ogTagsForPath(`/apps/${PLAIN.toHexString()}`, ORIGIN);
+    expect(tags?.title).toBe("Team board");
+    expect(tags?.url).toBe(`${ORIGIN}/apps/${PLAIN.toHexString()}`);
+  });
+
+  it("resolves a slug held by exactly one workspace app, ignoring the query string", async () => {
+    // The SPA hands over the path only; the app's own state (?country=…)
+    // never reaches the matcher, and og:url stays the canonical app URL.
+    const tags = await ogTagsForPath(
+      new URL(`${ORIGIN}/apps/plain?country=FR&lang=fr&view=sim`).pathname,
+      ORIGIN,
+    );
+    expect(tags?.title).toBe("Team board");
+    expect(tags?.url).toBe(`${ORIGIN}/apps/plain`);
+  });
+
+  it("stays generic when a slug is ambiguous across workspaces", async () => {
+    await Workspace.create({
+      _id: OTHER_WS,
+      name: "other",
+      slug: `other-${OTHER_WS.toHexString()}`,
+      createdBy: "test",
+      settings: {},
+      billing: {},
+    });
+    await AppIndexEntry.create({
+      workspaceId: OTHER_WS,
+      appId: new Types.ObjectId().toHexString(),
+      path: "apps/plain",
+      slug: "plain",
+      scope: "workspace",
+      treeOid: "0".repeat(40),
+      title: "Someone else's board",
+      hasManifestId: true,
+      schedules: [],
+      indexedSha: "0".repeat(40),
+    });
+    const tags = await ogTagsForPath("/apps/plain", ORIGIN);
+    expect(tags?.title).toBe(GENERIC_SHARE_TITLE);
+
+    // A workspace that opted out of previews does not count as a candidate.
+    await Workspace.updateOne(
+      { _id: OTHER_WS },
+      { $set: { "settings.linkPreviews": false } },
+    );
+    clearTabRefCache();
+    expect((await ogTagsForPath("/apps/plain", ORIGIN))?.title).toBe(
+      "Team board",
+    );
+  });
+
+  it("stays generic for personal, restricted and unknown apps", async () => {
+    for (const ref of [
+      PERSONAL.toHexString(),
+      "mine",
+      RESTRICTED.toHexString(),
+      "restricted",
+      "no-such-app",
+    ]) {
+      const tags = await ogTagsForPath(`/apps/${ref}`, ORIGIN);
+      expect(tags?.title).toBe(GENERIC_SHARE_TITLE);
+      expect(JSON.stringify(tags)).not.toMatch(/Alice|Board pack/);
+    }
+  });
+});
+
+describe("raw /live/ links", () => {
+  const live = (ref: string) => `/${WS}/apps/${ref}/live/`;
+  const get = (ref: string, headers: Record<string, string>) =>
+    liveApp.request(live(ref), { headers });
+  // The apps router as mounted: /api/workspaces/:workspaceId/apps.
+  const liveApp = new Hono().route("/:workspaceId/apps", appsRoutes);
+  let savedClientUrl: string | undefined;
+  beforeAll(() => {
+    savedClientUrl = process.env.CLIENT_URL;
+    process.env.CLIENT_URL = "https://app.mako.ai";
+  });
+  afterAll(() => {
+    if (savedClientUrl === undefined) delete process.env.CLIENT_URL;
+    else process.env.CLIENT_URL = savedClientUrl;
+  });
+
+  it("answers a crawler with 200 and the viewer page's tags", async () => {
+    const res = await get(PLAIN.toHexString(), {
+      "user-agent": "WhatsApp/2.23.20.0",
+      accept: "*/*",
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<meta property="og:title" content="Team board" />');
+    expect(html).toContain(
+      `<link rel="canonical" href="https://app.mako.ai/view/${WS}/${PLAIN.toHexString()}" />`,
+    );
+    expect(html).toContain('http-equiv="refresh"');
+    expect(html).toMatch(/og:image" content="[^"]*\/api\/og\/app-image\//);
+  });
+
+  it("keeps a personal or restricted app generic for the crawler", async () => {
+    for (const ref of [PERSONAL.toHexString(), RESTRICTED.toHexString()]) {
+      const html = await (
+        await get(ref, { "user-agent": "facebookexternalhit/1.1" })
+      ).text();
+      expect(html).toContain('<meta property="og:title" content="Mako" />');
+      expect(html).not.toMatch(/Alice|Board pack/);
+    }
+  });
+
+  it("keeps the 302 for a browser", async () => {
+    const res = await get(PLAIN.toHexString(), {
+      "user-agent": "Mozilla/5.0 (Macintosh)",
+      accept: "text/html",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      `/view/${WS}/${PLAIN.toHexString()}`,
+    );
   });
 });
 

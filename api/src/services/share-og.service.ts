@@ -19,8 +19,10 @@
  * with only an SVG thumbnail (or none) uses the static generic
  * `/og-default.png`.
  */
+import { timed } from "../middleware/server-timing";
 import { Types } from "mongoose";
 import {
+  AppIndexEntry,
   AppProject,
   Workspace,
   type IAppProject,
@@ -306,7 +308,95 @@ export async function ogTagsForPath(
   if (link) {
     return ogTagsForAppLink(link.workspaceId, link.ref, origin, pathname);
   }
+  const tabRef = appTabRefFromPath(pathname);
+  if (tabRef !== null) {
+    // Index rows only — no git on a crawler's request.
+    const found = await timed("og.tabref", () => workspaceAppForTabRef(tabRef));
+    return found
+      ? ogTagsForAppLink(found.workspaceId, found.appId, origin, pathname)
+      : genericTags(origin, pathname);
+  }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// App tab URLs (/apps/<id> or /apps/<slug>) — no workspace in the URL
+// ---------------------------------------------------------------------------
+
+/** The SPA's app tab URL (see TAB_DEEP_LINK_PATTERNS.app): one segment. */
+const APP_TAB_PATH = /^\/apps\/([^/?#]+)\/?$/;
+
+export function appTabRefFromPath(pathname: string): string | null {
+  const m = APP_TAB_PATH.exec(pathname);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
+}
+
+const tabRefCache = new Map<
+  string,
+  { at: number; value: { workspaceId: string; appId: string } | null }
+>();
+const TAB_REF_TTL_MS = 60_000;
+
+/**
+ * Which workspace app an `/apps/<ref>` link names, without a session. An id
+ * is global, so it names its own workspace. A slug (a folder name) is only
+ * taken when exactly ONE workspace-tree app, in a workspace that allows
+ * link previews, carries it — several (in one workspace or across them) is
+ * ambiguous and stays generic: never guess. One indexed query against the
+ * apps index, no repo reads; cached for a minute. The caller still applies
+ * the full disclosure rule (previewableWorkspaceApp).
+ */
+export async function workspaceAppForTabRef(
+  ref: string,
+): Promise<{ workspaceId: string; appId: string } | null> {
+  const key = ref.toLowerCase();
+  const hit = tabRefCache.get(key);
+  if (hit && Date.now() - hit.at < TAB_REF_TTL_MS) return hit.value;
+  const value = await lookupTabRef(ref);
+  if (tabRefCache.size > 2_000) tabRefCache.clear();
+  tabRefCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+async function lookupTabRef(
+  ref: string,
+): Promise<{ workspaceId: string; appId: string } | null> {
+  if (/^[0-9a-f]{24}$/i.test(ref)) {
+    const row = await AppIndexEntry.findOne({ appId: ref.toLowerCase() })
+      .select("workspaceId appId")
+      .lean();
+    return row
+      ? { workspaceId: row.workspaceId.toString(), appId: row.appId }
+      : null;
+  }
+  const rows = await AppIndexEntry.find({ slug: ref, scope: "workspace" })
+    .select("workspaceId appId")
+    .limit(20)
+    .lean();
+  if (rows.length === 0) return null;
+  const workspaces = await Workspace.find({
+    _id: { $in: [...new Set(rows.map(r => r.workspaceId.toString()))] },
+    "settings.linkPreviews": { $ne: false },
+  })
+    .select("_id")
+    .lean();
+  const allowed = new Set(workspaces.map(w => w._id.toString()));
+  const candidates = rows.filter(r => allowed.has(r.workspaceId.toString()));
+  if (candidates.length !== 1) return null;
+  return {
+    workspaceId: candidates[0].workspaceId.toString(),
+    appId: candidates[0].appId,
+  };
+}
+
+/** Tests: forget cached tab-ref lookups. */
+export function clearTabRefCache(): void {
+  tabRefCache.clear();
 }
 
 const escapeAttr = (s: string) =>
@@ -351,6 +441,27 @@ export function injectOgTags(html: string, tags: OgTags): string {
     `<title>${escapeAttr(tags.title)}</title>`,
   );
   return withTitle.replace("</head>", `${renderOgTags(tags)}  </head>`);
+}
+
+/**
+ * A tiny HTML page for a link-preview crawler that hit a URL which, for a
+ * browser, redirects to `viewerPath` (an app's raw `/live/` link). Some
+ * crawlers — WhatsApp's among them — do not follow redirects when building
+ * a preview, so they get the viewer page's tags here, with the viewer URL as
+ * og:url and canonical, and a refresh in case anything renders it.
+ */
+export async function crawlerPreviewPage(
+  viewerPath: string,
+  origin: string,
+): Promise<string> {
+  const pathname = viewerPath.split("?")[0];
+  const tags =
+    (await ogTagsForPath(pathname, origin)) ?? genericTags(origin, pathname);
+  const href = escapeAttr(`${origin}${viewerPath}`);
+  return injectOgTags(
+    `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8" />\n    <title>Mako</title>\n    <link rel="canonical" href="${href}" />\n    <meta http-equiv="refresh" content="0;url=${href}" />\n  </head>\n  <body><a href="${href}">Open in Mako</a></body>\n</html>\n`,
+    tags,
+  );
 }
 
 /**
