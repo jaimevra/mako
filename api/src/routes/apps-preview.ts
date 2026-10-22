@@ -34,6 +34,12 @@ import {
 } from "../services/artifact-delivery.service";
 import { snapshotArtifactKey } from "../services/binding-snapshot";
 import { readPreviewAsset, resolvePreviewGrant } from "../apps/preview.service";
+import {
+  appIdFromHost,
+  requestHost,
+  signedUrlWindowMs,
+} from "../apps/app-origin";
+import { sandboxAppDocument } from "../apps/app-document-sandbox";
 import { createRouter } from "../openapi/core";
 
 export const appsPreviewRoutes = createRouter();
@@ -89,11 +95,22 @@ async function serveAsset(c: Context): Promise<Response> {
     });
   }
 
+  // On the app's own origin (app-origin.ts; the host gate has already
+  // proved this token names this host's app) the browser cache works, so
+  // let it: the token is stable for a window and names an immutable commit.
+  const onAppHost = appIdFromHost(requestHost(name => c.req.header(name)));
+
   // A published deployment is served from the artifact store, not a
   // directory — but through the same token, because the reason for the token
   // is the sandboxed iframe, which does not care where the bytes come from.
   if (grant.publishedSha) {
     const response = await serveDeploymentFile({
+      ...(onAppHost
+        ? {
+            immutableUntil: grant.expiresAt,
+            stableData: { windowMs: signedUrlWindowMs() },
+          }
+        : {}),
       projectId: grant.projectId,
       sha: grant.publishedSha,
       assetPath: assetPathFor(c, token),
@@ -116,6 +133,9 @@ async function serveAsset(c: Context): Promise<Response> {
     // static preview below sets, for the same reason.
     const headers = new Headers(response.headers);
     headers.set("Access-Control-Allow-Origin", "*");
+    // On Mako's origin, a top-level open of this URL must not run app code
+    // as app.mako.ai (app-document-sandbox.ts). An app host is foreign.
+    if (!onAppHost) sandboxAppDocument(headers);
     return new Response(response.body, { status: response.status, headers });
   }
 
@@ -209,7 +229,7 @@ async function serveAsset(c: Context): Promise<Response> {
   if (!asset) {
     return c.json({ success: false, error: "Not found" }, 404);
   }
-  return c.body(new Uint8Array(asset.contents), 200, {
+  const headers = new Headers({
     "Content-Type": asset.contentType,
     "Cache-Control": "no-store",
     // Belt-and-braces: previewed code must never be served as-if-Mako HTML.
@@ -220,6 +240,9 @@ async function serveAsset(c: Context): Promise<Response> {
     // and cookie-free, so a wildcard is safe and required for modules to run.
     "Access-Control-Allow-Origin": "*",
   });
+  // The static preview is always on Mako's origin.
+  sandboxAppDocument(headers);
+  return new Response(new Uint8Array(asset.contents), { status: 200, headers });
 }
 
 appsPreviewRoutes.get("/:token", serveAsset);
