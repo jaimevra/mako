@@ -155,36 +155,229 @@ function testResolveSchemaForRecordings() {
   });
 }
 
-async function testRecordingsFetchRequestsAiFields() {
-  const connector = createConnector();
-  let capturedParams: Record<string, unknown> | undefined;
+type FakeResponse = {
+  data?: unknown;
+  headers?: Record<string, string>;
+};
 
-  (connector as any).claapApi = {
-    get: (_path: string, options?: { params?: Record<string, unknown> }) => {
-      capturedParams = options?.params;
-      return Promise.resolve({
-        data: {
-          result: {
-            recordings: [{ id: "rec_1", title: "Demo" }],
-            pagination: { nextCursor: undefined, totalCount: 1 },
-          },
-        },
-      });
+function listResponse(
+  recordings: Record<string, unknown>[],
+  options: { nextCursor?: string; dailyRemaining?: number } = {},
+): FakeResponse {
+  return {
+    headers:
+      options.dailyRemaining === undefined
+        ? {}
+        : { "x-ratelimit-daily-remaining": String(options.dailyRemaining) },
+    data: {
+      result: {
+        recordings,
+        pagination: { nextCursor: options.nextCursor, totalCount: 3 },
+      },
     },
   };
+}
+
+function detailRecording(id: string) {
+  return {
+    id,
+    title: `Call ${id}`,
+    createdAt: "2026-10-01T09:00:00.000Z",
+    aiFields: [{ title: "Next steps", description: "Send the proposal" }],
+    keyTakeaways: ["Wants a demo next week"],
+    outlines: [{ title: "Intro", startedAt: 0 }],
+    actionItems: [{ text: "Send the proposal" }],
+    companies: [{ name: "Example Co" }],
+  };
+}
+
+function createRecordingsConnector(
+  get: (path: string, params: Record<string, unknown>) => Promise<FakeResponse>,
+  config: Record<string, unknown> = {},
+) {
+  const connector = createConnector(config);
+  (connector as any).claapApi = {
+    get: (path: string, options?: { params?: Record<string, unknown> }) =>
+      get(path, options?.params ?? {}),
+  };
+  (connector as any).sleep = () => Promise.resolve();
+  return connector;
+}
+
+async function testRecordingsAreHydratedFromTheDetailEndpoint() {
+  const detailParams: Record<string, unknown>[] = [];
+  const listParams: Record<string, unknown>[] = [];
+  const connector = createRecordingsConnector((path, params) => {
+    if (path === "/v1/recordings") {
+      listParams.push(params);
+      // List items carry no AI output.
+      return Promise.resolve(
+        listResponse([{ id: "rec_1", title: "Call rec_1" }]),
+      );
+    }
+    assert.equal(path, "/v1/recordings/rec_1");
+    detailParams.push(params);
+    return Promise.resolve({
+      data: { result: { recording: detailRecording("rec_1") } },
+    });
+  });
 
   const batches: Record<string, unknown>[][] = [];
-  await connector.fetchEntityChunk({
+  const state = await connector.fetchEntityChunk({
     entity: "recordings",
     maxIterations: 1,
     onBatch: async records => {
       batches.push(records);
     },
-  } as any);
+  });
 
-  assert.equal(capturedParams?.returnAiFields, true);
+  assert.equal(listParams.length, 1);
+  assert.equal(listParams[0].createdAfter, undefined);
+  assert.equal(detailParams[0].returnAiFields, true);
+  assert.equal(state.hasMore, false);
+  assert.equal(state.totalProcessed, 1);
   assert.equal(batches.length, 1);
-  assert.equal(batches[0][0].id, "rec_1");
+  assert.deepEqual(batches[0][0], detailRecording("rec_1"));
+}
+
+async function testRecordingsSkipWhenDetailFails() {
+  const connector = createRecordingsConnector(path => {
+    if (path === "/v1/recordings") {
+      return Promise.resolve(
+        listResponse([{ id: "rec_1" }, { id: "rec_2" }, { id: "rec_3" }]),
+      );
+    }
+    if (path === "/v1/recordings/rec_1") {
+      return Promise.reject(
+        Object.assign(new Error("Request failed"), {
+          isAxiosError: true,
+          response: { status: 404, data: { message: "Recording not found" } },
+        }),
+      );
+    }
+    if (path === "/v1/recordings/rec_2") {
+      // A response without the recording must not become a blank row.
+      return Promise.resolve({ data: { result: {} } });
+    }
+    return Promise.resolve({ data: { result: detailRecording("rec_3") } });
+  });
+
+  const rows: Record<string, unknown>[] = [];
+  const logs: string[] = [];
+  const state = await connector.fetchEntityChunk({
+    entity: "recordings",
+    onBatch: async records => {
+      rows.push(...records);
+    },
+    onLog: (_level, message) => {
+      logs.push(message);
+    },
+  });
+
+  assert.deepEqual(
+    rows.map(row => row.id),
+    ["rec_3"],
+  );
+  assert.equal(state.totalProcessed, 1);
+  assert.equal(state.hasMore, false);
+  assert.ok(logs.some(message => /Skipped 2 Claap recording/.test(message)));
+}
+
+async function testRecordingsStopAtDailyQuotaReserveAndResume() {
+  // 501 left: rec_1 (→500) and rec_2 (→499) are read, then 499 is below the
+  // 500-call reserve and the chunk stops before rec_3.
+  let remaining = 501;
+  const detailCalls: string[] = [];
+  const listCursors: unknown[] = [];
+  const get = (path: string, params: Record<string, unknown>) => {
+    if (path === "/v1/recordings") {
+      listCursors.push(params.cursor);
+      return Promise.resolve(
+        listResponse([{ id: "rec_1" }, { id: "rec_2" }, { id: "rec_3" }], {
+          dailyRemaining: remaining,
+        }),
+      );
+    }
+    const id = path.split("/").pop() as string;
+    detailCalls.push(id);
+    remaining--;
+    return Promise.resolve({
+      headers: { "x-ratelimit-daily-remaining": String(remaining) },
+      data: { result: detailRecording(id) },
+    });
+  };
+  const connector = createRecordingsConnector(get);
+
+  const rows: Record<string, unknown>[] = [];
+  const onBatch = async (records: Record<string, unknown>[]) => {
+    rows.push(...records);
+  };
+  const first = await connector.fetchEntityChunk({
+    entity: "recordings",
+    onBatch,
+  });
+  assert.deepEqual(detailCalls, ["rec_1", "rec_2"]);
+  assert.equal(first.hasMore, true);
+  assert.equal(first.totalProcessed, 2);
+  assert.equal(first.metadata?.pageOffset, 2);
+  assert.equal(first.metadata?.cursor, null);
+
+  // Quota still below the reserve and nothing read yet: the chunk fails
+  // without spending any detail call.
+  await assert.rejects(
+    connector.fetchEntityChunk({ entity: "recordings", onBatch, state: first }),
+    /daily API quota/,
+  );
+  assert.equal(detailCalls.length, 2);
+
+  // Once the window refills, the run resumes at the first unread recording.
+  remaining = 2500;
+  const resumed = await connector.fetchEntityChunk({
+    entity: "recordings",
+    onBatch,
+    state: first,
+  });
+  assert.deepEqual(detailCalls, ["rec_1", "rec_2", "rec_3"]);
+  assert.equal(resumed.hasMore, false);
+  assert.equal(resumed.totalProcessed, 3);
+  assert.deepEqual(
+    rows.map(row => row.id),
+    ["rec_1", "rec_2", "rec_3"],
+  );
+}
+
+async function testRecordingsLookbackWindowMovesTheAnchorBack() {
+  const listParams: Record<string, unknown>[] = [];
+  const get = (path: string, params: Record<string, unknown>) => {
+    if (path === "/v1/recordings") {
+      listParams.push(params);
+      return Promise.resolve(listResponse([]));
+    }
+    return Promise.reject(new Error("no detail call expected"));
+  };
+  const since = new Date("2026-10-20T00:00:00.000Z");
+
+  await createRecordingsConnector(get, {
+    recordings_lookback_days: 14,
+  }).fetchEntityChunk({
+    entity: "recordings",
+    since,
+    onBatch: async () => undefined,
+  });
+  // Default (0): only recordings created after the last sync.
+  await createRecordingsConnector(get).fetchEntityChunk({
+    entity: "recordings",
+    since,
+    onBatch: async () => undefined,
+  });
+
+  assert.equal(listParams[0].createdAfter, "2026-10-06T00:00:00.000Z");
+  assert.equal(listParams[1].createdAfter, "2026-10-20T00:00:00.000Z");
+  assert.ok(
+    ClaapConnector.getConfigSchema().fields.some(
+      field => field.name === "recordings_lookback_days",
+    ),
+  );
 }
 
 function testTranscriptSegmentsParseEveryShape() {
@@ -513,7 +706,10 @@ async function main() {
   testWebhookPayloadIsExtractedForProcessing();
   testWebhookCdcRecordUsesRecordingsEntity();
   await testResolveSchemaForRecordings();
-  await testRecordingsFetchRequestsAiFields();
+  await testRecordingsAreHydratedFromTheDetailEndpoint();
+  await testRecordingsSkipWhenDetailFails();
+  await testRecordingsStopAtDailyQuotaReserveAndResume();
+  await testRecordingsLookbackWindowMovesTheAnchorBack();
   testSupportsResumableFetching();
   testEntityMetadataIncludesLayoutSuggestion();
   testTranscriptSegmentsParseEveryShape();
