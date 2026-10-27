@@ -56,7 +56,7 @@ A sync has three independent controls that decide what starts it. There is no fl
 | **Webhooks** | The source pushes changes to the sync's inbound URL. Webhooks only add speed on top of polling — they never switch polling off. Any sync can take webhooks; the URL is minted when you turn them on and never moves. |
 | **Resync** | The periodic full re-read that repairs whatever live updates missed. It is also what makes a new sync start. Set a cron, or `off` to run a backfill only on demand. |
 
-For connectors that can look a subscription up by URL (Stripe, Wise), saving a sync with webhooks on **provisions the subscription for you**: it adopts one already pointing at the URL and creates one only if none exists. A refusal is shown on the sync and polling carries on. Close, PandaDoc, Calendly and Claap keep the explicit **Create in …** button.
+For connectors that can look a subscription up by URL (Stripe, Wise, Close), saving a sync with webhooks on **provisions the subscription for you**: it adopts one already pointing at the URL and creates one only if none exists. A refusal is shown on the sync and polling carries on. PandaDoc, Calendly and Claap keep the explicit **Create in …** button.
 
 In the sync form the three controls sit side by side, with a status line (last poll, last resync, webhook state) and a **Backfill now** button.
 
@@ -77,7 +77,7 @@ This uses the same scoped path as the per-entity **Sync** button. Leave `entitie
 
 ### Webhook Subscriptions Follow Flow Entities
 
-For connectors that can update their provider-side webhook subscription (Stripe today), Mako keeps the subscription's event list in step with the flow's enabled entities:
+For connectors that can update their provider-side webhook subscription (Stripe, Wise and Close), Mako keeps the subscription's event list in step with the flow's enabled entities:
 
 - Re-running **Provision** on a flow that already has a signing secret updates the existing endpoint in place (same URL, same secret) instead of creating a second one. The UI labels the action **Update in <provider>**. Pass `recreate: true` to the provision route to force a fresh endpoint, for example when the stored secret is wrong.
 - Saving a flow with a changed entity selection retargets the subscription automatically. Failures surface as save warnings, never errors; re-provision from the Triggers step to fix them.

@@ -4,6 +4,7 @@ import { sourceConnectionManager } from "../sync/database-data-source-manager";
 import {
   decideBackfillFetchMode,
   isIncrementalResyncConnector,
+  resolveRefreshWindowMs,
 } from "./backfill-fetch-mode";
 
 /**
@@ -56,6 +57,11 @@ export async function resolveBackfillFetchForEntity(params: {
     runStartedAt,
     lastBackfillRunStartedAt: entityState?.lastBackfillRunStartedAt,
     lastFullBackfillRunStartedAt: entityState?.lastFullBackfillRunStartedAt,
+    refreshWindowMs: resolveRefreshWindowMs(
+      connectorType,
+      params.entity,
+      source?.connection,
+    ),
   });
 
   const runStartedAtIso = runStartedAt ? runStartedAt.toISOString() : undefined;

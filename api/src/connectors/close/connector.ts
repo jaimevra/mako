@@ -11,6 +11,7 @@ import {
   NormalizedCdcRecord,
   ProvisionWebhookOptions,
   ProvisionWebhookResult,
+  type UpdateWebhookSubscriptionOptions,
   type WebhookCapabilities,
   type ConnectorEntitySchema,
   type IncrementalCapabilities,
@@ -44,6 +45,125 @@ const MAX_CLOSE_ERROR_RESPONSE_LENGTH = 2_000;
  */
 export const CLOSE_SEARCH_CUSTOM_SELECTOR_BATCH = 60;
 const CLOSE_SEARCH_MIN_CUSTOM_SELECTOR_BATCH = 5;
+
+/**
+ * Call fields Close leaves out of every response unless `_fields` names them
+ * (Call Assistant output: utterances + `summary_text`).
+ */
+export const CLOSE_CALL_TRANSCRIPT_FIELDS = [
+  "recording_transcript",
+  "voicemail_transcript",
+] as const;
+
+/**
+ * Fields fetched from `GET /activity/call/?id__in=…` for every page of calls
+ * a backfill or incremental poll reads through the Search API: the
+ * transcripts, plus the recording details the Search selection omits.
+ */
+export const CLOSE_CALL_HYDRATION_FIELDS = [
+  "id",
+  "recording_duration",
+  "recording_expires_at",
+  "has_recording",
+  ...CLOSE_CALL_TRANSCRIPT_FIELDS,
+];
+
+/**
+ * Fields re-read for a call whose webhook event says it has ended: what
+ * changes between the creation snapshot and the finished call.
+ */
+export const CLOSE_CALL_DETAIL_FIELDS = [
+  "id",
+  "date_updated",
+  "status",
+  "disposition",
+  "duration",
+  "date_answered",
+  "note",
+  "note_html",
+  "outcome_id",
+  "recording_url",
+  "recording_duration",
+  "recording_expires_at",
+  "has_recording",
+  "voicemail_url",
+  "voicemail_duration",
+  ...CLOSE_CALL_TRANSCRIPT_FIELDS,
+];
+
+/** `id__in` ids per hydration request (keeps the URL well under 8 KB). */
+const CLOSE_CALL_HYDRATION_BATCH = 100;
+
+/** Call statuses that mean the call has not ended yet: nothing to re-read. */
+const CLOSE_CALL_LIVE_STATUSES = new Set([
+  "created",
+  "queued",
+  "ringing",
+  "in-progress",
+]);
+
+/**
+ * A detail value that is empty never replaces a filled one: a transcript or
+ * recording, once synced, survives a later read that comes back without it.
+ */
+const CLOSE_CALL_PRESERVED_FIELDS = new Set<string>([
+  "recording_url",
+  "recording_duration",
+  "voicemail_url",
+  "voicemail_duration",
+  ...CLOSE_CALL_TRANSCRIPT_FIELDS,
+]);
+
+function isEmptyCloseValue(value: unknown): boolean {
+  if (value === null || value === undefined || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>).length === 0;
+  }
+  return false;
+}
+
+/**
+ * Copy the fields of a fresh call read onto a call row, without letting an
+ * empty transcript or recording overwrite a filled one.
+ */
+export function mergeCloseCallDetail(
+  target: Record<string, unknown>,
+  detail: Record<string, unknown>,
+): Record<string, unknown> {
+  for (const [key, value] of Object.entries(detail)) {
+    if (key === "id" || key === "__object_type") continue;
+    if (
+      CLOSE_CALL_PRESERVED_FIELDS.has(key) &&
+      isEmptyCloseValue(value) &&
+      !isEmptyCloseValue(target[key])
+    ) {
+      continue;
+    }
+    target[key] = value;
+  }
+  return target;
+}
+
+/**
+ * Whether a call delivered by a webhook should be re-read with full
+ * `_fields`: it has ended (or was logged after the fact), it may carry a
+ * recording, and the event did not bring a transcript.
+ */
+export function closeCallNeedsDetail(
+  payload: Record<string, unknown>,
+): boolean {
+  const status = typeof payload.status === "string" ? payload.status : "";
+  if (CLOSE_CALL_LIVE_STATUSES.has(status)) return false;
+  if (!isEmptyCloseValue(payload.recording_transcript)) return false;
+  const duration = Number(payload.duration);
+  return (
+    !isEmptyCloseValue(payload.recording_url) ||
+    !isEmptyCloseValue(payload.voicemail_url) ||
+    payload.has_recording === true ||
+    (Number.isFinite(duration) && duration > 0)
+  );
+}
 
 function isCloseSearchCursorError(error: unknown): boolean {
   return (
@@ -704,6 +824,14 @@ export class CloseConnector extends BaseConnector {
           type: "string",
           required: false,
           default: "https://api.close.com/api/v1",
+        },
+        {
+          name: "calls_refresh_days",
+          label: "Call re-pull window (days)",
+          type: "number",
+          required: false,
+          helperText:
+            "Scheduled incremental resyncs of activities:Call re-read every call updated in this many past days, so transcripts Close finishes late still land. Empty or 0 = off.",
         },
       ],
     };
@@ -1529,6 +1657,10 @@ export class CloseConnector extends BaseConnector {
           );
         }
 
+        if (objectType === "activity.call" && data.length > 0) {
+          data = await this.hydrateCallRows(api, data);
+        }
+
         if (data.length > 0) {
           const records =
             entity === "leads"
@@ -1917,6 +2049,128 @@ export class CloseConnector extends BaseConnector {
     }
 
     return rows;
+  }
+
+  /**
+   * Add transcripts and recording details to one Search API page of calls.
+   *
+   * Close returns `recording_transcript` / `voicemail_transcript` only when
+   * `_fields` names them, and the Search selection does not carry them, so
+   * every page is re-read from `GET /activity/call/?id__in=…` with
+   * {@link CLOSE_CALL_HYDRATION_FIELDS} and merged by id. Rows keep their
+   * order. A rate limit waits and retries; any other failure fails the page
+   * (it is retried from the last checkpoint) rather than emitting rows
+   * without the fields — except a 400 (Close refusing the selection), which
+   * is logged and leaves the rows as the Search API returned them: with the
+   * fields absent from the batch, the destination keeps what it has.
+   */
+  private async hydrateCallRows(
+    api: AxiosInstance,
+    rows: any[],
+  ): Promise<any[]> {
+    const byId = new Map<string, Record<string, unknown>>();
+    for (const row of rows) {
+      if (row && typeof row.id === "string") byId.set(row.id, row);
+    }
+    const ids = [...byId.keys()];
+
+    for (let i = 0; i < ids.length;) {
+      const batch = ids.slice(i, i + CLOSE_CALL_HYDRATION_BATCH);
+      try {
+        const response = await api.get("/activity/call/", {
+          params: {
+            id__in: batch.join(","),
+            _fields: CLOSE_CALL_HYDRATION_FIELDS.join(","),
+            _limit: batch.length,
+          },
+        });
+        for (const detail of response.data?.data || []) {
+          if (!detail || typeof detail.id !== "string") continue;
+          const target = byId.get(detail.id);
+          if (target) mergeCloseCallDetail(target, detail);
+        }
+        i += CLOSE_CALL_HYDRATION_BATCH;
+      } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 429) {
+          const retryAfter = parseInt(
+            error.response.headers["retry-after"] || "60",
+          );
+          this.emitSyncLog("warn", "Close API rate limited, waiting", {
+            retryAfterSeconds: retryAfter,
+            objectType: "activity.call",
+          });
+          await this.sleep(retryAfter * 1000);
+          continue;
+        }
+        if (axios.isAxiosError(error) && error.response?.status === 400) {
+          this.emitSyncLog(
+            "warn",
+            "Close refused the call transcript selection; syncing calls without transcripts",
+            { responseBody: formatCloseApiErrorResponse(error) },
+          );
+          return rows;
+        }
+        throw error;
+      }
+    }
+
+    return rows;
+  }
+
+  /**
+   * Re-read calls that a webhook reported as ended with
+   * {@link CLOSE_CALL_DETAIL_FIELDS}, so the recording, transcript and
+   * summary land with the event instead of waiting for a resync. Close's call
+   * events carry the call as it was when the event fired, and never the
+   * transcript fields (they need `_fields`).
+   *
+   * A failed read keeps the event's record as it is. The source timestamp
+   * moves forward to the re-read's `date_updated` when that is newer.
+   */
+  async enrichWebhookCdcRecords(
+    records: NormalizedCdcRecord[],
+    options: { isEntityEnabled: (entity: string) => boolean },
+  ): Promise<NormalizedCdcRecord[]> {
+    if (!options.isEntityEnabled("activities:Call")) return records;
+
+    const out: NormalizedCdcRecord[] = [];
+    for (const record of records) {
+      const payload = (record.payload || {}) as Record<string, unknown>;
+      if (
+        record.entity !== "activities:Call" ||
+        record.operation !== "upsert" ||
+        !closeCallNeedsDetail(payload)
+      ) {
+        out.push(record);
+        continue;
+      }
+
+      try {
+        const response = await this.getCloseClient().get(
+          `/activity/call/${encodeURIComponent(record.recordId)}/`,
+          { params: { _fields: CLOSE_CALL_DETAIL_FIELDS.join(",") } },
+        );
+        const detail = (response?.data || {}) as Record<string, unknown>;
+        const merged = mergeCloseCallDetail({ ...payload }, detail);
+        const fetchedTs = new Date(String(detail.date_updated ?? ""));
+        const sourceTs =
+          !Number.isNaN(fetchedTs.getTime()) &&
+          (!record.sourceTs || fetchedTs > record.sourceTs)
+            ? fetchedTs
+            : record.sourceTs;
+        out.push({ ...record, payload: merged, sourceTs });
+      } catch (error) {
+        logger.warn("Could not re-read Close call for webhook event", {
+          callId: record.recordId,
+          status: axios.isAxiosError(error)
+            ? error.response?.status
+            : undefined,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        out.push(record);
+      }
+    }
+    return out;
   }
 
   /**
@@ -2546,10 +2800,13 @@ export class CloseConnector extends BaseConnector {
     };
   }
 
-  async createWebhookSubscription(
+  /**
+   * The Close selectors a subscription should carry: `options.events` when
+   * given, else every event of the flow's enabled entities.
+   */
+  private resolveWebhookSelectors(
     options: ProvisionWebhookOptions,
-  ): Promise<ProvisionWebhookResult> {
-    const api = this.getCloseClient();
+  ): CloseWebhookSelector[] {
     const parseEventSelector = (
       eventType: string,
     ): CloseWebhookSelector | null => {
@@ -2611,30 +2868,114 @@ export class CloseConnector extends BaseConnector {
           : "No valid Close webhook events configured",
       );
     }
+    return normalized.selectors;
+  }
 
-    const payload: Record<string, unknown> = {
-      url: options.endpointUrl,
-      verify_ssl: options.verifySsl !== false,
-      events: normalized.selectors,
-    };
-
-    try {
-      // Avoid creating duplicates when the flow already has a provider webhook.
-      const existingResponse = await api.get("/webhook/");
-      const existingList = Array.isArray(existingResponse?.data)
-        ? existingResponse.data
-        : Array.isArray(existingResponse?.data?.data)
-          ? existingResponse.data.data
+  /** Every Close webhook subscription that POSTs to `endpointUrl`. */
+  private async listWebhooksForUrl(
+    api: AxiosInstance,
+    endpointUrl: string,
+  ): Promise<Record<string, any>[]> {
+    const matches: Record<string, any>[] = [];
+    // `/webhook/` pages like every Close list endpoint; the cap only guards
+    // against a provider that keeps answering has_more.
+    for (let skip = 0, page = 0; page < 50; page++) {
+      const response = await api.get("/webhook/", {
+        params: { _skip: skip, _limit: 100 },
+      });
+      const list: any[] = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response?.data?.data)
+          ? response.data.data
           : [];
-      const existing = existingList.find((item: any) => {
+      for (const item of list) {
         const candidateUrl =
           typeof item?.url === "string"
             ? item.url
             : typeof item?.endpoint === "string"
               ? item.endpoint
               : "";
-        return candidateUrl === options.endpointUrl;
+        if (candidateUrl === endpointUrl) matches.push(item);
+      }
+      if (!response?.data?.has_more || list.length === 0) break;
+      skip += list.length;
+    }
+    return matches;
+  }
+
+  supportsWebhookSubscriptionUpdate(): boolean {
+    return true;
+  }
+
+  /**
+   * Retarget the Close subscription(s) that POST to `endpointUrl` to the
+   * events of the flow's current entities, keeping their signature key.
+   *
+   * Without this a subscription kept the event list it was created with, so
+   * a flow provisioned before an event was added to the connector (call
+   * `updated`/`completed`) or before an entity was enabled (emails) never
+   * received those events, and its rows froze at their creation snapshot.
+   * The flow's own subscription is also set back to `active`: Close pauses a
+   * subscription whose deliveries keep failing.
+   */
+  async updateWebhookSubscription(
+    options: UpdateWebhookSubscriptionOptions,
+  ): Promise<ProvisionWebhookResult | null> {
+    const api = this.getCloseClient();
+    const selectors = this.resolveWebhookSelectors(options);
+    const subscriptions = await this.listWebhooksForUrl(
+      api,
+      options.endpointUrl,
+    );
+    if (subscriptions.length === 0) return null;
+
+    const idOf = (item: Record<string, any>) =>
+      String(item.id || item._id || item.subscription_id || item.webhook_id);
+    const primary =
+      subscriptions.find(item => idOf(item) === options.providerWebhookId) ??
+      subscriptions.find(item => item.status === "active") ??
+      subscriptions[0];
+
+    for (const item of subscriptions) {
+      await api.put(`/webhook/${idOf(item)}/`, {
+        events: selectors,
+        ...(item === primary && { status: "active" }),
       });
+    }
+    if (subscriptions.length > 1) {
+      logger.warn("Multiple Close webhook subscriptions share one flow URL", {
+        webhookIds: subscriptions.map(idOf),
+        keptId: idOf(primary),
+      });
+    }
+    logger.info("Updated Close webhook events for existing subscription", {
+      webhookId: idOf(primary),
+      eventCount: selectors.length,
+    });
+    return {
+      providerWebhookId: idOf(primary),
+      endpointUrl: options.endpointUrl,
+    };
+  }
+
+  async createWebhookSubscription(
+    options: ProvisionWebhookOptions,
+  ): Promise<ProvisionWebhookResult> {
+    const api = this.getCloseClient();
+    const selectors = this.resolveWebhookSelectors(options);
+
+    const payload: Record<string, unknown> = {
+      url: options.endpointUrl,
+      verify_ssl: options.verifySsl !== false,
+      events: selectors,
+    };
+
+    try {
+      // Avoid creating duplicates when the flow already has a provider webhook.
+      const [existing] = await this.listWebhooksForUrl(
+        api,
+        options.endpointUrl,
+      );
       if (existing) {
         const existingId =
           existing.id ||
@@ -2644,13 +2985,14 @@ export class CloseConnector extends BaseConnector {
         if (existingId) {
           try {
             await api.put(`/webhook/${existingId}/`, {
-              events: normalized.selectors,
+              events: selectors,
+              status: "active",
             });
             logger.info(
               "Updated Close webhook events for existing subscription",
               {
                 webhookId: existingId,
-                eventCount: normalized.selectors.length,
+                eventCount: selectors.length,
               },
             );
           } catch (updateError) {

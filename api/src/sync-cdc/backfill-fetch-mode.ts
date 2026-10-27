@@ -138,6 +138,11 @@ export function decideBackfillFetchMode(input: {
   lastBackfillRunStartedAt: Date | string | null | undefined;
   /** Start of the last backfill run in which this entity completed FULL. */
   lastFullBackfillRunStartedAt: Date | string | null | undefined;
+  /**
+   * Re-pull window: an incremental fetch reaches back at least this far
+   * before the run start (see {@link resolveRefreshWindowMs}).
+   */
+  refreshWindowMs?: number;
   config?: BackfillFetchConfig;
 }): BackfillFetchDecision {
   const config = input.config ?? backfillFetchConfigFromEnv();
@@ -185,10 +190,40 @@ export function decideBackfillFetchMode(input: {
     lastCompleted.getTime() <= runStartedAt.getTime()
       ? lastCompleted
       : lastFull;
-  const since = new Date(anchor.getTime() - config.overlapMs);
+  const overlapSince = new Date(anchor.getTime() - config.overlapMs);
+  const refreshWindowMs = input.refreshWindowMs ?? 0;
+  const windowSince =
+    refreshWindowMs > 0
+      ? new Date(runStartedAt.getTime() - refreshWindowMs)
+      : null;
+  if (windowSince && windowSince < overlapSince) {
+    return {
+      mode: "incremental",
+      since: windowSince,
+      reason: `records updated since ${windowSince.toISOString()} (re-pull window ${Math.round(refreshWindowMs / 86_400_000)}d)`,
+    };
+  }
   return {
     mode: "incremental",
-    since,
-    reason: `records updated since ${since.toISOString()} (last completed run started ${anchor.toISOString()}, overlap ${Math.round(config.overlapMs / 3_600_000)}h)`,
+    since: overlapSince,
+    reason: `records updated since ${overlapSince.toISOString()} (last completed run started ${anchor.toISOString()}, overlap ${Math.round(config.overlapMs / 3_600_000)}h)`,
   };
+}
+
+/**
+ * Per-source re-pull window for an entity, from the data source's config.
+ *
+ * Close `calls_refresh_days`: a scheduled incremental resync of
+ * `activities:Call` re-reads every call updated in the last N days, not only
+ * since the last run, so a transcript Close finishes after the call's last
+ * webhook still lands. 0 / unset = off.
+ */
+export function resolveRefreshWindowMs(
+  connectorType: string | undefined,
+  entity: string,
+  sourceConfig: Record<string, unknown> | null | undefined,
+): number {
+  if (connectorType !== "close" || entity !== "activities:Call") return 0;
+  const days = Number(sourceConfig?.calls_refresh_days);
+  return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60 * 1000 : 0;
 }

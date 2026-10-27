@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  CLOSE_CALL_DETAIL_FIELDS,
+  CLOSE_CALL_HYDRATION_FIELDS,
   CLOSE_SEARCH_CUSTOM_SELECTOR_BATCH,
   CloseConnector,
+  closeCallNeedsDetail,
   formatCloseApiErrorResponse,
+  mergeCloseCallDetail,
 } from "./connector";
 import {
   ACTIVITY_SCHEMA_MAP,
@@ -1386,6 +1390,530 @@ async function testCustomActivityReplansWhenCustomFieldDeleted() {
   );
 }
 
+// ── Calls: transcripts, recordings, webhook re-reads ────────────────
+
+const TRANSCRIPT = {
+  utterances: [
+    { speaker_side: "local", start: 0.4, end: 2.1, text: "Hello" },
+    { speaker_side: "remote", start: 2.5, end: 3.0, text: "Hi" },
+  ],
+  summary_text: "Short greeting.",
+};
+
+function axios400(body: unknown) {
+  return Object.assign(new Error("Request failed with status code 400"), {
+    isAxiosError: true,
+    response: { status: 400, headers: {}, data: body },
+  });
+}
+
+/**
+ * A Search API that serves one page of calls (no transcripts, like the real
+ * one) and a REST `/activity/call/` list that serves the details.
+ */
+function stubCallApi(options: {
+  rows: Record<string, unknown>[];
+  details?: Record<string, unknown>[];
+  restError?: unknown;
+}) {
+  const restCalls: Array<{ url: string; params: Record<string, unknown> }> = [];
+  let pageServed = false;
+  const api = {
+    post: async (_url: string, body: any) => {
+      const fields = body?._fields?.["activity.call"] as string[] | undefined;
+      if (fields && fields.length === 2 && fields[1] === "date_created") {
+        return { data: { data: [options.rows[0]] } };
+      }
+      if (fields?.includes("direction") && !pageServed) {
+        pageServed = true;
+        return { data: { data: options.rows, cursor: null } };
+      }
+      return { data: { data: [], cursor: null } };
+    },
+    get: async (url: string, config?: { params?: Record<string, unknown> }) => {
+      restCalls.push({ url, params: config?.params ?? {} });
+      if (options.restError) throw options.restError;
+      return { data: { data: options.details ?? [], has_more: false } };
+    },
+  };
+  return { api, restCalls };
+}
+
+function callRow(id: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    _type: "Call",
+    status: "completed",
+    duration: 95,
+    recording_url: `https://example.test/rec/${id}.mp3`,
+    date_created: "2026-10-20T09:00:00.000000+00:00",
+    date_updated: "2026-10-20T09:03:00.000000+00:00",
+    ...extra,
+  };
+}
+
+async function fetchCallBatches(connector: CloseConnector) {
+  const batches: Record<string, unknown>[][] = [];
+  await connector.fetchEntityChunk({
+    entity: "activities:Call",
+    onBatch: async (batch: Record<string, unknown>[]) => {
+      batches.push(batch);
+    },
+    rateLimitDelay: 1,
+  } as any);
+  return batches;
+}
+
+async function testCallSearchPageIsHydratedWithTranscripts() {
+  const connector = createConnector();
+  const { api, restCalls } = stubCallApi({
+    rows: [callRow("acti_a"), callRow("acti_b")],
+    details: [
+      {
+        id: "acti_a",
+        recording_duration: 94,
+        has_recording: true,
+        recording_transcript: TRANSCRIPT,
+        voicemail_transcript: null,
+      },
+      { id: "acti_b", recording_transcript: null },
+    ],
+  });
+  (connector as any).closeApi = api;
+
+  const batches = await fetchCallBatches(connector);
+
+  const hydration = restCalls.filter(c => c.url === "/activity/call/");
+  assert.equal(hydration.length, 1, "one REST read for the page");
+  assert.equal(hydration[0].params.id__in, "acti_a,acti_b");
+  assert.equal(
+    hydration[0].params._fields,
+    CLOSE_CALL_HYDRATION_FIELDS.join(","),
+  );
+  for (const field of ["recording_transcript", "voicemail_transcript"]) {
+    assert.ok(
+      String(hydration[0].params._fields).split(",").includes(field),
+      `${field} requested`,
+    );
+  }
+
+  assert.equal(batches.length, 1);
+  const [a, b] = batches[0];
+  assert.deepEqual(a.recording_transcript, TRANSCRIPT);
+  assert.equal(a.recording_duration, 94);
+  assert.equal(a.has_recording, true);
+  assert.equal(a.recording_url, "https://example.test/rec/acti_a.mp3");
+  assert.equal(b.id, "acti_b");
+  assert.equal(b.recording_transcript, null);
+}
+
+async function testCallHydrationSplitsLargePages() {
+  const connector = createConnector();
+  const rows = Array.from({ length: 150 }, (_, i) =>
+    callRow(`acti_${String(i).padStart(3, "0")}`),
+  );
+  const { api, restCalls } = stubCallApi({ rows, details: [] });
+  (connector as any).closeApi = api;
+
+  await fetchCallBatches(connector);
+
+  const sizes = restCalls
+    .filter(c => c.url === "/activity/call/")
+    .map(c => String(c.params.id__in).split(",").length);
+  assert.deepEqual(sizes, [100, 50]);
+}
+
+// Close refusing the selection must not fail call syncs, and must not emit
+// empty transcript keys that would blank what the destination already has.
+async function testCallHydrationRefusedSelectionLeavesRowsUntouched() {
+  const connector = createConnector();
+  const { api } = stubCallApi({
+    rows: [callRow("acti_a")],
+    restError: axios400({ "field-errors": { _fields: ["Unknown field"] } }),
+  });
+  (connector as any).closeApi = api;
+
+  const batches = await fetchCallBatches(connector);
+
+  assert.equal(batches.length, 1);
+  assert.ok(!("recording_transcript" in batches[0][0]));
+  assert.ok(!("voicemail_transcript" in batches[0][0]));
+}
+
+async function testCallHydrationServerErrorFailsThePage() {
+  const connector = createConnector();
+  const { api } = stubCallApi({
+    rows: [callRow("acti_a")],
+    restError: Object.assign(new Error("Request failed with status code 502"), {
+      isAxiosError: true,
+      response: { status: 502, headers: {}, data: "Bad gateway" },
+    }),
+  });
+  (connector as any).closeApi = api;
+
+  const emitted: unknown[] = [];
+  await assert.rejects(
+    connector.fetchEntityChunk({
+      entity: "activities:Call",
+      onBatch: async (batch: unknown[]) => {
+        emitted.push(...batch);
+      },
+      rateLimitDelay: 1,
+    } as any),
+  );
+  assert.equal(emitted.length, 0, "no transcript-less rows were emitted");
+}
+
+async function testOnlyCallPagesAreHydrated() {
+  const connector = createConnector();
+  const restCalls: string[] = [];
+  let served = false;
+  (connector as any).closeApi = {
+    post: async (_url: string, body: any) => {
+      const fields = body?._fields?.["activity.email"] as string[] | undefined;
+      if (fields && fields.length === 2) {
+        return {
+          data: {
+            data: [{ id: "acti_e", date_created: "2026-10-20T09:00:00Z" }],
+          },
+        };
+      }
+      if (fields?.includes("subject") && !served) {
+        served = true;
+        return {
+          data: {
+            data: [{ id: "acti_e", date_created: "2026-10-20T09:00:00Z" }],
+            cursor: null,
+          },
+        };
+      }
+      return { data: { data: [], cursor: null } };
+    },
+    get: async (url: string) => {
+      restCalls.push(url);
+      return { data: { data: [] } };
+    },
+  };
+
+  await connector.fetchEntityChunk({
+    entity: "activities:Email",
+    onBatch: async () => {},
+    rateLimitDelay: 1,
+  } as any);
+  assert.deepEqual(restCalls, []);
+}
+
+function testMergeCallDetailNeverBlanksTranscriptOrRecording() {
+  const row: Record<string, unknown> = {
+    id: "acti_a",
+    status: "completed",
+    recording_url: "https://example.test/rec.mp3",
+    recording_transcript: TRANSCRIPT,
+  };
+  mergeCloseCallDetail(row, {
+    id: "acti_a",
+    status: "completed",
+    recording_url: null,
+    recording_transcript: {},
+    voicemail_transcript: null,
+    recording_duration: 40,
+  });
+  assert.equal(row.recording_url, "https://example.test/rec.mp3");
+  assert.deepEqual(row.recording_transcript, TRANSCRIPT);
+  assert.equal(row.voicemail_transcript, null, "new keys still land");
+  assert.equal(row.recording_duration, 40);
+
+  // A filled value replaces an empty one, and a newer filled one wins.
+  const empty: Record<string, unknown> = { recording_transcript: null };
+  mergeCloseCallDetail(empty, { recording_transcript: TRANSCRIPT });
+  assert.deepEqual(empty.recording_transcript, TRANSCRIPT);
+  // Non-preserved fields follow the fresh read even when empty.
+  const noted: Record<string, unknown> = { note: "old" };
+  mergeCloseCallDetail(noted, { note: "" });
+  assert.equal(noted.note, "");
+}
+
+function testCloseCallNeedsDetail() {
+  assert.equal(
+    closeCallNeedsDetail({ status: "in-progress", duration: 0 }),
+    false,
+  );
+  assert.equal(closeCallNeedsDetail({ status: "created" }), false);
+  assert.equal(
+    closeCallNeedsDetail({ status: "completed", duration: 95 }),
+    true,
+  );
+  assert.equal(
+    closeCallNeedsDetail({
+      status: "no-answer",
+      voicemail_url: "https://x.test/v",
+    }),
+    true,
+  );
+  assert.equal(
+    closeCallNeedsDetail({ status: "completed", has_recording: true }),
+    true,
+  );
+  // Already carries its transcript: nothing to re-read.
+  assert.equal(
+    closeCallNeedsDetail({
+      status: "completed",
+      duration: 95,
+      recording_transcript: TRANSCRIPT,
+    }),
+    false,
+  );
+  // Ended without being connected: no recording to wait for.
+  assert.equal(
+    closeCallNeedsDetail({ status: "no-answer", duration: 0 }),
+    false,
+  );
+}
+
+function callWebhookEvent(
+  action: string,
+  data: Record<string, unknown>,
+  dateUpdated = "2026-10-20T09:01:00.000000+00:00",
+) {
+  return {
+    subscription_id: "whsub_test",
+    event: {
+      id: `ev_${action}`,
+      object_type: "activity.call",
+      action,
+      object_id: "acti_call",
+      date_updated: dateUpdated,
+      data: { id: "acti_call", _type: "Call", ...data },
+    },
+  };
+}
+
+async function testCallWebhookReReadsEndedCall() {
+  const connector = createConnector();
+  const gets: Array<{ url: string; params: Record<string, unknown> }> = [];
+  (connector as any).closeApi = {
+    get: async (url: string, config?: { params?: Record<string, unknown> }) => {
+      gets.push({ url, params: config?.params ?? {} });
+      return {
+        data: {
+          id: "acti_call",
+          status: "completed",
+          duration: 95,
+          date_updated: "2026-10-20T09:05:00.000000+00:00",
+          recording_url: "https://example.test/rec/acti_call.mp3",
+          recording_duration: 94,
+          has_recording: true,
+          recording_transcript: TRANSCRIPT,
+          voicemail_transcript: null,
+        },
+      };
+    },
+  };
+
+  const extracted = connector.extractWebhookCdcRecords(
+    callWebhookEvent("completed", {
+      status: "completed",
+      duration: 95,
+      recording_url: null,
+      lead_id: "lead_1",
+    }),
+    "activity.call.completed",
+  );
+  const records = await connector.enrichWebhookCdcRecords(extracted, {
+    isEntityEnabled: () => true,
+  });
+
+  assert.equal(gets.length, 1);
+  assert.equal(gets[0].url, "/activity/call/acti_call/");
+  assert.equal(gets[0].params._fields, CLOSE_CALL_DETAIL_FIELDS.join(","));
+  assert.equal(records.length, 1);
+  const payload = records[0].payload as Record<string, unknown>;
+  assert.deepEqual(payload.recording_transcript, TRANSCRIPT);
+  assert.equal(payload.recording_url, "https://example.test/rec/acti_call.mp3");
+  assert.equal(payload.lead_id, "lead_1", "event fields are kept");
+  assert.equal(
+    records[0].sourceTs?.toISOString(),
+    "2026-10-20T09:05:00.000Z",
+    "source time moves to the re-read",
+  );
+  assert.equal(records[0].changeId, "ev_completed");
+}
+
+async function testCallWebhookSkipsLiveCallsAndDisabledEntity() {
+  const connector = createConnector();
+  let gets = 0;
+  (connector as any).closeApi = {
+    get: async () => {
+      gets++;
+      return { data: {} };
+    },
+  };
+
+  const created = connector.extractWebhookCdcRecords(
+    callWebhookEvent("created", { status: "in-progress", duration: 0 }),
+    "activity.call.created",
+  );
+  const kept = await connector.enrichWebhookCdcRecords(created, {
+    isEntityEnabled: () => true,
+  });
+  assert.equal(gets, 0, "a call still ringing is not re-read");
+  assert.deepEqual(kept, created);
+
+  const ended = connector.extractWebhookCdcRecords(
+    callWebhookEvent("updated", { status: "completed", duration: 95 }),
+    "activity.call.updated",
+  );
+  await connector.enrichWebhookCdcRecords(ended, {
+    isEntityEnabled: entity => entity !== "activities:Call",
+  });
+  assert.equal(gets, 0, "a flow that does not sync calls costs no reads");
+
+  const deleted = connector.extractWebhookCdcRecords(
+    callWebhookEvent("deleted", { status: "completed", duration: 95 }),
+    "activity.call.deleted",
+  );
+  await connector.enrichWebhookCdcRecords(deleted, {
+    isEntityEnabled: () => true,
+  });
+  assert.equal(gets, 0, "deletes are not re-read");
+}
+
+async function testCallWebhookReadFailureKeepsEventRecord() {
+  const connector = createConnector();
+  (connector as any).closeApi = {
+    get: async () => {
+      throw Object.assign(new Error("Request failed with status code 404"), {
+        isAxiosError: true,
+        response: { status: 404, headers: {}, data: {} },
+      });
+    },
+  };
+
+  const extracted = connector.extractWebhookCdcRecords(
+    callWebhookEvent("updated", { status: "completed", duration: 95 }),
+    "activity.call.updated",
+  );
+  const records = await connector.enrichWebhookCdcRecords(extracted, {
+    isEntityEnabled: () => true,
+  });
+  assert.deepEqual(records, extracted);
+}
+
+function testCallAndEmailWebhookEventsForEveryOrg() {
+  const connector = createConnector();
+  const events = connector.getWebhookEventsForEntities([
+    "activities:Call",
+    "activities:Email",
+    "activities:EmailThread",
+  ]);
+  for (const event of [
+    "activity.call.created",
+    "activity.call.updated",
+    "activity.call.completed",
+    "activity.call.answered",
+    "activity.call.deleted",
+    "activity.email.created",
+    "activity.email.updated",
+    "activity.email.sent",
+    "activity.email_thread.created",
+    "activity.email_thread.updated",
+  ]) {
+    assert.ok(events.includes(event), `${event} is subscribed`);
+  }
+}
+
+async function testUpdateWebhookSubscriptionRetargetsEvents() {
+  const connector = createConnector();
+  const endpointUrl = "https://app.mako.ai/api/webhooks/ws/flow";
+  const puts: Array<{ url: string; body: any }> = [];
+  const listParams: unknown[] = [];
+
+  (connector as any).closeApi = {
+    get: async (url: string, config?: { params?: unknown }) => {
+      assert.equal(url, "/webhook/");
+      listParams.push(config?.params);
+      // Two pages: the flow's subscription is on the second one.
+      if (listParams.length === 1) {
+        return {
+          data: {
+            data: [{ id: "whsub_other", url: "https://elsewhere.test/hook" }],
+            has_more: true,
+          },
+        };
+      }
+      return {
+        data: {
+          data: [
+            {
+              id: "whsub_flow",
+              url: endpointUrl,
+              status: "paused",
+              // Created before call updates were subscribed.
+              events: [{ object_type: "activity.call", action: "created" }],
+            },
+          ],
+          has_more: false,
+        },
+      };
+    },
+    put: async (url: string, body: any) => {
+      puts.push({ url, body });
+      return { data: {} };
+    },
+  };
+
+  assert.equal(connector.supportsWebhookSubscriptionUpdate(), true);
+  const result = await connector.updateWebhookSubscription({
+    endpointUrl,
+    enabledEntities: ["activities:Call", "activities:Email"],
+  });
+
+  assert.equal(result?.providerWebhookId, "whsub_flow");
+  assert.equal(
+    result?.signingSecret,
+    undefined,
+    "the key is kept, not rotated",
+  );
+  assert.equal(listParams.length, 2, "the subscription list is paged");
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].url, "/webhook/whsub_flow/");
+  assert.equal(puts[0].body.status, "active", "a paused subscription resumes");
+  const keys = (puts[0].body.events as any[]).map(
+    e => `${e.object_type}.${e.action}`,
+  );
+  for (const event of [
+    "activity.call.created",
+    "activity.call.updated",
+    "activity.call.completed",
+    "activity.email.created",
+    "activity.email.sent",
+  ]) {
+    assert.ok(keys.includes(event), `${event} is set on the subscription`);
+  }
+  assert.ok(!keys.some(k => k.startsWith("lead.")), "only enabled entities");
+}
+
+async function testUpdateWebhookSubscriptionReturnsNullWithoutMatch() {
+  const connector = createConnector();
+  let putCalled = false;
+  (connector as any).closeApi = {
+    get: async () => ({
+      data: { data: [{ id: "whsub_other", url: "https://elsewhere.test" }] },
+    }),
+    put: async () => {
+      putCalled = true;
+      return { data: {} };
+    },
+  };
+
+  const result = await connector.updateWebhookSubscription({
+    endpointUrl: "https://app.mako.ai/api/webhooks/ws/flow",
+    enabledEntities: ["activities:Call"],
+  });
+  assert.equal(result, null);
+  assert.equal(putCalled, false);
+}
+
 async function main() {
   testCloseApiErrorResponseIsFormattedForLogs();
   testUserWebhookEventsAreSupported();
@@ -1420,6 +1948,19 @@ async function main() {
   testCustomActivityBackfillAndWebhookShapesMatch();
   await testActivitySearchRequestsEverySchemaColumn();
   await testCustomActivityReplansWhenCustomFieldDeleted();
+  await testCallSearchPageIsHydratedWithTranscripts();
+  await testCallHydrationSplitsLargePages();
+  await testCallHydrationRefusedSelectionLeavesRowsUntouched();
+  await testCallHydrationServerErrorFailsThePage();
+  await testOnlyCallPagesAreHydrated();
+  testMergeCallDetailNeverBlanksTranscriptOrRecording();
+  testCloseCallNeedsDetail();
+  await testCallWebhookReReadsEndedCall();
+  await testCallWebhookSkipsLiveCallsAndDisabledEntity();
+  await testCallWebhookReadFailureKeepsEventRecord();
+  testCallAndEmailWebhookEventsForEveryOrg();
+  await testUpdateWebhookSubscriptionRetargetsEvents();
+  await testUpdateWebhookSubscriptionReturnsNullWithoutMatch();
 }
 
 main().catch(error => {

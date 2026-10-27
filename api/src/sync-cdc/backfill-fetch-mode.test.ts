@@ -14,6 +14,7 @@ import {
   decideBackfillFetchMode,
   DEFAULT_FULL_INTERVAL_MS,
   DEFAULT_OVERLAP_MS,
+  resolveRefreshWindowMs,
   supportsIncrementalResync,
 } from "./backfill-fetch-mode";
 
@@ -241,5 +242,78 @@ assert.equal(
     .overlapMs,
   DEFAULT_OVERLAP_MS,
 );
+
+// ── Re-pull window (Close calls_refresh_days) ────────────────────────
+const DAY = 24 * 60 * 60 * 1000;
+assert.equal(
+  resolveRefreshWindowMs("close", "activities:Call", { calls_refresh_days: 3 }),
+  3 * DAY,
+);
+assert.equal(
+  resolveRefreshWindowMs("close", "activities:Call", {
+    calls_refresh_days: "2",
+  }),
+  2 * DAY,
+);
+// Only calls, only Close, only a positive number.
+assert.equal(
+  resolveRefreshWindowMs("close", "activities:Email", {
+    calls_refresh_days: 3,
+  }),
+  0,
+);
+assert.equal(
+  resolveRefreshWindowMs("stripe", "activities:Call", {
+    calls_refresh_days: 3,
+  }),
+  0,
+);
+for (const off of [undefined, 0, -2, "abc", ""]) {
+  assert.equal(
+    resolveRefreshWindowMs("close", "activities:Call", {
+      calls_refresh_days: off,
+    }),
+    0,
+    String(off),
+  );
+}
+assert.equal(resolveRefreshWindowMs("close", "activities:Call", null), 0);
+
+// A window wider than "last run − overlap" reaches back to run start − N days.
+{
+  const d = decideBackfillFetchMode({
+    ...base,
+    entity: "activities:Call",
+    refreshWindowMs: 3 * DAY,
+  });
+  assert.equal(d.mode, "incremental");
+  assert.equal(
+    d.mode === "incremental" && d.since.toISOString(),
+    "2026-10-17T02:00:00.000Z",
+  );
+  assert.ok(d.reason.includes("re-pull window 3d"), d.reason);
+}
+// A narrower window never shortens the normal incremental reach.
+{
+  const d = decideBackfillFetchMode({
+    ...base,
+    entity: "activities:Call",
+    refreshWindowMs: 60 * 60 * 1000,
+  });
+  assert.equal(
+    d.mode === "incremental" && d.since.toISOString(),
+    "2026-10-18T20:00:00.000Z",
+  );
+}
+// The window never turns a due full fetch into an incremental one.
+{
+  const d = decideBackfillFetchMode({
+    ...base,
+    entity: "activities:Call",
+    trigger: "manual",
+    refreshWindowMs: 3 * DAY,
+  });
+  assert.equal(d.mode, "full");
+}
 
 console.log("backfill-fetch-mode tests passed");

@@ -74,9 +74,9 @@ export async function syncFlowWebhookSubscription(
     }
     const connector = await syncConnectorRegistry.getConnectorFor(source);
     if (!connector?.supportsWebhookSubscriptionUpdate()) {
-      // Close, PandaDoc, Calendly, Claap…: provisioned only by the explicit
-      // button, never on save (they cannot find a subscription by URL, so a
-      // second call could create a duplicate).
+      // PandaDoc, Calendly, Claap…: provisioned only by the explicit button,
+      // never on save (they cannot find a subscription by URL, so a second
+      // call could create a duplicate).
       return {
         status: "skipped",
         reason: webhook.secret
