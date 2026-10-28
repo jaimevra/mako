@@ -209,7 +209,7 @@ The kit is the dashboard furniture every app was re-forking:
 import "@makoai/app-sdk/ui.css"; // before ./styles.css, so the app wins
 import {
   PageHeader, Card, KpiRow, KpiTile, Button, StatusDot,
-  MultiSelect, FreshnessBadge, RefreshAllButton,
+  MultiSelect, FreshnessBadge, RefreshAllButton, DataTable,
 } from "@makoai/app-sdk/ui";
 
 <PageHeader
@@ -298,6 +298,89 @@ const SEGMENTS = [ // bottom-up, as stacked; drives the bars AND the tooltip
   The builder only reads and formats.
 - On a chart with an HTML overlay (a donut's centre label), lift the tooltip:
   `<Tooltip wrapperStyle={{ zIndex: 20 }} … />`.
+
+### Data tables: `DataTable` (2.11+)
+
+`DataTable` is the table the best workspace dashboards converged on: a card
+with click-to-sort headers, a sticky header, an optional pinned first column,
+right-aligned tabular numbers, fixed column widths, a pager footer ("1–50 of
+312 customers", 25 / 50 / 100 per page, « ‹ Page 2 of 7 › »), an empty state
+and CSV export.
+
+```tsx
+import { DataTable, type DataTableColumn } from "@makoai/app-sdk/ui";
+
+const COLUMNS: DataTableColumn<Customer>[] = [
+  { id: "name", label: "Customer", value: c => c.name, sticky: true, width: 260,
+    render: c => <><div>{c.name}</div><SystemLinks c={c} /></> },
+  { id: "paid", label: "Paid on", value: c => c.paidDay, date: true, render: c => fmtDay(c.paidDay) },
+  { id: "mrr", label: "MRR", num: true, value: c => c.mrr, render: c => fmtEur(c.mrr) },
+  { id: "links", label: "Links", value: () => null, sortable: false, csv: false, width: 120, render: c => <Links c={c} /> },
+];
+
+<DataTable
+  title={`${fmtInt(list.length)} customers not onboarded`}
+  actions={<input className="search" value={q} onChange={e => setQ(e.target.value)} />}
+  rows={list}
+  resetKey={q}
+  columns={COLUMNS}
+  noun="customers"
+  empty="No customers match these filters."
+  defaultSort={{ id: "mrr", dir: "desc" }}
+  exportFilename="onboarding-customers"
+  fill
+/>
+```
+
+- **Columns.** `value(row)` is what the column sorts by and exports;
+  `render(row)` is what the cell shows. `num` right-aligns with tabular
+  figures and sorts largest first on the first click (text sorts A→Z). Empty
+  values (null, "", NaN) sort last both ways. `sticky` (pin the first column),
+  `sortable: false`, `hint` (header hover text), `csv` (`false` to leave a
+  column out, a function for a readable cell such as a level name). Numeric
+  strings ("1.25", "-10") sort as numbers.
+- **Widths: no layout shift.** The table uses `table-layout: fixed` and a
+  `<colgroup>`, so a column's width never depends on the rows on screen.
+  Sorting, filtering, paging, the empty state and loading all keep the same
+  widths. Each column is exactly its `width` (px as a number, or any CSS
+  length such as `"12rem"`). Defaults by kind: `num` or right-aligned 96px,
+  `date: true` 110px, the first or sticky column 240px, other text 140px.
+  When the card is wider than the sum, the `grow: true` columns take the extra
+  space. Without one, the first column grows. `minWidth` sets a growing
+  column's floor. When the card is narrower than the sum, the table scrolls
+  sideways inside the card. `columnLayout(columns)` returns the widths the
+  table renders.
+- **Cells stay on one line.** A cell ellipsizes at its column's width with the
+  raw value (text or number) as the hover title. Headers ellipsize too, and
+  the sort icon stays visible. `truncate: false` wraps a cell's text inside
+  its column instead: the width holds and the row grows.
+- **Sort, page, page size** are each uncontrolled by default or controlled with
+  `sort` + `onSortChange`, `page` (1-based) + `onPageChange`, `pageSize` +
+  `onPageSizeChange`, so an app can keep them in the URL. Pass your filter
+  state as `resetKey` (e.g. `resetKey={{ q, owners }}`): when it changes the
+  table goes back to page 1. A sort or page-size click resets the page too.
+  New row objects never do, so a load or a background refresh keeps the page.
+  A page past the end shows the last page and reports it through
+  `onPageChange`. The table scrolls to the top on a page change. `rows`
+  defaults to `[]`, so a table can render while its data loads.
+- **Height.** `fill` makes the card fill its parent's height and the body
+  scroll inside it, with the pager always in view: give the parent a height
+  (e.g. `<main style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>`).
+  On phones it falls back to a 70vh scroll box. Without `fill` the body scrolls
+  past `maxHeight` (default 70vh).
+- **Rows.** `onRowClick(row)` makes rows clickable (and Enter or Space on a
+  focused row); clicks on links and buttons inside a cell stay theirs.
+  `rowLabel(row)` names a clickable row for screen readers. `rowKey` defaults
+  to `row.id`.
+- **CSV.** `exportFilename` adds an "Export CSV" button that downloads every
+  row on every page, as sorted. Mako's app frames allow downloads. Numbers
+  export as is. Text starting with `=`, `+`, `-`, `@`, tab or CR gets a
+  leading apostrophe so a spreadsheet never runs it. A Date at local or UTC
+  midnight exports as `YYYY-MM-DD`, any other Date as a UTC ISO timestamp. For
+  your own button: `saveCsv(filename, toCsv(rows, columns))` returns
+  `"downloaded"` or `"failed"`.
+- Pure helpers for custom tables: `sortRows`, `compareValues`, `nextSort`,
+  `pageSlice`, `pageToSync`, `toCsv`, `csvCell`, `csvDate`, `csvToTsv`.
 
 `ui.css` is plain CSS (no Tailwind needed; it coexists with Tailwind) and
 every kit class is prefixed `mk-`. It also sets the house base: Inter 14px on
