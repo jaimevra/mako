@@ -49,6 +49,9 @@ const RECORDINGS_PAGE_LIMIT = 50;
 // Claap allows 3 requests per second per workspace.
 const DETAIL_MIN_INTERVAL_MS = 350;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Every poll re-reads each recording in the window, one call per recording,
+// so the window is capped well below the daily quota.
+const RECORDINGS_LOOKBACK_MAX_DAYS = 7;
 
 const SUPPORTED_WEBHOOK_EVENTS = [
   "recording_added",
@@ -308,7 +311,7 @@ export class ClaapConnector extends BaseConnector {
           default: 0,
           placeholder: "0",
           helperText:
-            "Incremental runs re-read recordings created this many days before the last sync, picking up AI fields Claap generates later. 0 reads only new recordings. Each re-read recording costs one API call.",
+            "Incremental runs re-read recordings created this many days before the last sync, picking up AI fields Claap generates later. 0 reads only new recordings, max 7. Every poll re-reads the whole window at one API call per recording, so the cost is window × polls per day.",
         },
       ],
     };
@@ -568,29 +571,40 @@ export class ClaapConnector extends BaseConnector {
 
   private getRecordingsLookbackMs(): number {
     const days = Number(this.dataSource.config.recordings_lookback_days);
-    return Number.isFinite(days) && days > 0 ? days * DAY_MS : 0;
+    if (!Number.isFinite(days) || days <= 0) return 0;
+    return Math.min(days, RECORDINGS_LOOKBACK_MAX_DAYS) * DAY_MS;
   }
 
   /**
    * `recordings`: list a page, then re-read every recording on it from the
    * detail endpoint and emit only the detail object. A list item is never
-   * written: it lacks the AI output, so upserting it would blank those
-   * columns. A recording whose detail cannot be read is skipped (and logged);
-   * the next run retries it.
+   * written: it lacks the AI output, and the destination MERGE nulls every
+   * absent key, so upserting it would blank those columns.
+   *
+   * Only a 404 (recording deleted) or a Ready recording without `aiFields` is
+   * skipped. Any other detail failure throws after emitting the rows read so
+   * far: the poll anchor is MAX(_syncedAt), so a skipped recording would never
+   * be listed again. A chunk that read details but emitted nothing throws too.
    *
    * Detail calls spend the workspace's daily quota one per recording, so the
    * chunk checkpoints mid-page (`cursor` of the page plus `pageOffset`) when
-   * the reserve is reached, and resumes there.
+   * the reserve is reached, and resumes there. The checkpoint carries
+   * `createdAfter`: a resumed chunk gets no `since`, and listing without it
+   * would restart from the oldest recording.
    */
   private async fetchRecordingsChunk(
     options: ResumableFetchOptions,
   ): Promise<FetchState> {
     const { onBatch, onProgress, onLog, since, state } = options;
     const maxIterations = options.maxIterations ?? 10;
-    const lookbackMs = this.getRecordingsLookbackMs();
-    const createdAfter = since
-      ? new Date(since.getTime() - lookbackMs)
-      : undefined;
+    const savedCreatedAfter = state?.metadata?.createdAfter;
+    const createdAfter =
+      typeof savedCreatedAfter === "string"
+        ? new Date(savedCreatedAfter)
+        : since
+          ? new Date(since.getTime() - this.getRecordingsLookbackMs())
+          : undefined;
+    const createdAfterIso = createdAfter?.toISOString() ?? null;
     const detailDelay = Math.max(
       options.rateLimitDelay ?? this.getRateLimitDelay(),
       DETAIL_MIN_INTERVAL_MS,
@@ -604,6 +618,7 @@ export class ClaapConnector extends BaseConnector {
     let recordCount = state?.totalProcessed ?? 0;
     let iterations = 0;
     let detailCalls = 0;
+    let emittedInChunk = 0;
 
     while (iterations < maxIterations) {
       const pageCursor = cursor;
@@ -642,17 +657,22 @@ export class ClaapConnector extends BaseConnector {
           (quotaLeft !== undefined ? quotaLeft - 1 : undefined);
         if (detail.recording) {
           rows.push(detail.recording);
-        } else {
+        } else if (detail.notFound || detail.missingAiFields) {
           // TODO(claap): a 404 here means the recording was deleted between
           // the list and the detail call. Backfill batches are upsert-only
           // (an id-only tombstone would null every column), so deleted
           // recordings are not propagated yet.
           skipped.push(recordingId);
-          logger.warn("Could not read Claap recording detail; skipping", {
+          logger.warn("Skipping Claap recording", {
             recordingId,
             notFound: detail.notFound === true,
-            error: detail.error,
+            missingAiFields: detail.missingAiFields === true,
           });
+        } else {
+          if (rows.length > 0) await onBatch(rows);
+          throw new Error(
+            `Could not read Claap recording ${recordingId}: ${detail.error ?? "unknown error"}`,
+          );
         }
         await this.sleep(detailDelay);
       }
@@ -660,11 +680,12 @@ export class ClaapConnector extends BaseConnector {
       if (rows.length > 0) {
         await onBatch(rows);
         recordCount += rows.length;
+        emittedInChunk += rows.length;
       }
       if (skipped.length > 0) {
         onLog?.(
           "warn",
-          `Skipped ${skipped.length} Claap recording(s) whose detail could not be read; the next run retries them`,
+          `Skipped ${skipped.length} Claap recording(s): deleted (404) or Ready without aiFields`,
           { recordingIds: skipped },
         );
       }
@@ -674,6 +695,7 @@ export class ClaapConnector extends BaseConnector {
         const message = `Claap daily API quota nearly used up (${quotaLeft} calls left, reserve ${DAILY_QUOTA_RESERVE}); stopping recording reads until it refills`;
         onLog?.("warn", message);
         if (detailCalls === 0) throw new Error(message);
+        this.assertSomethingEmitted(detailCalls, emittedInChunk);
         // Save the progress made in this chunk; the next chunk resumes on
         // this page, at the first recording not yet read.
         return {
@@ -683,6 +705,7 @@ export class ClaapConnector extends BaseConnector {
           metadata: {
             cursor: pageCursor ?? null,
             pageOffset: stoppedAt,
+            createdAfter: createdAfterIso,
             totalCount,
             recordingsSeen,
           },
@@ -694,26 +717,52 @@ export class ClaapConnector extends BaseConnector {
       iterations++;
 
       if (!cursor) {
+        this.assertSomethingEmitted(detailCalls, emittedInChunk);
         return {
           totalProcessed: recordCount,
           hasMore: false,
           iterationsInChunk: iterations,
-          metadata: { cursor: null, pageOffset: 0, totalCount, recordingsSeen },
+          metadata: {
+            cursor: null,
+            pageOffset: 0,
+            createdAfter: createdAfterIso,
+            totalCount,
+            recordingsSeen,
+          },
         };
       }
     }
 
+    this.assertSomethingEmitted(detailCalls, emittedInChunk);
     return {
       totalProcessed: recordCount,
       hasMore: true,
       iterationsInChunk: iterations,
-      metadata: { cursor, pageOffset: 0, totalCount, recordingsSeen },
+      metadata: {
+        cursor,
+        pageOffset: 0,
+        createdAfter: createdAfterIso,
+        totalCount,
+        recordingsSeen,
+      },
     };
+  }
+
+  // A chunk where every detail read was skipped is treated as a failure, not
+  // an empty success: it is what an API shape change or a wrong endpoint looks
+  // like, and a green run would hide it.
+  private assertSomethingEmitted(detailCalls: number, emitted: number): void {
+    if (detailCalls > 0 && emitted === 0) {
+      throw new Error(
+        `None of the ${detailCalls} Claap recording(s) read in this chunk could be written (all deleted or without aiFields)`,
+      );
+    }
   }
 
   private async fetchRecordingDetail(recordingId: string): Promise<{
     recording?: Record<string, unknown>;
     notFound?: boolean;
+    missingAiFields?: boolean;
     error?: string;
     dailyRemaining?: number;
   }> {
@@ -740,10 +789,14 @@ export class ClaapConnector extends BaseConnector {
           dailyRemaining,
         };
       }
-      return {
-        recording: candidate as Record<string, unknown>,
-        dailyRemaining,
-      };
+      const recording = candidate as Record<string, unknown>;
+      // A Ready recording must carry `aiFields` (an empty array is fine):
+      // without the key the MERGE would null the stored AI output. Other
+      // states (Empty, Uploaded, Failed) have no AI output to lose.
+      if (recording.state === "Ready" && !Array.isArray(recording.aiFields)) {
+        return { missingAiFields: true, dailyRemaining };
+      }
+      return { recording, dailyRemaining };
     } catch (error) {
       return {
         notFound: axios.isAxiosError(error) && error.response?.status === 404,
